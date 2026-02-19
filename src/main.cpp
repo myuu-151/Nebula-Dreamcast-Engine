@@ -776,6 +776,11 @@ static std::filesystem::path CreateMaterialAsset(const std::filesystem::path& as
         out << "texture=\n";
         out << "uv_scale=0\n";
         out << "saturn_allow_uv_repeat=0\n";
+        out << "uv_scale_u=1\n";
+        out << "uv_scale_v=1\n";
+        out << "uv_offset_u=0\n";
+        out << "uv_offset_v=0\n";
+        out << "uv_rotate_deg=0\n";
     }
     return matPath;
 }
@@ -830,49 +835,79 @@ static bool LoadMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool
     return false;
 }
 
-static bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
+static void LoadMaterialUvTransform(const std::filesystem::path& matPath, float& su, float& sv, float& ou, float& ov, float& rotDeg)
 {
-    float uvScale = 0.0f;
-    bool allowUvRepeat = false;
-    LoadMaterialUvScale(matPath, uvScale);
-    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
+    su = 1.0f; sv = 1.0f; ou = 0.0f; ov = 0.0f; rotDeg = 0.0f;
+    std::ifstream in(matPath);
+    if (!in.is_open()) return;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.rfind("uv_scale_u=", 0) == 0) su = (float)atof(line.substr(11).c_str());
+        else if (line.rfind("uv_scale_v=", 0) == 0) sv = (float)atof(line.substr(11).c_str());
+        else if (line.rfind("uv_offset_u=", 0) == 0) ou = (float)atof(line.substr(12).c_str());
+        else if (line.rfind("uv_offset_v=", 0) == 0) ov = (float)atof(line.substr(12).c_str());
+        else if (line.rfind("uv_rotate_deg=", 0) == 0) rotDeg = (float)atof(line.substr(14).c_str());
+    }
+}
 
+static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg)
+{
     std::ofstream out(matPath, std::ios::out | std::ios::trunc);
     if (!out.is_open()) return false;
     out << "texture=" << tex << "\n";
     out << "uv_scale=" << uvScale << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "uv_scale_u=" << su << "\n";
+    out << "uv_scale_v=" << sv << "\n";
+    out << "uv_offset_u=" << ou << "\n";
+    out << "uv_offset_v=" << ov << "\n";
+    out << "uv_rotate_deg=" << rotDeg << "\n";
     return true;
+}
+
+static bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
+{
+    float uvScale = 0.0f;
+    bool allowUvRepeat = false;
+    float su, sv, ou, ov, rotDeg;
+    LoadMaterialUvScale(matPath, uvScale);
+    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
+    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
+    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
 }
 
 static bool SaveMaterialUvScale(const std::filesystem::path& matPath, float uvScale)
 {
     std::string tex;
     bool allowUvRepeat = false;
+    float su, sv, ou, ov, rotDeg;
     LoadMaterialTexture(matPath, tex);
     LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
-
-    std::ofstream out(matPath, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "texture=" << tex << "\n";
-    out << "uv_scale=" << uvScale << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    return true;
+    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
+    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
 }
 
 static bool SaveMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool allowUvRepeat)
 {
     std::string tex;
     float uvScale = 0.0f;
+    float su, sv, ou, ov, rotDeg;
     LoadMaterialTexture(matPath, tex);
     LoadMaterialUvScale(matPath, uvScale);
+    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
+    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+}
 
-    std::ofstream out(matPath, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "texture=" << tex << "\n";
-    out << "uv_scale=" << uvScale << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    return true;
+static bool SaveMaterialUvTransform(const std::filesystem::path& matPath, float su, float sv, float ou, float ov, float rotDeg)
+{
+    std::string tex;
+    float uvScale = 0.0f;
+    bool allowUvRepeat = false;
+    LoadMaterialTexture(matPath, tex);
+    LoadMaterialUvScale(matPath, uvScale);
+    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
+    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
 }
 
 static std::string GetStaticMeshPrimaryMaterial(const StaticMesh3DNode& n)
@@ -1146,6 +1181,23 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
         if (mat && mat->Get(AI_MATKEY_NAME, matName) == AI_SUCCESS && matName.length > 0)
             matNameSafe = SanitizeToken(matName.C_Str());
 
+        float uvSu = 1.0f, uvSv = 1.0f, uvOu = 0.0f, uvOv = 0.0f, uvRotDeg = 0.0f;
+        if (mat)
+        {
+            aiUVTransform uvT{};
+#if defined(aiTextureType_BASE_COLOR)
+            if (mat->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_BASE_COLOR, 0), uvT) == AI_SUCCESS ||
+                mat->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_DIFFUSE, 0), uvT) == AI_SUCCESS)
+#else
+            if (mat->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_DIFFUSE, 0), uvT) == AI_SUCCESS)
+#endif
+            {
+                uvSu = uvT.mScaling.x; uvSv = uvT.mScaling.y;
+                uvOu = uvT.mTranslation.x; uvOv = uvT.mTranslation.y;
+                uvRotDeg = uvT.mRotation * 57.2957795f;
+            }
+        }
+
         std::filesystem::path texSrc;
         bool texFound = ResolveMaterialTexturePath(scene, mat, modelPath, texSrc, warn);
         if (!texFound)
@@ -1190,6 +1242,7 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
         std::filesystem::path matOut = MakeUniqueAssetPath(matDir, matBase, ".nebmat");
         if (SaveMaterialTexture(matOut, texRel))
         {
+            SaveMaterialUvTransform(matOut, uvSu, uvSv, uvOu, uvOv, uvRotDeg);
             generated++;
             if ((int)ui < kStaticMeshMaterialSlots)
                 importedSlotMaterials[(int)ui] = ToProjectRelativePath(matOut);
@@ -6263,16 +6316,64 @@ int main(int, char**)
                                             }
                                             else
                                             {
+                                                uint16_t q[4] = { fr.indices[0], fr.indices[1], fr.indices[2], fr.indices[3] };
+                                                Vec3 uv[4] = { fr.uvs[0], fr.uvs[1], fr.uvs[2], fr.uvs[3] };
+
+                                                // Mirror parity correction + phase alignment (ported from Saturn canonical quad handling).
+                                                bool mirrored = false;
+                                                if (q[0] < runtimeVerts.size() && q[1] < runtimeVerts.size() && q[2] < runtimeVerts.size() && q[3] < runtimeVerts.size())
+                                                {
+                                                    const Vec3& p0 = runtimeVerts[q[0]];
+                                                    const Vec3& p1 = runtimeVerts[q[1]];
+                                                    const Vec3& p2 = runtimeVerts[q[2]];
+                                                    const Vec3& p3 = runtimeVerts[q[3]];
+                                                    Vec3 e10{ p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+                                                    Vec3 e30{ p3.x - p0.x, p3.y - p0.y, p3.z - p0.z };
+                                                    Vec3 e20{ p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+                                                    Vec3 n{ e10.y * e20.z - e10.z * e20.y, e10.z * e20.x - e10.x * e20.z, e10.x * e20.y - e10.y * e20.x };
+                                                    Vec3 cx{ e10.y * e30.z - e10.z * e30.y, e10.z * e30.x - e10.x * e30.z, e10.x * e30.y - e10.y * e30.x };
+                                                    float geomDet = cx.x * n.x + cx.y * n.y + cx.z * n.z;
+
+                                                    float du1 = uv[1].x - uv[0].x;
+                                                    float dv1 = uv[1].y - uv[0].y;
+                                                    float du2 = uv[3].x - uv[0].x;
+                                                    float dv2 = uv[3].y - uv[0].y;
+                                                    float uvDet = du1 * dv2 - dv1 * du2;
+                                                    mirrored = ((geomDet * uvDet) < 0.0f);
+                                                }
+
+                                                if (mirrored)
+                                                {
+                                                    std::swap(q[0], q[1]);
+                                                    std::swap(q[2], q[3]);
+                                                    std::swap(uv[0], uv[1]);
+                                                    std::swap(uv[2], uv[3]);
+                                                }
+
+                                                float uMin = uv[0].x, vMin = uv[0].y;
+                                                for (int k = 1; k < 4; ++k) { uMin = std::min(uMin, uv[k].x); vMin = std::min(vMin, uv[k].y); }
+                                                int bestRot = 0; float bestScore = 1e30f;
+                                                for (int r = 0; r < 4; ++r)
+                                                {
+                                                    float du = uv[r].x - uMin;
+                                                    float dv = uv[r].y - vMin;
+                                                    float score = du * du + dv * dv;
+                                                    if (score < bestScore) { bestScore = score; bestRot = r; }
+                                                }
+
+                                                uint16_t rq[4] = { q[bestRot & 3], q[(bestRot + 1) & 3], q[(bestRot + 2) & 3], q[(bestRot + 3) & 3] };
+                                                Vec3 ruv[4] = { uv[bestRot & 3], uv[(bestRot + 1) & 3], uv[(bestRot + 2) & 3], uv[(bestRot + 3) & 3] };
+
                                                 const int fan[2][3] = { {0,1,2}, {0,2,3} };
                                                 for (int f = 0; f < 2; ++f)
                                                 {
                                                     int i0 = fan[f][0], i1 = fan[f][1], i2 = fan[f][2];
-                                                    runtimeIndices.push_back(fr.indices[i0]);
-                                                    runtimeIndices.push_back(fr.indices[i1]);
-                                                    runtimeIndices.push_back(fr.indices[i2]);
-                                                    runtimeTriUvs.push_back(fr.uvs[i0]);
-                                                    runtimeTriUvs.push_back(fr.uvs[i1]);
-                                                    runtimeTriUvs.push_back(fr.uvs[i2]);
+                                                    runtimeIndices.push_back(rq[i0]);
+                                                    runtimeIndices.push_back(rq[i1]);
+                                                    runtimeIndices.push_back(rq[i2]);
+                                                    runtimeTriUvs.push_back(ruv[i0]);
+                                                    runtimeTriUvs.push_back(ruv[i1]);
+                                                    runtimeTriUvs.push_back(ruv[i2]);
                                                     runtimeTriMat.push_back(fr.material);
                                                 }
                                             }
@@ -6390,11 +6491,25 @@ int main(int, char**)
 
                             std::vector<int> runtimeSlotW((size_t)runtimeSlotCount, 64);
                             std::vector<int> runtimeSlotH((size_t)runtimeSlotCount, 64);
+                            std::vector<float> runtimeSlotUScale((size_t)runtimeSlotCount, 1.0f);
+                            std::vector<float> runtimeSlotVScale((size_t)runtimeSlotCount, 1.0f);
+                            std::vector<float> runtimeSlotUvSu((size_t)runtimeSlotCount, 1.0f);
+                            std::vector<float> runtimeSlotUvSv((size_t)runtimeSlotCount, 1.0f);
+                            std::vector<float> runtimeSlotUvOu((size_t)runtimeSlotCount, 0.0f);
+                            std::vector<float> runtimeSlotUvOv((size_t)runtimeSlotCount, 0.0f);
+                            std::vector<float> runtimeSlotUvRotDeg((size_t)runtimeSlotCount, 0.0f);
                             std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount);
                             auto fillCheckerSlot = [&](int si)
                             {
                                 runtimeSlotW[(size_t)si] = 64;
                                 runtimeSlotH[(size_t)si] = 64;
+                                runtimeSlotUScale[(size_t)si] = 1.0f;
+                                runtimeSlotVScale[(size_t)si] = 1.0f;
+                                runtimeSlotUvSu[(size_t)si] = 1.0f;
+                                runtimeSlotUvSv[(size_t)si] = 1.0f;
+                                runtimeSlotUvOu[(size_t)si] = 0.0f;
+                                runtimeSlotUvOv[(size_t)si] = 0.0f;
+                                runtimeSlotUvRotDeg[(size_t)si] = 0.0f;
                                 runtimeSlotTex[(size_t)si].assign(64 * 64, 0);
                                 int r = 180 + (si * 29) % 60;
                                 int g = 180 + (si * 47) % 60;
@@ -6412,7 +6527,7 @@ int main(int, char**)
                                 }
                             };
 
-                            auto loadNebTexNative = [&](const std::filesystem::path& texAbs, int& outW, int& outH, std::vector<uint16_t>& outPix)->bool
+                            auto loadNebTexNative = [&](const std::filesystem::path& texAbs, int& outW, int& outH, float& outUS, float& outVS, std::vector<uint16_t>& outPix)->bool
                             {
                                 std::ifstream tin(texAbs, std::ios::binary | std::ios::in);
                                 if (!tin.is_open()) return false;
@@ -6442,6 +6557,8 @@ int main(int, char**)
 
                                 // Strict mode: preserve original texel data exactly; pad to POT without resampling.
                                 outW = tw; outH = th;
+                                outUS = (float)w / (float)tw;
+                                outVS = (float)h / (float)th;
                                 outPix.assign((size_t)tw * (size_t)th, 0);
                                 for (int y = 0; y < (int)h; ++y)
                                 {
@@ -6467,6 +6584,13 @@ int main(int, char**)
                                     if (matAbs.extension() == ".nebmat")
                                     {
                                         std::string texRel;
+                                        float su = 1.0f, sv = 1.0f, ou = 0.0f, ov = 0.0f, rotDeg = 0.0f;
+                                        LoadMaterialUvTransform(matAbs, su, sv, ou, ov, rotDeg);
+                                        runtimeSlotUvSu[(size_t)si] = su;
+                                        runtimeSlotUvSv[(size_t)si] = sv;
+                                        runtimeSlotUvOu[(size_t)si] = ou;
+                                        runtimeSlotUvOv[(size_t)si] = ov;
+                                        runtimeSlotUvRotDeg[(size_t)si] = rotDeg;
                                         if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty()) texAbs = std::filesystem::path(gProjectDir) / texRel;
                                     }
                                     else if (matAbs.extension() == ".nebtex")
@@ -6476,11 +6600,47 @@ int main(int, char**)
 
                                     if (!texAbs.empty() && std::filesystem::exists(texAbs))
                                     {
-                                        loadedSlot = loadNebTexNative(texAbs, runtimeSlotW[(size_t)si], runtimeSlotH[(size_t)si], runtimeSlotTex[(size_t)si]);
+                                        loadedSlot = loadNebTexNative(texAbs, runtimeSlotW[(size_t)si], runtimeSlotH[(size_t)si], runtimeSlotUScale[(size_t)si], runtimeSlotVScale[(size_t)si], runtimeSlotTex[(size_t)si]);
                                     }
                                 }
 
                                 if (!loadedSlot) fillCheckerSlot(si);
+
+                                // slot mapping debug intentionally omitted in this path
+                            }
+
+                            std::vector<int> runtimeSlotFmt((size_t)runtimeSlotCount, 0); // 0=twiddled, 1=nontwiddled
+                            std::vector<std::vector<uint16_t>> runtimeSlotTexUpload((size_t)runtimeSlotCount);
+                            auto twiddleIndex = [](unsigned x, unsigned y)->unsigned
+                            {
+                                unsigned z = 0;
+                                for (unsigned b = 0; b < 16; ++b)
+                                {
+                                    z |= ((y >> b) & 1u) << (2u * b);
+                                    z |= ((x >> b) & 1u) << (2u * b + 1u);
+                                }
+                                return z;
+                            };
+                            auto isPow2 = [](int v)->bool { return v > 0 && (v & (v - 1)) == 0; };
+                            for (int si = 0; si < runtimeSlotCount; ++si)
+                            {
+                                int w = runtimeSlotW[(size_t)si], h = runtimeSlotH[(size_t)si];
+                                const auto& src = runtimeSlotTex[(size_t)si];
+                                auto& dst = runtimeSlotTexUpload[(size_t)si];
+                                dst.assign((size_t)w * (size_t)h, 0);
+                                bool canTwiddle = (w == h) && isPow2(w) && isPow2(h);
+                                if (canTwiddle)
+                                {
+                                    runtimeSlotFmt[(size_t)si] = 0;
+                                    for (unsigned yy = 0; yy < (unsigned)h; ++yy)
+                                        for (unsigned xx = 0; xx < (unsigned)w; ++xx)
+                                            dst[twiddleIndex(xx, yy)] = src[(size_t)yy * (size_t)w + (size_t)xx];
+                                }
+                                else
+                                {
+                                    runtimeSlotFmt[(size_t)si] = 1;
+                                    dst = src;
+                                }
                             }
 
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
@@ -6568,7 +6728,7 @@ int main(int, char**)
                                 for (size_t ui = 0; ui < runtimeTriUvs.size(); ++ui)
                                 {
                                     const Vec3& uv = runtimeTriUvs[ui];
-                                    mc << "    {" << fstr(uv.x) << "," << fstr(1.0f - uv.y) << ",0.0f}";
+                                    mc << "    {" << fstr(uv.x) << "," << fstr(uv.y) << ",0.0f}";
                                     if (ui + 1 < runtimeTriUvs.size()) mc << ",";
                                     mc << "\n";
                                 }
@@ -6599,6 +6759,7 @@ int main(int, char**)
                                 mc << "  }\n";
                                 mc << "  enum { MAX_SLOT = 16 };\n";
                                 mc << "  pvr_poly_hdr_t hdrSlot[MAX_SLOT];\n";
+                                mc << "  pvr_ptr_t slotTx[MAX_SLOT] = {0};\n";
                                 mc << "  const int slotCount = " << runtimeSlotCount << ";\n";
                                 mc << "  static uint16_t slotW[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotW[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
@@ -6606,10 +6767,40 @@ int main(int, char**)
                                 mc << "  static uint16_t slotH[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotH[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
+                                mc << "  static float slotUS[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUScale[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotVS[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotVScale[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotUvSu[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvSu[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotUvSv[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvSv[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotUvOu[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvOu[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotUvOv[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvOv[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotUvRotDeg[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvRotDeg[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotHalfU[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(0.5f / (float)std::max(1, runtimeSlotW[(size_t)si])); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static float slotHalfV[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(0.5f / (float)std::max(1, runtimeSlotH[(size_t)si])); if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static uint8_t slotFmt[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFmt[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
                                 for (int si = 0; si < runtimeSlotCount; ++si)
                                 {
                                     mc << "  static uint16_t texbuf_" << si << "[] = {";
-                                    const auto& pix = runtimeSlotTex[(size_t)si];
+                                    const auto& pix = runtimeSlotTexUpload[(size_t)si];
                                     for (size_t pi = 0; pi < pix.size(); ++pi)
                                     {
                                         mc << (unsigned int)pix[pi];
@@ -6628,9 +6819,11 @@ int main(int, char**)
                                 mc << "    }\n";
                                 mc << "    int tw = slotW[s], th = slotH[s];\n";
                                 mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";
-                                mc << "    pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
+                                mc << "    if (!tx) tx = slotTx[0];\n";
+                                mc << "    else { slotTx[s] = tx; pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP); }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED, tw, th, tx, PVR_FILTER_BILINEAR);\n";
+                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | ((slotFmt[s] == 0) ? 0 : PVR_TXRFMT_NONTWIDDLED);\n";
+                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  int prevButtons = 0;\n";
@@ -6679,11 +6872,20 @@ int main(int, char**)
                                 mc << "      int a=tris[t*3+0], b=tris[t*3+1], c=tris[t*3+2];\n";
                                 mc << "      if (!(ok[a] && ok[b] && ok[c])) continue;\n";
                                 mc << "      SV sa = sv[a], sb = sv[b], sc = sv[c];\n";
-                                mc << "      sa.u = triUv[t*3+0].x; sa.v = triUv[t*3+0].y;\n";
-                                mc << "      sb.u = triUv[t*3+1].x; sb.v = triUv[t*3+1].y;\n";
-                                mc << "      sc.u = triUv[t*3+2].x; sc.v = triUv[t*3+2].y;\n";
                                 mc << "      int sid = (int)triMatNormal[t]; if (sid < 0 || sid >= slotCount) sid = 0;\n";
-                                mc << "      uint32 col = 0xFFFFFFFF;\n";
+                                mc << "      float us = slotUS[sid], vs = slotVS[sid];\n";
+                                mc << "      float hu = slotHalfU[sid], hv = slotHalfV[sid];\n";
+                                mc << "      float u0 = triUv[t*3+0].x, v0 = 1.0f - triUv[t*3+0].y;\n";
+                                mc << "      float u1 = triUv[t*3+1].x, v1 = 1.0f - triUv[t*3+1].y;\n";
+                                mc << "      float u2 = triUv[t*3+2].x, v2 = 1.0f - triUv[t*3+2].y;\n";
+                                mc << "      if (u0 < 0.0f) u0 = 0.0f; else if (u0 > 1.0f) u0 = 1.0f; if (v0 < 0.0f) v0 = 0.0f; else if (v0 > 1.0f) v0 = 1.0f;\n";
+                                mc << "      if (u1 < 0.0f) u1 = 0.0f; else if (u1 > 1.0f) u1 = 1.0f; if (v1 < 0.0f) v1 = 0.0f; else if (v1 > 1.0f) v1 = 1.0f;\n";
+                                mc << "      if (u2 < 0.0f) u2 = 0.0f; else if (u2 > 1.0f) u2 = 1.0f; if (v2 < 0.0f) v2 = 0.0f; else if (v2 > 1.0f) v2 = 1.0f;\n";
+                                mc << "      sa.u = (u0 * (1.0f - 2.0f*hu) + hu) * us; sa.v = (v0 * (1.0f - 2.0f*hv) + hv) * vs;\n";
+                                mc << "      sb.u = (u1 * (1.0f - 2.0f*hu) + hu) * us; sb.v = (v1 * (1.0f - 2.0f*hv) + hv) * vs;\n";
+                                mc << "      sc.u = (u2 * (1.0f - 2.0f*hu) + hu) * us; sc.v = (v2 * (1.0f - 2.0f*hv) + hv) * vs;\n";
+                                mc << "      uint8 tr = (uint8)(255 - ((sid * 17) & 31)); uint8 tg = (uint8)(255 - ((sid * 29) & 31)); uint8 tb = (uint8)(255 - ((sid * 11) & 31));\n";
+                                mc << "      uint32 col = 0xFF000000 | (tr << 16) | (tg << 8) | tb;\n";
                                 mc << "      draw_tri(&hdrSlot[sid], sa, sb, sc, col);\n";
                                 mc << "    }\n";
                                 mc << "\n";

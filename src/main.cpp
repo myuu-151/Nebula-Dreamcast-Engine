@@ -1316,6 +1316,25 @@ static bool LoadNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath)
     return false;
 }
 
+static int LoadNebTexFilterMode(const std::filesystem::path& nebtexPath)
+{
+    // 0=nearest, 1=bilinear
+    std::ifstream in(GetNebTexMetaPath(nebtexPath));
+    if (!in.is_open()) return 1; // Dreamcast default currently bilinear
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.rfind("filter=", 0) == 0)
+        {
+            std::string v = line.substr(7);
+            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+            if (v == "nearest") return 0;
+            if (v == "bilinear" || v == "linear") return 1;
+        }
+    }
+    return 1;
+}
+
 static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode)
 {
     const char* names[] = { "repeat", "extend", "clip", "mirror" };
@@ -1324,6 +1343,7 @@ static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode
     bool flipU = false, flipV = false;
     int saturnNpot = 1;
     bool allowUvRepeat = false;
+    int filterMode = 1;
     std::ifstream in(GetNebTexMetaPath(nebtexPath));
     std::string line;
     while (std::getline(in, line))
@@ -1338,6 +1358,12 @@ static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode
         }
         if (line.rfind("saturn_allow_uv_repeat=", 0) == 0)
             allowUvRepeat = (line.substr(23) == "1");
+        if (line.rfind("filter=", 0) == 0)
+        {
+            std::string v = line.substr(7);
+            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
+            filterMode = (v == "nearest") ? 0 : 1;
+        }
     }
 
     std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
@@ -1347,6 +1373,7 @@ static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
     out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
 }
 
@@ -1393,6 +1420,7 @@ static bool SaveNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath, in
     int wrapMode = LoadNebTexWrapMode(nebtexPath);
     bool flipU = false, flipV = false;
     bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
+    int filterMode = LoadNebTexFilterMode(nebtexPath);
     LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
     const char* wrapNames[] = { "repeat", "extend", "clip", "mirror" };
     if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
@@ -1405,6 +1433,7 @@ static bool SaveNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath, in
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
     out << "saturn_npot=" << (mode == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
 }
 
@@ -1413,6 +1442,7 @@ static bool SaveNebTexFlipOptions(const std::filesystem::path& nebtexPath, bool 
     int wrapMode = LoadNebTexWrapMode(nebtexPath);
     int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
     bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
+    int filterMode = LoadNebTexFilterMode(nebtexPath);
     const char* names[] = { "repeat", "extend", "clip", "mirror" };
     if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
     std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
@@ -1422,6 +1452,7 @@ static bool SaveNebTexFlipOptions(const std::filesystem::path& nebtexPath, bool 
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
     out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
 }
 
@@ -1429,6 +1460,7 @@ static bool SaveNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath, boo
 {
     int wrapMode = LoadNebTexWrapMode(nebtexPath);
     int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
+    int filterMode = LoadNebTexFilterMode(nebtexPath);
     bool flipU = false, flipV = false;
     LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
     const char* names[] = { "repeat", "extend", "clip", "mirror" };
@@ -1441,6 +1473,29 @@ static bool SaveNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath, boo
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
     out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
+    return true;
+}
+
+static bool SaveNebTexFilterMode(const std::filesystem::path& nebtexPath, int filterMode)
+{
+    int wrapMode = LoadNebTexWrapMode(nebtexPath);
+    int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
+    bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
+    bool flipU = false, flipV = false;
+    LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
+    const char* names[] = { "repeat", "extend", "clip", "mirror" };
+    if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
+    if (filterMode < 0 || filterMode > 1) filterMode = 1;
+
+    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+    out << "wrap=" << names[wrapMode] << "\n";
+    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
+    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
+    out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
+    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
+    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
 }
 
@@ -3428,8 +3483,10 @@ static GLuint LoadNebTexture(const std::filesystem::path& path)
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    int filterMode = LoadNebTexFilterMode(path);
+    GLint glFilter = (filterMode == 0) ? GL_NEAREST : GL_LINEAR;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, glFilter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, glFilter);
     int wrapMode = LoadNebTexWrapMode(path);
     GLint wrapS = GL_REPEAT;
     GLint wrapT = GL_REPEAT;
@@ -6484,14 +6541,41 @@ int main(int, char**)
                                 }
                             }
 
+                            // Normalize triangle material ids to dense slot indices (0..N-1)
+                            // so imported meshes with sparse/original material ids map correctly to
+                            // editor-assigned material slot rows.
+                            {
+                                // Build stable mapping by ascending material id so slot rows match
+                                // imported slot ordering (slot1->mat0, slot2->mat1, ...).
+                                std::set<int> uniqueMats;
+                                for (uint16_t tm : runtimeTriMat) uniqueMats.insert((int)tm);
+
+                                std::unordered_map<int, int> triMatToSlot;
+                                int nextSlot = 0;
+                                for (int tm : uniqueMats)
+                                {
+                                    int assigned = nextSlot < kStaticMeshMaterialSlots ? nextSlot : (kStaticMeshMaterialSlots - 1);
+                                    triMatToSlot[tm] = assigned;
+                                    if (nextSlot < kStaticMeshMaterialSlots) nextSlot++;
+                                }
+
+                                for (size_t ti = 0; ti < runtimeTriMat.size(); ++ti)
+                                {
+                                    int tm = (int)runtimeTriMat[ti];
+                                    auto it = triMatToSlot.find(tm);
+                                    runtimeTriMat[ti] = (uint16_t)((it != triMatToSlot.end()) ? it->second : 0);
+                                }
+                            }
+
                             int runtimeSlotCount = 1;
                             for (uint16_t tm : runtimeTriMat) runtimeSlotCount = std::max(runtimeSlotCount, (int)tm + 1);
-                            runtimeSlotCount = std::max(1, std::min(runtimeSlotCount, 16));
+                            runtimeSlotCount = std::max(1, std::min(runtimeSlotCount, kStaticMeshMaterialSlots));
 
                             std::vector<int> runtimeSlotW((size_t)runtimeSlotCount, 64);
                             std::vector<int> runtimeSlotH((size_t)runtimeSlotCount, 64);
                             std::vector<float> runtimeSlotUScale((size_t)runtimeSlotCount, 1.0f);
                             std::vector<float> runtimeSlotVScale((size_t)runtimeSlotCount, 1.0f);
+                            std::vector<int> runtimeSlotFilter((size_t)runtimeSlotCount, 1); // 0=nearest, 1=bilinear
                             // KOS strict: no per-slot material UV transform state in generated runtime.
                             std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount);
                             auto fillCheckerSlot = [&](int si)
@@ -6500,6 +6584,7 @@ int main(int, char**)
                                 runtimeSlotH[(size_t)si] = 64;
                                 runtimeSlotUScale[(size_t)si] = 1.0f;
                                 runtimeSlotVScale[(size_t)si] = 1.0f;
+                                runtimeSlotFilter[(size_t)si] = 0; // checker/debug textures look best nearest
                                 // KOS strict: no material UV transform state.
                                 runtimeSlotTex[(size_t)si].assign(64 * 64, 0);
                                 int r = 180 + (si * 29) % 60;
@@ -6587,6 +6672,8 @@ int main(int, char**)
                                     if (!texAbs.empty() && std::filesystem::exists(texAbs))
                                     {
                                         loadedSlot = loadNebTexNative(texAbs, runtimeSlotW[(size_t)si], runtimeSlotH[(size_t)si], runtimeSlotUScale[(size_t)si], runtimeSlotVScale[(size_t)si], runtimeSlotTex[(size_t)si]);
+                                        if (texAbs.extension() == ".nebtex")
+                                            runtimeSlotFilter[(size_t)si] = LoadNebTexFilterMode(texAbs);
                                     }
                                 }
 
@@ -6749,6 +6836,9 @@ int main(int, char**)
                                 mc << "  static uint8_t slotFmt[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFmt[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
+                                mc << "  static uint8_t slotFilter[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFilter[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
                                 for (int si = 0; si < runtimeSlotCount; ++si)
                                 {
                                     mc << "  static uint16_t texbuf_" << si << "[] = {";
@@ -6780,7 +6870,8 @@ int main(int, char**)
                                 mc << "    uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
                                 mc << "    uint32 layoutFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
                                 mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
-                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
+                                mc << "    pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
+                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, f);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  int prevButtons = 0;\n";
@@ -9899,18 +9990,22 @@ int main(int, char**)
 
                 int wrapMode = LoadNebTexWrapMode(gNebTexInspectorPath);
                 int saturnNpot = LoadNebTexSaturnNpotMode(gNebTexInspectorPath); // 0=pad, 1=resample
+                int filterMode = LoadNebTexFilterMode(gNebTexInspectorPath); // 0=nearest, 1=bilinear
                 const char* wrapOptions[] = { "Repeat", "Extend", "Clip", "Mirror" };
                 const char* saturnNpotOptions[] = { "Pad", "Resample" };
+                const char* filterOptions[] = { "Nearest", "Bilinear" };
                 bool flipU = false, flipV = false;
                 LoadNebTexFlipOptions(gNebTexInspectorPath, flipU, flipV);
                 bool changed = false;
                 changed |= ImGui::Combo("Extension", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
+                changed |= ImGui::Combo("Filter", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
                 changed |= ImGui::Combo("Saturn NPOT", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U", &flipU);
                 changed |= ImGui::Checkbox("Flip V", &flipV);
                 if (changed)
                 {
                     SaveNebTexWrapMode(gNebTexInspectorPath, wrapMode);
+                    SaveNebTexFilterMode(gNebTexInspectorPath, filterMode);
                     SaveNebTexSaturnNpotMode(gNebTexInspectorPath, saturnNpot);
                     SaveNebTexFlipOptions(gNebTexInspectorPath, flipU, flipV);
                     // Force immediate visual update: flush entire neb texture cache.
@@ -10025,18 +10120,22 @@ int main(int, char**)
 
                 int wrapMode = LoadNebTexWrapMode(gNebTexInspectorPath2);
                 int saturnNpot = LoadNebTexSaturnNpotMode(gNebTexInspectorPath2);
+                int filterMode = LoadNebTexFilterMode(gNebTexInspectorPath2);
                 const char* wrapOptions[] = { "Repeat", "Extend", "Clip", "Mirror" };
                 const char* saturnNpotOptions[] = { "Pad", "Resample" };
+                const char* filterOptions[] = { "Nearest", "Bilinear" };
                 bool flipU = false, flipV = false;
                 LoadNebTexFlipOptions(gNebTexInspectorPath2, flipU, flipV);
                 bool changed = false;
                 changed |= ImGui::Combo("Extension##B", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
+                changed |= ImGui::Combo("Filter##B", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
                 changed |= ImGui::Combo("Saturn NPOT##B", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U##B", &flipU);
                 changed |= ImGui::Checkbox("Flip V##B", &flipV);
                 if (changed)
                 {
                     SaveNebTexWrapMode(gNebTexInspectorPath2, wrapMode);
+                    SaveNebTexFilterMode(gNebTexInspectorPath2, filterMode);
                     SaveNebTexSaturnNpotMode(gNebTexInspectorPath2, saturnNpot);
                     SaveNebTexFlipOptions(gNebTexInspectorPath2, flipU, flipV);
                     for (auto& kv : gNebTextureCache)

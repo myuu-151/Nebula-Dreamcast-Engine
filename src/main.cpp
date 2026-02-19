@@ -6634,7 +6634,7 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "typedef struct { float x,y,z; } V3;\n";
                                 mc << "typedef struct { float x,y,z,u,v; } SV;\n";
-                                mc << "static inline unsigned twid(unsigned x, unsigned y) { unsigned z=0; for (unsigned b=0; b<16; ++b) { z |= ((y>>b)&1u) << (2u*b); z |= ((x>>b)&1u) << (2u*b+1u); } return z; }\n";
+                                mc << "static inline unsigned twid(unsigned x, unsigned y) { unsigned z=0; for (unsigned b=0; b<16; ++b) { z |= ((x>>b)&1u) << (2u*b); z |= ((y>>b)&1u) << (2u*b+1u); } return z; }\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "static const float kCamPosInit[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
@@ -6815,7 +6815,7 @@ int main(int, char**)
                                 mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | ((slotFmt[s] == 0) ? 0 : PVR_TXRFMT_NONTWIDDLED);\n";
+                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_NOSTRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";

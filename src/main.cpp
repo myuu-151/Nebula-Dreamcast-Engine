@@ -6492,11 +6492,7 @@ int main(int, char**)
                             std::vector<int> runtimeSlotH((size_t)runtimeSlotCount, 64);
                             std::vector<float> runtimeSlotUScale((size_t)runtimeSlotCount, 1.0f);
                             std::vector<float> runtimeSlotVScale((size_t)runtimeSlotCount, 1.0f);
-                            std::vector<float> runtimeSlotUvSu((size_t)runtimeSlotCount, 1.0f);
-                            std::vector<float> runtimeSlotUvSv((size_t)runtimeSlotCount, 1.0f);
-                            std::vector<float> runtimeSlotUvOu((size_t)runtimeSlotCount, 0.0f);
-                            std::vector<float> runtimeSlotUvOv((size_t)runtimeSlotCount, 0.0f);
-                            std::vector<float> runtimeSlotUvRotDeg((size_t)runtimeSlotCount, 0.0f);
+                            // KOS strict: no per-slot material UV transform state in generated runtime.
                             std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount);
                             auto fillCheckerSlot = [&](int si)
                             {
@@ -6504,11 +6500,7 @@ int main(int, char**)
                                 runtimeSlotH[(size_t)si] = 64;
                                 runtimeSlotUScale[(size_t)si] = 1.0f;
                                 runtimeSlotVScale[(size_t)si] = 1.0f;
-                                runtimeSlotUvSu[(size_t)si] = 1.0f;
-                                runtimeSlotUvSv[(size_t)si] = 1.0f;
-                                runtimeSlotUvOu[(size_t)si] = 0.0f;
-                                runtimeSlotUvOv[(size_t)si] = 0.0f;
-                                runtimeSlotUvRotDeg[(size_t)si] = 0.0f;
+                                // KOS strict: no material UV transform state.
                                 runtimeSlotTex[(size_t)si].assign(64 * 64, 0);
                                 int r = 180 + (si * 29) % 60;
                                 int g = 180 + (si * 47) % 60;
@@ -6550,7 +6542,8 @@ int main(int, char**)
                                     uint8_t r5 = (uint8_t)((p >> 10) & 0x1F);
                                     uint8_t g5 = (uint8_t)((p >> 5) & 0x1F);
                                     uint8_t b5 = (uint8_t)(p & 0x1F);
-                                    uint16_t rgb565 = (uint16_t)((r5 << 11) | (((g5 << 6) | (g5 << 1) | (g5 >> 4)) << 5) | b5);
+                                    uint16_t g6 = (uint16_t)((g5 << 1) | (g5 >> 4));
+                                    uint16_t rgb565 = (uint16_t)((r5 << 11) | (g6 << 5) | b5);
                                     src[i] = rgb565;
                                 }
 
@@ -6582,14 +6575,8 @@ int main(int, char**)
                                     std::filesystem::path texAbs;
                                     if (matAbs.extension() == ".nebmat")
                                     {
+                                        // KOS strict branch: ignore editor/Saturn-era UV transform fields in .nebmat.
                                         std::string texRel;
-                                        float su = 1.0f, sv = 1.0f, ou = 0.0f, ov = 0.0f, rotDeg = 0.0f;
-                                        LoadMaterialUvTransform(matAbs, su, sv, ou, ov, rotDeg);
-                                        runtimeSlotUvSu[(size_t)si] = su;
-                                        runtimeSlotUvSv[(size_t)si] = sv;
-                                        runtimeSlotUvOu[(size_t)si] = ou;
-                                        runtimeSlotUvOv[(size_t)si] = ov;
-                                        runtimeSlotUvRotDeg[(size_t)si] = rotDeg;
                                         if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty()) texAbs = std::filesystem::path(gProjectDir) / texRel;
                                     }
                                     else if (matAbs.extension() == ".nebtex")
@@ -6618,6 +6605,7 @@ int main(int, char**)
                                 auto& dst = runtimeSlotTexUpload[(size_t)si];
                                 bool canTwiddle = (w == h) && isPow2(w) && isPow2(h);
                                 runtimeSlotFmt[(size_t)si] = canTwiddle ? 0 : 1;
+                                // slot format chosen from texture dimensions/capability only
                                 dst = src; // keep linear source order; runtime upload path handles twiddle conversion when needed
                             }
 
@@ -6752,21 +6740,7 @@ int main(int, char**)
                                 mc << "  static float slotVS[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotVScale[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
-                                mc << "  static float slotUvSu[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvSu[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotUvSv[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvSv[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotUvOu[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvOu[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotUvOv[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvOv[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotUvRotDeg[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUvRotDeg[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
+                                // KOS strict: omit per-slot material UV transform arrays.
                                 mc << "  static float slotHalfU[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(0.5f / (float)std::max(1, runtimeSlotW[(size_t)si])); if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
@@ -6815,7 +6789,7 @@ int main(int, char**)
                                 mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_NOSTRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
+                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_POW2_STRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";

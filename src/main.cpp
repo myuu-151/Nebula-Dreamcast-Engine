@@ -6550,7 +6550,8 @@ int main(int, char**)
                                     uint8_t r5 = (uint8_t)((p >> 10) & 0x1F);
                                     uint8_t g5 = (uint8_t)((p >> 5) & 0x1F);
                                     uint8_t b5 = (uint8_t)(p & 0x1F);
-                                    uint16_t rgb565 = (uint16_t)((r5 << 11) | (((g5 << 6) | (g5 << 1) | (g5 >> 4)) << 5) | b5);
+                                    uint16_t g6 = (uint16_t)((g5 << 1) | (g5 >> 4));
+                                    uint16_t rgb565 = (uint16_t)((r5 << 11) | (g6 << 5) | b5);
                                     src[i] = rgb565;
                                 }
 
@@ -6618,6 +6619,7 @@ int main(int, char**)
                                 auto& dst = runtimeSlotTexUpload[(size_t)si];
                                 bool canTwiddle = (w == h) && isPow2(w) && isPow2(h);
                                 runtimeSlotFmt[(size_t)si] = canTwiddle ? 0 : 1;
+                                if (si == 0) runtimeSlotFmt[(size_t)si] = 1; // test: force slot0 linear/nontwiddled
                                 dst = src; // keep linear source order; runtime upload path handles twiddle conversion when needed
                             }
 
@@ -6815,7 +6817,7 @@ int main(int, char**)
                                 mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_NOSTRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
+                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_POW2_STRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";

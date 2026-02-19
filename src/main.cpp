@@ -4026,7 +4026,6 @@ static void ImportAssetsToCurrentFolder(const std::vector<std::string>& pickedLi
         {
             Assimp::Importer importer;
             const aiScene* scene = importer.ReadFile(picked,
-                aiProcess_Triangulate |
                 aiProcess_JoinIdenticalVertices |
                 aiProcess_PreTransformVertices |
                 aiProcess_GlobalScale);

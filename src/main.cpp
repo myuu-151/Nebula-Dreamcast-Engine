@@ -15,6 +15,7 @@
 #include <sstream>
 #include <cctype>
 #include <algorithm>
+#include <set>
 #include <unordered_map>
 #include <iterator>
 #include <array>
@@ -2949,6 +2950,7 @@ static bool ExportNebMesh(const aiScene* scene, const std::filesystem::path& out
     uint32_t vertexCount = 0;
     uint32_t indexCount = 0;
     bool hasUv0 = false;
+    std::vector<int> meshUvChannel(scene->mNumMeshes, -1);
     std::vector<aiMatrix4x4> meshGlobal(scene->mNumMeshes, aiMatrix4x4());
     for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
     {
@@ -2961,8 +2963,28 @@ static bool ExportNebMesh(const aiScene* scene, const std::filesystem::path& out
             if (face.mNumIndices >= 3)
                 indexCount += (face.mNumIndices - 2) * 3; // fan triangulation
         }
-        if (mesh->HasTextureCoords(0) && mesh->mNumUVComponents[0] >= 2)
-            hasUv0 = true;
+        int bestUvChannel = -1;
+        float bestSpan = -1.0f;
+        for (int ch = 0; ch < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++ch)
+        {
+            if (!(mesh->HasTextureCoords(ch) && mesh->mNumUVComponents[ch] >= 2)) continue;
+            float minU = mesh->mTextureCoords[ch][0].x, maxU = minU;
+            float minV = mesh->mTextureCoords[ch][0].y, maxV = minV;
+            for (unsigned int v = 1; v < mesh->mNumVertices; ++v)
+            {
+                aiVector3D uv = mesh->mTextureCoords[ch][v];
+                minU = std::min(minU, uv.x); maxU = std::max(maxU, uv.x);
+                minV = std::min(minV, uv.y); maxV = std::max(maxV, uv.y);
+            }
+            float span = (maxU - minU) + (maxV - minV);
+            if (span > bestSpan)
+            {
+                bestSpan = span;
+                bestUvChannel = ch;
+            }
+        }
+        meshUvChannel[m] = bestUvChannel;
+        if (bestUvChannel >= 0) hasUv0 = true;
 
         const aiNode* meshNode = AiFindNodeWithMesh(scene->mRootNode, m);
         aiMatrix4x4 g;
@@ -3029,10 +3051,11 @@ static bool ExportNebMesh(const aiScene* scene, const std::filesystem::path& out
         {
             const aiMesh* mesh = scene->mMeshes[m];
             if (!mesh) continue;
-            bool meshHasUv = (mesh->HasTextureCoords(0) && mesh->mNumUVComponents[0] >= 2);
+            int uvCh = ((int)m < (int)meshUvChannel.size()) ? meshUvChannel[m] : -1;
+            bool meshHasUv = (uvCh >= 0 && mesh->HasTextureCoords(uvCh) && mesh->mNumUVComponents[uvCh] >= 2);
             for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
             {
-                aiVector3D uv = meshHasUv ? mesh->mTextureCoords[0][v] : aiVector3D(0, 0, 0);
+                aiVector3D uv = meshHasUv ? mesh->mTextureCoords[uvCh][v] : aiVector3D(0, 0, 0);
                 WriteS16BE(out, ToS16Fixed8_8(uv.x));
                 WriteS16BE(out, ToS16Fixed8_8(uv.y));
             }
@@ -3078,10 +3101,11 @@ static bool ExportNebMesh(const aiScene* scene, const std::filesystem::path& out
 
             faceTopoStream.push_back((uint8_t)std::min<unsigned int>(face.mNumIndices, 255u));
 
+            int uvCh = ((int)m < (int)meshUvChannel.size()) ? meshUvChannel[m] : -1;
             auto getUv = [&](unsigned int localIdx)->Vec3 {
-                if (!(mesh->HasTextureCoords(0) && mesh->mNumUVComponents[0] >= 2)) return Vec3{ 0,0,0 };
+                if (!(uvCh >= 0 && mesh->HasTextureCoords(uvCh) && mesh->mNumUVComponents[uvCh] >= 2)) return Vec3{ 0,0,0 };
                 if (localIdx >= mesh->mNumVertices) return Vec3{ 0,0,0 };
-                aiVector3D uv = mesh->mTextureCoords[0][localIdx];
+                aiVector3D uv = mesh->mTextureCoords[uvCh][localIdx];
                 return Vec3{ uv.x, uv.y, 0.0f };
             };
             auto getPos = [&](unsigned int localIdx)->Vec3 {
@@ -3949,6 +3973,7 @@ static void ImportAssetsToCurrentFolder(const std::vector<std::string>& pickedLi
         {
             Assimp::Importer importer;
             const aiScene* scene = importer.ReadFile(picked,
+                aiProcess_Triangulate |
                 aiProcess_JoinIdenticalVertices |
                 aiProcess_PreTransformVertices |
                 aiProcess_GlobalScale);
@@ -6200,7 +6225,10 @@ int main(int, char**)
                             if (!haveMesh) { meshSrc.x = 0.f; meshSrc.y = 0.f; meshSrc.z = 0.f; meshSrc.scaleX = 1.f; meshSrc.scaleY = 1.f; meshSrc.scaleZ = 1.f; }
 
                             std::vector<Vec3> runtimeVerts;
+                            std::vector<Vec3> runtimeUvs;
                             std::vector<uint16_t> runtimeIndices;
+                            std::vector<Vec3> runtimeTriUvs;
+                            std::vector<uint16_t> runtimeTriMat;
                             {
                                 std::filesystem::path meshAbs;
                                 if (!meshSrc.mesh.empty()) meshAbs = std::filesystem::path(gProjectDir) / meshSrc.mesh;
@@ -6210,6 +6238,46 @@ int main(int, char**)
                                 {
                                     runtimeVerts = nm->positions;
                                     runtimeIndices = nm->indices;
+                                    runtimeUvs.resize(runtimeVerts.size(), Vec3{ 0.0f, 0.0f, 0.0f });
+                                    if (nm->uvs.size() == nm->positions.size())
+                                    {
+                                        for (size_t i = 0; i < runtimeVerts.size(); ++i) runtimeUvs[i] = nm->uvs[i];
+                                    }
+
+                                    if (nm->hasFaceRecords && !nm->faceRecords.empty())
+                                    {
+                                        runtimeIndices.clear();
+                                        runtimeTriUvs.clear();
+                                        for (const auto& fr : nm->faceRecords)
+                                        {
+                                            int ar = (fr.arity >= 3 && fr.arity <= 4) ? (int)fr.arity : 3;
+                                            if (ar == 3)
+                                            {
+                                                runtimeIndices.push_back(fr.indices[0]);
+                                                runtimeIndices.push_back(fr.indices[1]);
+                                                runtimeIndices.push_back(fr.indices[2]);
+                                                runtimeTriUvs.push_back(fr.uvs[0]);
+                                                runtimeTriUvs.push_back(fr.uvs[1]);
+                                                runtimeTriUvs.push_back(fr.uvs[2]);
+                                                runtimeTriMat.push_back(fr.material);
+                                            }
+                                            else
+                                            {
+                                                const int fan[2][3] = { {0,1,2}, {0,2,3} };
+                                                for (int f = 0; f < 2; ++f)
+                                                {
+                                                    int i0 = fan[f][0], i1 = fan[f][1], i2 = fan[f][2];
+                                                    runtimeIndices.push_back(fr.indices[i0]);
+                                                    runtimeIndices.push_back(fr.indices[i1]);
+                                                    runtimeIndices.push_back(fr.indices[i2]);
+                                                    runtimeTriUvs.push_back(fr.uvs[i0]);
+                                                    runtimeTriUvs.push_back(fr.uvs[i1]);
+                                                    runtimeTriUvs.push_back(fr.uvs[i2]);
+                                                    runtimeTriMat.push_back(fr.material);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 else
                                 {
@@ -6218,7 +6286,193 @@ int main(int, char**)
                                         {-0.5f,-0.5f, 0.5f},{0.5f,-0.5f, 0.5f},{0.5f,0.5f, 0.5f},{-0.5f,0.5f, 0.5f}
                                     };
                                     runtimeIndices = {0,1,2, 0,2,3, 4,7,6, 4,6,5, 0,4,5, 0,5,1, 3,2,6, 3,6,7, 1,5,6, 1,6,2, 0,3,7, 0,7,4};
+                                    runtimeUvs = {
+                                        {0,1,0},{1,1,0},{1,0,0},{0,0,0},
+                                        {0,1,0},{1,1,0},{1,0,0},{0,0,0}
+                                    };
                                 }
+
+                                if (runtimeUvs.size() != runtimeVerts.size())
+                                    runtimeUvs.resize(runtimeVerts.size(), Vec3{ 0.0f, 0.0f, 0.0f });
+
+                                if (runtimeTriUvs.size() != runtimeIndices.size())
+                                {
+                                    runtimeTriUvs.clear();
+                                    runtimeTriUvs.reserve(runtimeIndices.size());
+                                    for (size_t ii = 0; ii < runtimeIndices.size(); ++ii)
+                                    {
+                                        uint16_t vi = runtimeIndices[ii];
+                                        runtimeTriUvs.push_back((vi < runtimeUvs.size()) ? runtimeUvs[vi] : Vec3{ 0.0f, 0.0f, 0.0f });
+                                    }
+                                }
+
+                                const size_t triCountLocal = runtimeIndices.size() / 3;
+                                if (runtimeTriMat.size() != triCountLocal)
+                                {
+                                    runtimeTriMat.clear();
+                                    runtimeTriMat.resize(triCountLocal, 0);
+                                    if (!meshAbs.empty())
+                                    {
+                                        const NebMesh* nm2 = GetNebMesh(meshAbs);
+                                        if (nm2 && nm2->faceMaterial.size() == triCountLocal)
+                                        {
+                                            for (size_t ti = 0; ti < triCountLocal; ++ti) runtimeTriMat[ti] = nm2->faceMaterial[ti];
+                                        }
+                                    }
+                                }
+
+                                // Safety fallback: some imported meshes collapse face-corner UVs to unit-square corners
+                                // (0/1 only) which causes severe per-triangle checker distortion. If UV diversity is implausibly
+                                // low for a larger indexed mesh, prefer indexed vertex UVs.
+                                if (runtimeIndices.size() >= 96 && runtimeTriUvs.size() == runtimeIndices.size())
+                                {
+                                    std::set<uint32_t> uvKeys;
+                                    for (const auto& uv : runtimeTriUvs)
+                                    {
+                                        int u = (int)std::lround(uv.x * 256.0f);
+                                        int v = (int)std::lround(uv.y * 256.0f);
+                                        uint32_t key = ((uint32_t)(u & 0xFFFF) << 16) | (uint32_t)(v & 0xFFFF);
+                                        uvKeys.insert(key);
+                                        if (uvKeys.size() > 8) break;
+                                    }
+                                    if (uvKeys.size() <= 4)
+                                    {
+                                        // Collapsed UV fallback: generate per-triangle dominant-axis planar UVs.
+                                        float minX = runtimeVerts.empty() ? 0.0f : runtimeVerts[0].x;
+                                        float maxX = minX;
+                                        float minY = runtimeVerts.empty() ? 0.0f : runtimeVerts[0].y;
+                                        float maxY = minY;
+                                        float minZ = runtimeVerts.empty() ? 0.0f : runtimeVerts[0].z;
+                                        float maxZ = minZ;
+                                        for (const auto& p : runtimeVerts)
+                                        {
+                                            minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+                                            minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+                                            minZ = std::min(minZ, p.z); maxZ = std::max(maxZ, p.z);
+                                        }
+                                        float invX = (maxX - minX) > 1e-6f ? (1.0f / (maxX - minX)) : 1.0f;
+                                        float invY = (maxY - minY) > 1e-6f ? (1.0f / (maxY - minY)) : 1.0f;
+                                        float invZ = (maxZ - minZ) > 1e-6f ? (1.0f / (maxZ - minZ)) : 1.0f;
+
+                                        runtimeTriUvs.clear();
+                                        runtimeTriUvs.reserve(runtimeIndices.size());
+                                        for (size_t ii = 0; ii + 2 < runtimeIndices.size(); ii += 3)
+                                        {
+                                            uint16_t ia = runtimeIndices[ii + 0];
+                                            uint16_t ib = runtimeIndices[ii + 1];
+                                            uint16_t ic = runtimeIndices[ii + 2];
+                                            Vec3 pa = (ia < runtimeVerts.size()) ? runtimeVerts[ia] : Vec3{ 0,0,0 };
+                                            Vec3 pb = (ib < runtimeVerts.size()) ? runtimeVerts[ib] : Vec3{ 0,0,0 };
+                                            Vec3 pc = (ic < runtimeVerts.size()) ? runtimeVerts[ic] : Vec3{ 0,0,0 };
+
+                                            Vec3 e1{ pb.x - pa.x, pb.y - pa.y, pb.z - pa.z };
+                                            Vec3 e2{ pc.x - pa.x, pc.y - pa.y, pc.z - pa.z };
+                                            Vec3 n{ e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+                                            float ax = std::fabs(n.x), ay = std::fabs(n.y), az = std::fabs(n.z);
+
+                                            auto uvFrom = [&](const Vec3& p)->Vec3 {
+                                                if (ax >= ay && ax >= az) return Vec3{ (p.z - minZ) * invZ, 1.0f - (p.y - minY) * invY, 0.0f };
+                                                if (ay >= az)             return Vec3{ (p.x - minX) * invX, 1.0f - (p.z - minZ) * invZ, 0.0f };
+                                                return Vec3{ (p.x - minX) * invX, 1.0f - (p.y - minY) * invY, 0.0f };
+                                            };
+
+                                            runtimeTriUvs.push_back(uvFrom(pa));
+                                            runtimeTriUvs.push_back(uvFrom(pb));
+                                            runtimeTriUvs.push_back(uvFrom(pc));
+                                        }
+                                    }
+                                }
+                            }
+
+                            int runtimeSlotCount = 1;
+                            for (uint16_t tm : runtimeTriMat) runtimeSlotCount = std::max(runtimeSlotCount, (int)tm + 1);
+                            runtimeSlotCount = std::max(1, std::min(runtimeSlotCount, 16));
+
+                            std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount, std::vector<uint16_t>(64 * 64));
+                            auto fillCheckerSlot = [&](int si)
+                            {
+                                int r = 180 + (si * 29) % 60;
+                                int g = 180 + (si * 47) % 60;
+                                int b = 180 + (si * 13) % 60;
+                                for (int y = 0; y < 64; ++y)
+                                {
+                                    for (int x = 0; x < 64; ++x)
+                                    {
+                                        int c = ((x >> 3) ^ (y >> 3)) & 1;
+                                        int rr = c ? 255 : r;
+                                        int gg = c ? 255 : g;
+                                        int bb = c ? 255 : b;
+                                        runtimeSlotTex[(size_t)si][(size_t)y * 64 + (size_t)x] = (uint16_t)(((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3));
+                                    }
+                                }
+                            };
+
+                            auto loadNebTexTo64 = [&](const std::filesystem::path& texAbs, std::vector<uint16_t>& out64)->bool
+                            {
+                                std::ifstream tin(texAbs, std::ios::binary | std::ios::in);
+                                if (!tin.is_open()) return false;
+                                char mag[4];
+                                if (!tin.read(mag, 4)) return false;
+                                if (!(mag[0] == 'N' && mag[1] == 'E' && mag[2] == 'B' && mag[3] == 'T')) return false;
+                                uint16_t w = 0, h = 0, fmt = 0, flg = 0;
+                                if (!ReadU16BE(tin, w) || !ReadU16BE(tin, h) || !ReadU16BE(tin, fmt) || !ReadU16BE(tin, flg)) return false;
+                                if (fmt != 1 || w == 0 || h == 0) return false;
+
+                                std::vector<uint16_t> src((size_t)w * (size_t)h);
+                                for (size_t i = 0; i < src.size(); ++i)
+                                {
+                                    uint16_t p = 0;
+                                    if (!ReadU16BE(tin, p)) return false;
+                                    uint8_t r5 = (uint8_t)((p >> 10) & 0x1F);
+                                    uint8_t g5 = (uint8_t)((p >> 5) & 0x1F);
+                                    uint8_t b5 = (uint8_t)(p & 0x1F);
+                                    uint16_t rgb565 = (uint16_t)((r5 << 11) | (((g5 << 6) | (g5 << 1) | (g5 >> 4)) << 5) | b5);
+                                    src[i] = rgb565;
+                                }
+
+                                out64.assign(64 * 64, 0);
+                                for (int y = 0; y < 64; ++y)
+                                {
+                                    int sy = (int)((int64_t)y * (int64_t)h / 64);
+                                    if (sy < 0) sy = 0; if (sy >= (int)h) sy = (int)h - 1;
+                                    for (int x = 0; x < 64; ++x)
+                                    {
+                                        int sx = (int)((int64_t)x * (int64_t)w / 64);
+                                        if (sx < 0) sx = 0; if (sx >= (int)w) sx = (int)w - 1;
+                                        out64[(size_t)y * 64 + (size_t)x] = src[(size_t)sy * (size_t)w + (size_t)sx];
+                                    }
+                                }
+                                return true;
+                            };
+
+                            for (int si = 0; si < runtimeSlotCount; ++si)
+                            {
+                                bool loadedSlot = false;
+                                std::string matRef;
+                                if (si >= 0 && si < kStaticMeshMaterialSlots) matRef = meshSrc.materialSlots[si];
+                                if (matRef.empty() && si == 0) matRef = meshSrc.material;
+
+                                if (!matRef.empty())
+                                {
+                                    std::filesystem::path matAbs = std::filesystem::path(gProjectDir) / matRef;
+                                    std::filesystem::path texAbs;
+                                    if (matAbs.extension() == ".nebmat")
+                                    {
+                                        std::string texRel;
+                                        if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty()) texAbs = std::filesystem::path(gProjectDir) / texRel;
+                                    }
+                                    else if (matAbs.extension() == ".nebtex")
+                                    {
+                                        texAbs = matAbs;
+                                    }
+
+                                    if (!texAbs.empty() && std::filesystem::exists(texAbs))
+                                    {
+                                        loadedSlot = loadNebTexTo64(texAbs, runtimeSlotTex[(size_t)si]);
+                                    }
+                                }
+
+                                if (!loadedSlot) fillCheckerSlot(si);
                             }
 
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
@@ -6233,7 +6487,7 @@ int main(int, char**)
                                 mc << "KOS_INIT_FLAGS(INIT_DEFAULT);\n";
                                 mc << "\n";
                                 mc << "typedef struct { float x,y,z; } V3;\n";
-                                mc << "typedef struct { float x,y,z; uint32 argb; } SV;\n";
+                                mc << "typedef struct { float x,y,z,u,v; } SV;\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "static const float kCamPosInit[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
@@ -6279,9 +6533,9 @@ int main(int, char**)
                                 mc << "static void draw_tri(pvr_poly_hdr_t *hdr, SV a, SV b, SV c, uint32 argb) {\n";
                                 mc << "  pvr_vertex_t v;\n";
                                 mc << "  pvr_prim(hdr, sizeof(*hdr));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=a.x; v.y=a.y; v.z=a.z; v.u=0; v.v=0; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=b.x; v.y=b.y; v.z=b.z; v.u=0; v.v=0; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=c.x; v.y=c.y; v.z=c.z; v.u=0; v.v=0; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=a.x; v.y=a.y; v.z=a.z; v.u=a.u; v.v=a.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
                                 mc << "}\n";
                                 mc << "\n";
                                 mc << "int main(int argc, char **argv) {\n";
@@ -6290,9 +6544,6 @@ int main(int, char**)
                                 mc << "  dbgio_dev_select(\"fb\");\n";
                                 mc << "  dbgio_printf(\"Nebula Dreamcast Runtime (Scene Export v2)\\n\");\n";
                                 mc << "\n";
-                                mc << "  pvr_poly_cxt_t cxt; pvr_poly_hdr_t hdr;\n";
-                                mc << "  pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);\n";
-                                mc << "  pvr_poly_compile(&hdr, &cxt);\n";
                                 mc << "\n";
                                 mc << "  const int kVertCount = " << runtimeVerts.size() << ";\n";
                                 mc << "  const V3 base[] = {\n";
@@ -6305,6 +6556,22 @@ int main(int, char**)
                                 }
                                 mc << "  };\n";
                                 mc << "  const int kTriCount = " << (runtimeIndices.size() / 3) << ";\n";
+                                mc << "  const V3 triUvNormal[] = {\n";
+                                for (size_t ui = 0; ui < runtimeTriUvs.size(); ++ui)
+                                {
+                                    const Vec3& uv = runtimeTriUvs[ui];
+                                    mc << "    {" << fstr(uv.x) << "," << fstr(1.0f - uv.y) << ",0.0f}";
+                                    if (ui + 1 < runtimeTriUvs.size()) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
+                                mc << "  const uint16_t triMatNormal[] = {";
+                                for (size_t ti = 0; ti < runtimeTriMat.size(); ++ti)
+                                {
+                                    mc << runtimeTriMat[ti];
+                                    if (ti + 1 < runtimeTriMat.size()) mc << ",";
+                                }
+                                mc << "};\n";
                                 mc << "  const uint16_t trisNormal[] = {";
                                 for (size_t ii = 0; ii < runtimeIndices.size(); ++ii)
                                 {
@@ -6313,10 +6580,39 @@ int main(int, char**)
                                 }
                                 mc << "};\n";
                                 mc << "  uint16_t trisFlipped[kTriCount*3];\n";
+                                mc << "  V3 triUvFlipped[kTriCount*3];\n";
                                 mc << "  for (int t=0; t<kTriCount; ++t) {\n";
                                 mc << "    trisFlipped[t*3+0] = trisNormal[t*3+0];\n";
                                 mc << "    trisFlipped[t*3+1] = trisNormal[t*3+2];\n";
                                 mc << "    trisFlipped[t*3+2] = trisNormal[t*3+1];\n";
+                                mc << "    triUvFlipped[t*3+0] = triUvNormal[t*3+0];\n";
+                                mc << "    triUvFlipped[t*3+1] = triUvNormal[t*3+2];\n";
+                                mc << "    triUvFlipped[t*3+2] = triUvNormal[t*3+1];\n";
+                                mc << "  }\n";
+                                mc << "  enum { MAX_SLOT = 16 };\n";
+                                mc << "  pvr_poly_hdr_t hdrSlot[MAX_SLOT];\n";
+                                mc << "  const int slotCount = " << runtimeSlotCount << ";\n";
+                                mc << "  static uint16_t texbuf[MAX_SLOT][64*64] = {\n";
+                                for (int si = 0; si < runtimeSlotCount; ++si)
+                                {
+                                    mc << "    {";
+                                    const auto& pix = runtimeSlotTex[(size_t)si];
+                                    for (size_t pi = 0; pi < pix.size(); ++pi)
+                                    {
+                                        mc << (unsigned int)pix[pi];
+                                        if (pi + 1 < pix.size()) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (si + 1 < runtimeSlotCount) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
+                                mc << "  for (int s=0; s<slotCount; ++s) {\n";
+                                mc << "    pvr_ptr_t tx = pvr_mem_malloc(64*64*2);\n";
+                                mc << "    pvr_txr_load_ex(texbuf[s], tx, 64, 64, PVR_TXRLOAD_16BPP);\n";
+                                mc << "    pvr_poly_cxt_t cxt;\n";
+                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED, 64, 64, tx, PVR_FILTER_BILINEAR);\n";
+                                mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  int prevButtons = 0;\n";
                                 mc << "\n";
@@ -6359,12 +6655,17 @@ int main(int, char**)
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    const uint16_t *tris = gFlipWinding ? trisFlipped : trisNormal;\n";
+                                mc << "    const V3 *triUv = gFlipWinding ? triUvFlipped : triUvNormal;\n";
                                 mc << "    for (int t=0;t<kTriCount;++t){\n";
                                 mc << "      int a=tris[t*3+0], b=tris[t*3+1], c=tris[t*3+2];\n";
                                 mc << "      if (!(ok[a] && ok[b] && ok[c])) continue;\n";
+                                mc << "      SV sa = sv[a], sb = sv[b], sc = sv[c];\n";
+                                mc << "      sa.u = triUv[t*3+0].x; sa.v = triUv[t*3+0].y;\n";
+                                mc << "      sb.u = triUv[t*3+1].x; sb.v = triUv[t*3+1].y;\n";
+                                mc << "      sc.u = triUv[t*3+2].x; sc.v = triUv[t*3+2].y;\n";
+                                mc << "      int sid = (int)triMatNormal[t]; if (sid < 0 || sid >= slotCount) sid = 0;\n";
                                 mc << "      uint32 col = 0xFFFFFFFF;\n";
-                                mc << "      if (t < 2) col = 0xFFFFB0B0; else if (t < 4) col = 0xFFB0FFB0; else if (t < 6) col = 0xFFB0B0FF;\n";
-                                mc << "      draw_tri(&hdr, sv[a], sv[b], sv[c], col);\n";
+                                mc << "      draw_tri(&hdrSlot[sid], sa, sb, sc, col);\n";
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    pvr_list_finish();\n";

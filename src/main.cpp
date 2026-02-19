@@ -7180,7 +7180,16 @@ int main(int, char**)
                                     if (ecList)
                                         lf << "[DirListError] " << ecList.message() << "\n";
                                 }
-                                gViewportToast = "Dreamcast build failed (see build_dreamcast/package.log)";
+
+                                int generatedCount = (haveElf ? 1 : 0) + (haveBin ? 1 : 0) + (have1st ? 1 : 0) + (haveIso ? 1 : 0) + (haveCdi ? 1 : 0);
+                                if (generatedCount > 0)
+                                {
+                                    gViewportToast = "Dreamcast artifacts generated (" + std::to_string(generatedCount) + "/5). Check build_dreamcast";
+                                }
+                                else
+                                {
+                                    gViewportToast = "Dreamcast build files generated";
+                                }
                             }
                             gViewportToastUntil = glfwGetTime() + 4.0;
                         }

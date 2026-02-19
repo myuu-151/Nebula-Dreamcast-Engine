@@ -6603,10 +6603,9 @@ int main(int, char**)
                                 int w = runtimeSlotW[(size_t)si], h = runtimeSlotH[(size_t)si];
                                 const auto& src = runtimeSlotTex[(size_t)si];
                                 auto& dst = runtimeSlotTexUpload[(size_t)si];
-                                bool canTwiddle = (w == h) && isPow2(w) && isPow2(h);
-                                runtimeSlotFmt[(size_t)si] = canTwiddle ? 0 : 1;
-                                // slot format chosen from texture dimensions/capability only
-                                dst = src; // keep linear source order; runtime upload path handles twiddle conversion when needed
+                                (void)isPow2; (void)w; (void)h;
+                                runtimeSlotFmt[(size_t)si] = 1; // KOS strict validation path: force linear/nontwiddled for all slots
+                                dst = src; // keep linear source order
                             }
 
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
@@ -6775,21 +6774,12 @@ int main(int, char**)
                                 mc << "    if (!tx) tx = slotTx[0];\n";
                                 mc << "    else {\n";
                                 mc << "      slotTx[s] = tx;\n";
-                                mc << "      if (slotFmt[s] == 0) {\n";
-                                mc << "        uint16 *tmp = (uint16*)malloc((size_t)tw*(size_t)th*2);\n";
-                                mc << "        if (tmp) {\n";
-                                mc << "          for (unsigned yy = 0; yy < (unsigned)th; ++yy)\n";
-                                mc << "            for (unsigned xx = 0; xx < (unsigned)tw; ++xx)\n";
-                                mc << "              tmp[twid(xx, yy)] = buf[yy * (unsigned)tw + xx];\n";
-                                mc << "          pvr_txr_load_ex((void*)tmp, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
-                                mc << "          free(tmp);\n";
-                                mc << "        } else { pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP); }\n";
-                                mc << "      } else {\n";
-                                mc << "        pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
-                                mc << "      }\n";
+                                mc << "      pvr_txr_load((void*)buf, tx, (size_t)tw*(size_t)th*2);\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | PVR_TXRFMT_POW2_STRIDE | ((slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED);\n";
+                                mc << "    uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
+                                mc << "    uint32 layoutFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
+                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";

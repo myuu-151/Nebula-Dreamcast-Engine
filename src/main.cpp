@@ -6388,9 +6388,14 @@ int main(int, char**)
                             for (uint16_t tm : runtimeTriMat) runtimeSlotCount = std::max(runtimeSlotCount, (int)tm + 1);
                             runtimeSlotCount = std::max(1, std::min(runtimeSlotCount, 16));
 
-                            std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount, std::vector<uint16_t>(64 * 64));
+                            std::vector<int> runtimeSlotW((size_t)runtimeSlotCount, 64);
+                            std::vector<int> runtimeSlotH((size_t)runtimeSlotCount, 64);
+                            std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount);
                             auto fillCheckerSlot = [&](int si)
                             {
+                                runtimeSlotW[(size_t)si] = 64;
+                                runtimeSlotH[(size_t)si] = 64;
+                                runtimeSlotTex[(size_t)si].assign(64 * 64, 0);
                                 int r = 180 + (si * 29) % 60;
                                 int g = 180 + (si * 47) % 60;
                                 int b = 180 + (si * 13) % 60;
@@ -6407,7 +6412,7 @@ int main(int, char**)
                                 }
                             };
 
-                            auto loadNebTexTo64 = [&](const std::filesystem::path& texAbs, std::vector<uint16_t>& out64)->bool
+                            auto loadNebTexNative = [&](const std::filesystem::path& texAbs, int& outW, int& outH, std::vector<uint16_t>& outPix)->bool
                             {
                                 std::ifstream tin(texAbs, std::ios::binary | std::ios::in);
                                 if (!tin.is_open()) return false;
@@ -6417,6 +6422,11 @@ int main(int, char**)
                                 uint16_t w = 0, h = 0, fmt = 0, flg = 0;
                                 if (!ReadU16BE(tin, w) || !ReadU16BE(tin, h) || !ReadU16BE(tin, fmt) || !ReadU16BE(tin, flg)) return false;
                                 if (fmt != 1 || w == 0 || h == 0) return false;
+
+                                auto nextPow2 = [](int v) { int p = 1; while (p < v && p < 1024) p <<= 1; return p; };
+                                int tw = nextPow2((int)w);
+                                int th = nextPow2((int)h);
+                                if (tw <= 0 || th <= 0 || tw > 1024 || th > 1024) return false;
 
                                 std::vector<uint16_t> src((size_t)w * (size_t)h);
                                 for (size_t i = 0; i < src.size(); ++i)
@@ -6430,16 +6440,14 @@ int main(int, char**)
                                     src[i] = rgb565;
                                 }
 
-                                out64.assign(64 * 64, 0);
-                                for (int y = 0; y < 64; ++y)
+                                // Strict mode: preserve original texel data exactly; pad to POT without resampling.
+                                outW = tw; outH = th;
+                                outPix.assign((size_t)tw * (size_t)th, 0);
+                                for (int y = 0; y < (int)h; ++y)
                                 {
-                                    int sy = (int)((int64_t)y * (int64_t)h / 64);
-                                    if (sy < 0) sy = 0; if (sy >= (int)h) sy = (int)h - 1;
-                                    for (int x = 0; x < 64; ++x)
+                                    for (int x = 0; x < (int)w; ++x)
                                     {
-                                        int sx = (int)((int64_t)x * (int64_t)w / 64);
-                                        if (sx < 0) sx = 0; if (sx >= (int)w) sx = (int)w - 1;
-                                        out64[(size_t)y * 64 + (size_t)x] = src[(size_t)sy * (size_t)w + (size_t)sx];
+                                        outPix[(size_t)y * (size_t)tw + (size_t)x] = src[(size_t)y * (size_t)w + (size_t)x];
                                     }
                                 }
                                 return true;
@@ -6468,7 +6476,7 @@ int main(int, char**)
 
                                     if (!texAbs.empty() && std::filesystem::exists(texAbs))
                                     {
-                                        loadedSlot = loadNebTexTo64(texAbs, runtimeSlotTex[(size_t)si]);
+                                        loadedSlot = loadNebTexNative(texAbs, runtimeSlotW[(size_t)si], runtimeSlotH[(size_t)si], runtimeSlotTex[(size_t)si]);
                                     }
                                 }
 
@@ -6492,7 +6500,7 @@ int main(int, char**)
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "static const float kCamPosInit[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
                                 mc << "static float gCamPos[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
-                                mc << "static int gFlipWinding = 1;\n";
+                                mc << "static int gFlipWinding = 0;\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
                                 mc << "static const float kMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static const float kMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
@@ -6592,26 +6600,37 @@ int main(int, char**)
                                 mc << "  enum { MAX_SLOT = 16 };\n";
                                 mc << "  pvr_poly_hdr_t hdrSlot[MAX_SLOT];\n";
                                 mc << "  const int slotCount = " << runtimeSlotCount << ";\n";
-                                mc << "  static uint16_t texbuf[MAX_SLOT][64*64] = {\n";
+                                mc << "  static uint16_t slotW[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotW[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
+                                mc << "  static uint16_t slotH[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotH[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
+                                mc << "};\n";
                                 for (int si = 0; si < runtimeSlotCount; ++si)
                                 {
-                                    mc << "    {";
+                                    mc << "  static uint16_t texbuf_" << si << "[] = {";
                                     const auto& pix = runtimeSlotTex[(size_t)si];
                                     for (size_t pi = 0; pi < pix.size(); ++pi)
                                     {
                                         mc << (unsigned int)pix[pi];
                                         if (pi + 1 < pix.size()) mc << ",";
                                     }
-                                    mc << "}";
-                                    if (si + 1 < runtimeSlotCount) mc << ",";
-                                    mc << "\n";
+                                    mc << "};\n";
                                 }
-                                mc << "  };\n";
                                 mc << "  for (int s=0; s<slotCount; ++s) {\n";
-                                mc << "    pvr_ptr_t tx = pvr_mem_malloc(64*64*2);\n";
-                                mc << "    pvr_txr_load_ex(texbuf[s], tx, 64, 64, PVR_TXRLOAD_16BPP);\n";
+                                mc << "    const uint16_t *buf = 0;\n";
+                                mc << "    switch (s) {\n";
+                                for (int si = 0; si < runtimeSlotCount; ++si)
+                                {
+                                    mc << "      case " << si << ": buf = texbuf_" << si << "; break;\n";
+                                }
+                                mc << "      default: buf = texbuf_0; break;\n";
+                                mc << "    }\n";
+                                mc << "    int tw = slotW[s], th = slotH[s];\n";
+                                mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";
+                                mc << "    pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED, 64, 64, tx, PVR_FILTER_BILINEAR);\n";
+                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED, tw, th, tx, PVR_FILTER_BILINEAR);\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  int prevButtons = 0;\n";

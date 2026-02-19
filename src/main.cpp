@@ -6611,36 +6611,15 @@ int main(int, char**)
 
                             std::vector<int> runtimeSlotFmt((size_t)runtimeSlotCount, 0); // 0=twiddled, 1=nontwiddled
                             std::vector<std::vector<uint16_t>> runtimeSlotTexUpload((size_t)runtimeSlotCount);
-                            auto twiddleIndex = [](unsigned x, unsigned y)->unsigned
-                            {
-                                unsigned z = 0;
-                                for (unsigned b = 0; b < 16; ++b)
-                                {
-                                    z |= ((y >> b) & 1u) << (2u * b);
-                                    z |= ((x >> b) & 1u) << (2u * b + 1u);
-                                }
-                                return z;
-                            };
                             auto isPow2 = [](int v)->bool { return v > 0 && (v & (v - 1)) == 0; };
                             for (int si = 0; si < runtimeSlotCount; ++si)
                             {
                                 int w = runtimeSlotW[(size_t)si], h = runtimeSlotH[(size_t)si];
                                 const auto& src = runtimeSlotTex[(size_t)si];
                                 auto& dst = runtimeSlotTexUpload[(size_t)si];
-                                dst.assign((size_t)w * (size_t)h, 0);
                                 bool canTwiddle = (w == h) && isPow2(w) && isPow2(h);
-                                if (canTwiddle)
-                                {
-                                    runtimeSlotFmt[(size_t)si] = 0;
-                                    for (unsigned yy = 0; yy < (unsigned)h; ++yy)
-                                        for (unsigned xx = 0; xx < (unsigned)w; ++xx)
-                                            dst[twiddleIndex(xx, yy)] = src[(size_t)yy * (size_t)w + (size_t)xx];
-                                }
-                                else
-                                {
-                                    runtimeSlotFmt[(size_t)si] = 1;
-                                    dst = src;
-                                }
+                                runtimeSlotFmt[(size_t)si] = canTwiddle ? 0 : 1;
+                                dst = src; // keep linear source order; runtime upload path handles twiddle conversion when needed
                             }
 
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
@@ -6656,6 +6635,7 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "typedef struct { float x,y,z; } V3;\n";
                                 mc << "typedef struct { float x,y,z,u,v; } SV;\n";
+                                mc << "static inline unsigned twid(unsigned x, unsigned y) { unsigned z=0; for (unsigned b=0; b<16; ++b) { z |= ((y>>b)&1u) << (2u*b); z |= ((x>>b)&1u) << (2u*b+1u); } return z; }\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "static const float kCamPosInit[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
@@ -6820,7 +6800,21 @@ int main(int, char**)
                                 mc << "    int tw = slotW[s], th = slotH[s];\n";
                                 mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";
                                 mc << "    if (!tx) tx = slotTx[0];\n";
-                                mc << "    else { slotTx[s] = tx; pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP); }\n";
+                                mc << "    else {\n";
+                                mc << "      slotTx[s] = tx;\n";
+                                mc << "      if (slotFmt[s] == 0) {\n";
+                                mc << "        uint16 *tmp = (uint16*)malloc((size_t)tw*(size_t)th*2);\n";
+                                mc << "        if (tmp) {\n";
+                                mc << "          for (unsigned yy = 0; yy < (unsigned)th; ++yy)\n";
+                                mc << "            for (unsigned xx = 0; xx < (unsigned)tw; ++xx)\n";
+                                mc << "              tmp[twid(xx, yy)] = buf[yy * (unsigned)tw + xx];\n";
+                                mc << "          pvr_txr_load_ex((void*)tmp, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
+                                mc << "          free(tmp);\n";
+                                mc << "        } else { pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP); }\n";
+                                mc << "      } else {\n";
+                                mc << "        pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
                                 mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | ((slotFmt[s] == 0) ? 0 : PVR_TXRFMT_NONTWIDDLED);\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, PVR_FILTER_NONE);\n";

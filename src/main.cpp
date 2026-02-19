@@ -1286,21 +1286,22 @@ static int LoadNebTexWrapMode(const std::filesystem::path& nebtexPath)
 
 static int LoadNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath)
 {
-    // 0=pad, 1=resample
+    // 0=pad, 1=resample (Dreamcast NPOT handling)
     std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return 1; // default resample
+    if (!in.is_open()) return 0; // default pad
     std::string line;
     while (std::getline(in, line))
     {
-        if (line.rfind("saturn_npot=", 0) == 0)
+        if (line.rfind("npot=", 0) == 0)
         {
-            std::string v = line.substr(12);
+            std::string v = line.substr(5);
             std::transform(v.begin(), v.end(), v.begin(), ::tolower);
             if (v == "pad") return 0;
             if (v == "resample") return 1;
         }
+        // Legacy Saturn NPOT keys intentionally unsupported in Dreamcast-only fork.
     }
-    return 1;
+    return 0;
 }
 
 static bool LoadNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath)
@@ -1350,9 +1351,9 @@ static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode
     {
         if (line.rfind("flip_u=", 0) == 0) flipU = (line.substr(7) == "1");
         if (line.rfind("flip_v=", 0) == 0) flipV = (line.substr(7) == "1");
-        if (line.rfind("saturn_npot=", 0) == 0)
+        if (line.rfind("npot=", 0) == 0)
         {
-            std::string v = line.substr(12);
+            std::string v = line.substr(5);
             std::transform(v.begin(), v.end(), v.begin(), ::tolower);
             saturnNpot = (v == "pad") ? 0 : 1;
         }
@@ -1371,7 +1372,7 @@ static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode
     out << "wrap=" << names[mode] << "\n";
     out << "flip_u=" << (flipU ? 1 : 0) << "\n";
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
+    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
     out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
@@ -1431,7 +1432,7 @@ static bool SaveNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath, in
     out << "wrap=" << wrapNames[wrapMode] << "\n";
     out << "flip_u=" << (flipU ? 1 : 0) << "\n";
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "saturn_npot=" << (mode == 0 ? "pad" : "resample") << "\n";
+    out << "npot=" << (mode == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
     out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
@@ -1450,7 +1451,7 @@ static bool SaveNebTexFlipOptions(const std::filesystem::path& nebtexPath, bool 
     out << "wrap=" << names[wrapMode] << "\n";
     out << "flip_u=" << (flipU ? 1 : 0) << "\n";
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
+    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
     out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
@@ -1471,7 +1472,7 @@ static bool SaveNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath, boo
     out << "wrap=" << names[wrapMode] << "\n";
     out << "flip_u=" << (flipU ? 1 : 0) << "\n";
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
+    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
     out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
@@ -1493,7 +1494,7 @@ static bool SaveNebTexFilterMode(const std::filesystem::path& nebtexPath, int fi
     out << "wrap=" << names[wrapMode] << "\n";
     out << "flip_u=" << (flipU ? 1 : 0) << "\n";
     out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "saturn_npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
+    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
     out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
     out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
     return true;
@@ -1637,6 +1638,109 @@ static std::filesystem::path DuplicateAssetPath(const std::filesystem::path& p)
 
     if (ec) return {};
     return candidate;
+}
+
+static std::string NormalizePathRef(std::string s)
+{
+    std::replace(s.begin(), s.end(), '\\', '/');
+    return s;
+}
+
+static bool RewritePathRefForRename(std::string& ref, const std::string& oldRel, const std::string& newRel, bool isDir)
+{
+    if (ref.empty() || oldRel.empty() || newRel.empty()) return false;
+    std::string cur = NormalizePathRef(ref);
+    std::string oldN = NormalizePathRef(oldRel);
+    std::string newN = NormalizePathRef(newRel);
+
+    if (isDir)
+    {
+        if (cur == oldN)
+        {
+            ref = newN;
+            return true;
+        }
+        std::string oldPrefix = oldN;
+        if (!oldPrefix.empty() && oldPrefix.back() != '/') oldPrefix.push_back('/');
+        if (cur.rfind(oldPrefix, 0) == 0)
+        {
+            ref = newN + cur.substr(oldPrefix.size() - 1);
+            return true;
+        }
+        return false;
+    }
+
+    if (cur == oldN)
+    {
+        ref = newN;
+        return true;
+    }
+    return false;
+}
+
+static void UpdateAssetReferencesForRename(const std::filesystem::path& oldPath, const std::filesystem::path& newPath)
+{
+    if (gProjectDir.empty()) return;
+    std::error_code ec;
+    auto proj = std::filesystem::path(gProjectDir);
+    auto oldRelP = std::filesystem::relative(oldPath, proj, ec);
+    if (ec) return;
+    ec.clear();
+    auto newRelP = std::filesystem::relative(newPath, proj, ec);
+    if (ec) return;
+
+    std::string oldRel = oldRelP.generic_string();
+    std::string newRel = newRelP.generic_string();
+    bool isDir = std::filesystem::is_directory(newPath, ec) && !ec;
+
+    for (auto& n : gStaticMeshNodes)
+    {
+        RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+        RewritePathRefForRename(n.material, oldRel, newRel, isDir);
+        RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+        for (auto& ms : n.materialSlots)
+            RewritePathRefForRename(ms, oldRel, newRel, isDir);
+    }
+    for (auto& n : gAudio3DNodes)
+        RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+    // Camera3D currently has no asset-path fields to rewrite.
+    for (auto& n : gNode3DNodes)
+    {
+        RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+        RewritePathRefForRename(n.primitiveMesh, oldRel, newRel, isDir);
+    }
+
+    for (auto& sc : gOpenScenes)
+    {
+        for (auto& n : sc.nodes)
+            RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+        for (auto& n : sc.staticMeshes)
+        {
+            RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+            RewritePathRefForRename(n.material, oldRel, newRel, isDir);
+            RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+            for (auto& ms : n.materialSlots)
+                RewritePathRefForRename(ms, oldRel, newRel, isDir);
+        }
+        // Camera3D currently has no asset-path fields to rewrite.
+        for (auto& n : sc.node3d)
+        {
+            RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+            RewritePathRefForRename(n.primitiveMesh, oldRel, newRel, isDir);
+        }
+    }
+
+    if (!gSelectedAssetPath.empty())
+    {
+        std::filesystem::path sel = gSelectedAssetPath;
+        auto selS = sel.generic_string();
+        auto oldS = oldPath.generic_string();
+        if (selS == oldS || selS.rfind(oldS + "/", 0) == 0)
+        {
+            std::string tail = selS.substr(oldS.size());
+            gSelectedAssetPath = std::filesystem::path(newPath.generic_string() + tail);
+        }
+    }
 }
 
 static std::string EncodeSceneToken(const std::string& s)
@@ -6632,16 +6736,36 @@ int main(int, char**)
                                     src[i] = rgb565;
                                 }
 
-                                // Strict mode: preserve original texel data exactly; pad to POT without resampling.
+                                int npotMode = LoadNebTexSaturnNpotMode(texAbs); // 0=pad, 1=resample
                                 outW = tw; outH = th;
-                                outUS = (float)w / (float)tw;
-                                outVS = (float)h / (float)th;
                                 outPix.assign((size_t)tw * (size_t)th, 0);
-                                for (int y = 0; y < (int)h; ++y)
+
+                                if (npotMode == 1 && (w != tw || h != th))
                                 {
-                                    for (int x = 0; x < (int)w; ++x)
+                                    // Resample source into full POT texture domain.
+                                    outUS = 1.0f;
+                                    outVS = 1.0f;
+                                    for (int y = 0; y < th; ++y)
                                     {
-                                        outPix[(size_t)y * (size_t)tw + (size_t)x] = src[(size_t)y * (size_t)w + (size_t)x];
+                                        int sy = std::min((int)h - 1, (int)((int64_t)y * (int64_t)h / std::max(1, th)));
+                                        for (int x = 0; x < tw; ++x)
+                                        {
+                                            int sx = std::min((int)w - 1, (int)((int64_t)x * (int64_t)w / std::max(1, tw)));
+                                            outPix[(size_t)y * (size_t)tw + (size_t)x] = src[(size_t)sy * (size_t)w + (size_t)sx];
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    // Pad mode: preserve original texels, only fill top-left authored region.
+                                    outUS = (float)w / (float)tw;
+                                    outVS = (float)h / (float)th;
+                                    for (int y = 0; y < (int)h; ++y)
+                                    {
+                                        for (int x = 0; x < (int)w; ++x)
+                                        {
+                                            outPix[(size_t)y * (size_t)tw + (size_t)x] = src[(size_t)y * (size_t)w + (size_t)x];
+                                        }
                                     }
                                 }
                                 return true;
@@ -9204,6 +9328,8 @@ int main(int, char**)
                                 [oldPath, newPath]() { if (std::filesystem::exists(oldPath)) std::filesystem::rename(oldPath, newPath); }
                             });
 
+                            UpdateAssetReferencesForRename(oldPath, newPath);
+
                             if (oldPath.extension() == ".nebscene" && newPath.extension() == ".nebscene")
                             {
                                 for (auto& s : gOpenScenes)
@@ -9947,15 +10073,16 @@ int main(int, char**)
                 }
                 float uvScale = 0.0f;
                 LoadMaterialUvScale(gMaterialInspectorPath, uvScale);
-                int uvScaleStep = -1;
+                int uvScaleStep = 0;
                 if (uvScale <= -2.5f) uvScaleStep = -3;
                 else if (uvScale <= -1.5f) uvScaleStep = -2;
-                else uvScaleStep = -1;
-                int uvIdx = (uvScaleStep == -1) ? 0 : (uvScaleStep == -2 ? 1 : 2);
-                const char* uvScaleOptions[] = { "-1", "-2", "-3" };
+                else if (uvScale <= -0.5f) uvScaleStep = -1;
+                else uvScaleStep = 0;
+                int uvIdx = (uvScaleStep == 0) ? 0 : (uvScaleStep == -1 ? 1 : (uvScaleStep == -2 ? 2 : 3));
+                const char* uvScaleOptions[] = { "0", "-1", "-2", "-3" };
                 if (ImGui::Combo("UV Scale", &uvIdx, uvScaleOptions, IM_ARRAYSIZE(uvScaleOptions)))
                 {
-                    uvScaleStep = (uvIdx == 0) ? -1 : (uvIdx == 1 ? -2 : -3);
+                    uvScaleStep = (uvIdx == 0) ? 0 : (uvIdx == 1 ? -1 : (uvIdx == 2 ? -2 : -3));
                     SaveMaterialUvScale(gMaterialInspectorPath, (float)uvScaleStep);
                 }
                 bool allowUvRepeat = false;
@@ -9999,7 +10126,7 @@ int main(int, char**)
                 bool changed = false;
                 changed |= ImGui::Combo("Extension", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
                 changed |= ImGui::Combo("Filter", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
-                changed |= ImGui::Combo("Saturn NPOT", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
+                changed |= ImGui::Combo("NPOT", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U", &flipU);
                 changed |= ImGui::Checkbox("Flip V", &flipV);
                 if (changed)
@@ -10077,15 +10204,16 @@ int main(int, char**)
                 }
                 float uvScale = 0.0f;
                 LoadMaterialUvScale(gMaterialInspectorPath2, uvScale);
-                int uvScaleStep = -1;
+                int uvScaleStep = 0;
                 if (uvScale <= -2.5f) uvScaleStep = -3;
                 else if (uvScale <= -1.5f) uvScaleStep = -2;
-                else uvScaleStep = -1;
-                int uvIdx = (uvScaleStep == -1) ? 0 : (uvScaleStep == -2 ? 1 : 2);
-                const char* uvScaleOptions[] = { "-1", "-2", "-3" };
+                else if (uvScale <= -0.5f) uvScaleStep = -1;
+                else uvScaleStep = 0;
+                int uvIdx = (uvScaleStep == 0) ? 0 : (uvScaleStep == -1 ? 1 : (uvScaleStep == -2 ? 2 : 3));
+                const char* uvScaleOptions[] = { "0", "-1", "-2", "-3" };
                 if (ImGui::Combo("UV Scale##B", &uvIdx, uvScaleOptions, IM_ARRAYSIZE(uvScaleOptions)))
                 {
-                    uvScaleStep = (uvIdx == 0) ? -1 : (uvIdx == 1 ? -2 : -3);
+                    uvScaleStep = (uvIdx == 0) ? 0 : (uvIdx == 1 ? -1 : (uvIdx == 2 ? -2 : -3));
                     SaveMaterialUvScale(gMaterialInspectorPath2, (float)uvScaleStep);
                 }
                 bool allowUvRepeat = false;
@@ -10129,7 +10257,7 @@ int main(int, char**)
                 bool changed = false;
                 changed |= ImGui::Combo("Extension##B", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
                 changed |= ImGui::Combo("Filter##B", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
-                changed |= ImGui::Combo("Saturn NPOT##B", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
+                changed |= ImGui::Combo("NPOT##B", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U##B", &flipU);
                 changed |= ImGui::Checkbox("Flip V##B", &flipV);
                 if (changed)

@@ -3803,15 +3803,6 @@ int main(int, char**)
                 activeCam->main);
 
             playView = NebulaCamera3D::BuildView(playCam);
-            // Restore editor-play camera side parity (pre-migration behavior): mirror X/Z in play view.
-            playView.eye.x = -playView.eye.x;
-            playView.eye.z = -playView.eye.z;
-            playView.target.x = -playView.target.x;
-            playView.target.z = -playView.target.z;
-            playView.basis = NebulaCamera3D::BuildBasis(
-                Vec3{ playView.target.x - playView.eye.x, playView.target.y - playView.eye.y, playView.target.z - playView.eye.z },
-                playView.basis.up);
-
             playProj = NebulaCamera3D::BuildProjection(playCam, aspect);
             hasPlayCam = true;
 

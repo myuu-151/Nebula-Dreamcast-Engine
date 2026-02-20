@@ -126,6 +126,11 @@ namespace NebulaCamera3D
             out.view.target.y + targetOffset.y,
             out.view.target.z + targetOffset.z
         };
+
+        // Dreamcast runtime parity: mirror camera eye in X/Z, then rebuild basis toward target.
+        out.view.eye.x = -out.view.eye.x;
+        out.view.eye.z = -out.view.eye.z;
+
         out.view.basis = BuildBasis(
             Vec3{
                 out.view.target.x - out.view.eye.x,

@@ -3737,8 +3737,7 @@ int main(int, char**)
                 lastX = mx;
                 lastY = my;
 
-                float yawSign = gPlayMode ? 1.0f : -1.0f;
-                orbitYaw   += (float)dx * orbitSensitivity * yawSign;
+                orbitYaw   += (float)dx * orbitSensitivity;
                 orbitPitch += (float)dy * orbitSensitivity;
                 if (orbitPitch > 89.0f) orbitPitch = 89.0f;
                 if (orbitPitch < -89.0f) orbitPitch = -89.0f;
@@ -3770,8 +3769,7 @@ int main(int, char**)
                 lastY = my;
 
                 viewLocked = false;
-                float yawSign = gPlayMode ? 1.0f : -1.0f;
-                viewYaw   += (float)dx * rotateSensitivity * yawSign;
+                viewYaw   += (float)dx * rotateSensitivity;
                 viewPitch -= (float)dy * rotateSensitivity;
                 if (viewPitch > 89.0f) viewPitch = 89.0f;
                 if (viewPitch < -89.0f) viewPitch = -89.0f;
@@ -3807,7 +3805,6 @@ int main(int, char**)
             float yawRad = viewYaw * 3.14159f / 180.0f;
             Vec3 forwardXZ = { cosf(yawRad), 0.0f, sinf(yawRad) };
             Vec3 rightXZ = { -sinf(yawRad), 0.0f, cosf(yawRad) };
-            if (!gPlayMode) rightXZ = { -rightXZ.x, -rightXZ.y, -rightXZ.z };
 
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
             {

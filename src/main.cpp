@@ -3933,8 +3933,9 @@ int main(int, char**)
                 proj = Mat4Orthographic(-cv.orthoWidth, cv.orthoWidth, -orthoHeight, orthoHeight, cv.nearZ, cv.farZ);
             }
             eye = cv.eye;
-            viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;
-            viewPitch = asinf(std::clamp(cv.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
+            Vec3 playForward = { -cv.forward.x, -cv.forward.y, -cv.forward.z }; // Play-only 180° yaw/pitch shim to match build-side facing.
+            viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
+            viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
 
             static double sLastCanonicalCamLog = -10.0;
             if (gDebugCanonicalCameraLog && (now - sLastCanonicalCamLog) >= 1.0)
@@ -3942,11 +3943,15 @@ int main(int, char**)
                 sLastCanonicalCamLog = now;
                 printf("[CameraCanonical] pos=(%.3f,%.3f,%.3f) fwd=(%.3f,%.3f,%.3f) right=(%.3f,%.3f,%.3f) up=(%.3f,%.3f,%.3f) proj(fov=%.2f,a=%.3f,n=%.3f,f=%.3f)\n",
                     cv.eye.x, cv.eye.y, cv.eye.z,
-                    cv.forward.x, cv.forward.y, cv.forward.z,
+                    playForward.x, playForward.y, playForward.z,
                     cv.right.x, cv.right.y, cv.right.z,
                     cv.up.x, cv.up.y, cv.up.z,
                     cv.fovYDeg, cv.aspect, cv.nearZ, cv.farZ);
             }
+        }
+        else
+        {
+            proj.m[0] = -proj.m[0]; // Non-play viewport horizontal mirror to match play/runtime orientation.
         }
 
         UpdateAudio3DNodes(eye.x, eye.y, eye.z);
@@ -3971,7 +3976,7 @@ int main(int, char**)
         {
             DcCameraConverted cv = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
             up = cv.up;
-            forward = cv.forward;
+            forward = { -cv.forward.x, -cv.forward.y, -cv.forward.z }; // Play-only 180° view flip to align editor play with build-facing.
         }
         else
         {

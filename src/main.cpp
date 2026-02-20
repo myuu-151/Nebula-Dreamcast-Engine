@@ -6201,46 +6201,27 @@ int main(int, char**)
                             std::filesystem::path cdScenesDir = cdDataDir / "scenes";
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
                             std::filesystem::path cdTexturesDir = cdDataDir / "textures";
+                            std::error_code stageEc;
+                            std::filesystem::remove_all(cdScenesDir, stageEc);
+                            std::filesystem::remove_all(cdMeshesDir, stageEc);
+                            std::filesystem::remove_all(cdTexturesDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
 
-                            auto makeStableAssetName = [&](const std::filesystem::path& absPath, const std::string& defaultStem, const std::string& ext)->std::string
+                            auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
                             {
-                                std::string stem = sanitizeSceneToken(defaultStem.empty() ? absPath.stem().string() : defaultStem);
-                                size_t hv = std::hash<std::string>{}(absPath.generic_string());
-                                char hex[17] = {};
-                                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)hv);
-                                return stem + "_" + std::string(hex) + ext;
-                            };
-
-                            std::unordered_map<std::string, std::string> stagedMeshByAbs;
-                            std::unordered_map<std::string, std::string> stagedTexByAbs;
-                            auto stageMeshAsset = [&](const std::filesystem::path& absPath)->std::string
-                            {
-                                std::string key = absPath.generic_string();
-                                auto it = stagedMeshByAbs.find(key);
-                                if (it != stagedMeshByAbs.end()) return it->second;
-                                if (!std::filesystem::exists(absPath)) return {};
-                                std::string outName = makeStableAssetName(absPath, absPath.stem().string(), ".nebmesh");
                                 std::error_code ec;
-                                std::filesystem::copy_file(absPath, cdMeshesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
-                                if (ec) return {};
-                                stagedMeshByAbs[key] = outName;
-                                return outName;
+                                std::filesystem::path p = std::filesystem::weakly_canonical(in, ec);
+                                if (ec) p = std::filesystem::absolute(in, ec);
+                                if (ec) p = in;
+                                return p.lexically_normal().generic_string();
                             };
-                            auto stageTextureAsset = [&](const std::filesystem::path& absPath)->std::string
+                            auto shortIsoName = [&](char kind, int idx, const char* ext)->std::string
                             {
-                                std::string key = absPath.generic_string();
-                                auto it = stagedTexByAbs.find(key);
-                                if (it != stagedTexByAbs.end()) return it->second;
-                                if (!std::filesystem::exists(absPath)) return {};
-                                std::string outName = makeStableAssetName(absPath, absPath.stem().string(), ".nebtex");
-                                std::error_code ec;
-                                std::filesystem::copy_file(absPath, cdTexturesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
-                                if (ec) return {};
-                                stagedTexByAbs[key] = outName;
-                                return outName;
+                                char buf[32] = {};
+                                snprintf(buf, sizeof(buf), "%c%04d%s", kind, idx, ext);
+                                return std::string(buf);
                             };
 
                             std::vector<std::filesystem::path> sourceScenes;
@@ -6272,12 +6253,116 @@ int main(int, char**)
                                 sourceScenes.push_back(fallbackScene);
                             }
 
-                            std::vector<std::string> runtimeSceneFiles;
-                            std::string defaultSceneRuntimeFile;
+                            struct LoadedSceneForStage
+                            {
+                                std::filesystem::path sourcePath;
+                                SceneData data;
+                            };
+                            std::vector<LoadedSceneForStage> loadedScenes;
+                            loadedScenes.reserve(sourceScenes.size());
                             for (const auto& scenePath : sourceScenes)
                             {
-                                SceneData stagedScene{};
-                                if (!LoadSceneFromPath(scenePath, stagedScene)) continue;
+                                LoadedSceneForStage ls{};
+                                ls.sourcePath = scenePath;
+                                if (!LoadSceneFromPath(scenePath, ls.data)) continue;
+                                loadedScenes.push_back(std::move(ls));
+                            }
+
+                            std::set<std::string> sortedMeshAbs;
+                            std::set<std::string> sortedTexAbs;
+                            std::unordered_map<std::string, std::string> meshLogicalByAbs;
+                            std::unordered_map<std::string, std::string> texLogicalByAbs;
+                            for (const auto& ls : loadedScenes)
+                            {
+                                for (const auto& sm : ls.data.staticMeshes)
+                                {
+                                    if (!sm.mesh.empty())
+                                    {
+                                        std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
+                                        if (std::filesystem::exists(meshAbs))
+                                        {
+                                            std::string key = normalizeAbsKey(meshAbs);
+                                            sortedMeshAbs.insert(key);
+                                            if (meshLogicalByAbs.find(key) == meshLogicalByAbs.end())
+                                            {
+                                                std::string logical = std::filesystem::path(sm.mesh).filename().string();
+                                                if (logical.empty()) logical = std::filesystem::path(key).filename().string();
+                                                meshLogicalByAbs[key] = logical;
+                                            }
+                                        }
+                                    }
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        std::string matRef = sm.materialSlots[si];
+                                        if (matRef.empty() && si == 0) matRef = sm.material;
+                                        if (matRef.empty()) continue;
+
+                                        std::filesystem::path matAbs = std::filesystem::path(gProjectDir) / matRef;
+                                        std::filesystem::path texAbs;
+                                        if (matAbs.extension() == ".nebmat")
+                                        {
+                                            std::string texRel;
+                                            if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty())
+                                                texAbs = std::filesystem::path(gProjectDir) / texRel;
+                                        }
+                                        else if (matAbs.extension() == ".nebtex")
+                                        {
+                                            texAbs = matAbs;
+                                        }
+                                        if (!texAbs.empty() && std::filesystem::exists(texAbs))
+                                        {
+                                            std::string key = normalizeAbsKey(texAbs);
+                                            sortedTexAbs.insert(key);
+                                            if (texLogicalByAbs.find(key) == texLogicalByAbs.end())
+                                            {
+                                                std::string logical = texAbs.filename().string();
+                                                if (logical.empty()) logical = std::filesystem::path(key).filename().string();
+                                                texLogicalByAbs[key] = logical;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            std::unordered_map<std::string, std::string> stagedMeshByAbs;
+                            std::unordered_map<std::string, std::string> stagedTexByAbs;
+                            std::vector<std::pair<std::string, std::string>> meshRefMapEntries;
+                            std::vector<std::pair<std::string, std::string>> texRefMapEntries;
+                            {
+                                int meshIdx = 1;
+                                for (const auto& key : sortedMeshAbs)
+                                {
+                                    std::string outName = shortIsoName('M', meshIdx++, ".NBM");
+                                    std::error_code ec;
+                                    std::filesystem::copy_file(std::filesystem::path(key), cdMeshesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                    if (ec) continue;
+                                    stagedMeshByAbs[key] = outName;
+                                    meshRefMapEntries.push_back({ meshLogicalByAbs[key], outName });
+                                }
+                                int texIdx = 1;
+                                for (const auto& key : sortedTexAbs)
+                                {
+                                    std::string outName = shortIsoName('T', texIdx++, ".NBT");
+                                    std::error_code ec;
+                                    std::filesystem::copy_file(std::filesystem::path(key), cdTexturesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                    if (ec) continue;
+                                    stagedTexByAbs[key] = outName;
+                                    texRefMapEntries.push_back({ texLogicalByAbs[key], outName });
+                                }
+                            }
+                            if (!meshSrc.mesh.empty())
+                            {
+                                std::string k = normalizeAbsKey(std::filesystem::path(gProjectDir) / meshSrc.mesh);
+                                auto it = stagedMeshByAbs.find(k);
+                                if (it != stagedMeshByAbs.end()) runtimeMeshDiskName = it->second;
+                            }
+
+                            std::vector<std::string> runtimeSceneFiles;
+                            std::string defaultSceneRuntimeFile;
+                            for (const auto& ls : loadedScenes)
+                            {
+                                const auto& scenePath = ls.sourcePath;
+                                const auto& stagedScene = ls.data;
 
                                 std::string sceneOutName = sanitizeSceneToken(scenePath.stem().string()) + ".dcscene";
                                 std::filesystem::path sceneOutPath = cdScenesDir / sceneOutName;
@@ -6288,7 +6373,12 @@ int main(int, char**)
                                 for (const auto& sm : stagedScene.staticMeshes)
                                 {
                                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
-                                    std::string stagedMesh = stageMeshAsset(meshAbs);
+                                    std::string stagedMesh;
+                                    {
+                                        std::string key = normalizeAbsKey(meshAbs);
+                                        auto it = stagedMeshByAbs.find(key);
+                                        if (it != stagedMeshByAbs.end()) stagedMesh = it->second;
+                                    }
                                     if (stagedMesh.empty()) continue;
 
                                     std::array<std::string, kStaticMeshMaterialSlots> slotTexNames{};
@@ -6311,7 +6401,11 @@ int main(int, char**)
                                             texAbs = matAbs;
                                         }
                                         if (!texAbs.empty())
-                                            slotTexNames[(size_t)si] = stageTextureAsset(texAbs);
+                                        {
+                                            std::string key = normalizeAbsKey(texAbs);
+                                            auto it = stagedTexByAbs.find(key);
+                                            if (it != stagedTexByAbs.end()) slotTexNames[(size_t)si] = it->second;
+                                        }
                                     }
 
                                     so << "staticmesh " << stagedMesh << " "
@@ -6396,6 +6490,24 @@ int main(int, char**)
                                 mc << "};\n";
                                 mc << "static const int gSceneCount = " << (int)runtimeSceneFiles.size() << ";\n";
                                 mc << "static const char* kDefaultSceneFile = \"" << defaultSceneRuntimeFile << "\";\n";
+                                mc << "typedef struct { const char* logical; const char* staged; } NB_RefMap;\n";
+                                mc << "static const NB_RefMap kMeshRefMap[] = {";
+                                for (size_t mi = 0; mi < meshRefMapEntries.size(); ++mi)
+                                {
+                                    mc << "{\"" << meshRefMapEntries[mi].first << "\",\"" << meshRefMapEntries[mi].second << "\"}";
+                                    if (mi + 1 < meshRefMapEntries.size()) mc << ",";
+                                }
+                                mc << "};\n";
+                                mc << "static const int kMeshRefMapCount = " << (int)meshRefMapEntries.size() << ";\n";
+                                mc << "static const NB_RefMap kTexRefMap[] = {";
+                                for (size_t ti = 0; ti < texRefMapEntries.size(); ++ti)
+                                {
+                                    mc << "{\"" << texRefMapEntries[ti].first << "\",\"" << texRefMapEntries[ti].second << "\"}";
+                                    if (ti + 1 < texRefMapEntries.size()) mc << ",";
+                                }
+                                mc << "};\n";
+                                mc << "static const int kTexRefMapCount = " << (int)texRefMapEntries.size() << ";\n";
+                                mc << "static char gDiskMeshLogical[128] = \"\";\n";
                                 mc << "static char gSlotDiskNebtex[16][128] = {";
                                 for (int si = 0; si < 16; ++si)
                                 {
@@ -6406,7 +6518,9 @@ int main(int, char**)
                                     if (si + 1 < 16) mc << ",";
                                 }
                                 mc << "};\n";
-                                mc << "static int NB_ApplyLoadedSceneState(void){ const char* mesh=NB_DC_GetSceneMeshPath(); if(!mesh||!mesh[0]) return 0; strncpy(gDiskMeshFile, mesh, sizeof(gDiskMeshFile)-1); gDiskMeshFile[sizeof(gDiskMeshFile)-1]=0; { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransform(p,r,s); gMeshPos[0]=p[0]; gMeshPos[1]=p[1]; gMeshPos[2]=p[2]; gMeshRot[0]=r[0]; gMeshRot[1]=r[1]; gMeshRot[2]=r[2]; gMeshScale[0]=s[0]; gMeshScale[1]=s[1]; gMeshScale[2]=s[2]; } for(int i=0;i<16;++i){ const char* tp=NB_DC_GetSceneTexturePath(i); gSlotDiskNebtex[i][0]=0; if(tp&&tp[0]){ strncpy(gSlotDiskNebtex[i],tp,127); gSlotDiskNebtex[i][127]=0; } } return 1; }\n";
+                                mc << "static char gSlotLogicalNebtex[16][128] = {{0}};\n";
+                                mc << "static const char* NB_ResolveMappedRef(const char* logical, const NB_RefMap* map, int count){ if(!logical||!logical[0]||!map||count<=0) return logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(logical,map[i].logical))||(map[i].staged&&dc_eq_nocase(logical,map[i].staged))) return map[i].staged; } const char* slash=strrchr(logical,'/'); const char* name=slash?slash+1:logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(name,map[i].logical))||(map[i].staged&&dc_eq_nocase(name,map[i].staged))) return map[i].staged; } return logical; }\n";
+                                mc << "static int NB_ApplyLoadedSceneState(void){ const char* mesh=NB_DC_GetSceneMeshPath(); if(!mesh||!mesh[0]) return 0; strncpy(gDiskMeshLogical,mesh,sizeof(gDiskMeshLogical)-1); gDiskMeshLogical[sizeof(gDiskMeshLogical)-1]=0; { const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(gDiskMeshFile,rm?rm:mesh,sizeof(gDiskMeshFile)-1); gDiskMeshFile[sizeof(gDiskMeshFile)-1]=0; } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransform(p,r,s); gMeshPos[0]=p[0]; gMeshPos[1]=p[1]; gMeshPos[2]=p[2]; gMeshRot[0]=r[0]; gMeshRot[1]=r[1]; gMeshRot[2]=r[2]; gMeshScale[0]=s[0]; gMeshScale[1]=s[1]; gMeshScale[2]=s[2]; } for(int i=0;i<16;++i){ const char* tp=NB_DC_GetSceneTexturePath(i); gSlotDiskNebtex[i][0]=0; gSlotLogicalNebtex[i][0]=0; if(tp&&tp[0]){ strncpy(gSlotLogicalNebtex[i],tp,127); gSlotLogicalNebtex[i][127]=0; const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(gSlotDiskNebtex[i],rt?rt:tp,127); gSlotDiskNebtex[i][127]=0; } } return 1; }\n";
                                 mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); if(!NB_DC_LoadScene(path)) return 0; return NB_ApplyLoadedSceneState(); }\n";
                                 mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",gSceneFiles[idx]); if(!NB_DC_SwitchScene(path)) return 0; if(!NB_ApplyLoadedSceneState()) return 0; gSceneIndex=idx; return 1; }\n";
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
@@ -6506,7 +6620,7 @@ int main(int, char**)
                                 mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
                                 mc << "  }\n";
                                 mc << "  if (diskMesh.vert_count > 0 && diskMesh.tri_count > 0) activeMesh = diskMesh;\n";
-                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh compat-open/load failed: /cd/data/meshes/%s\\n\", gDiskMeshFile); return 1; }\n";
+                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh compat-open/load failed: logical=%s resolved=/cd/data/meshes/%s\\n\", gDiskMeshLogical[0]?gDiskMeshLogical:\"(none)\", gDiskMeshFile); return 1; }\n";
                                 mc << "  int kVertCount = activeMesh.vert_count;\n";
                                 mc << "  int kTriCount = activeMesh.tri_count;\n";
                                 mc << "  V3* base = activeMesh.pos;\n";
@@ -6569,13 +6683,13 @@ int main(int, char**)
                                 mc << "  for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "    const uint16_t *buf = 0;\n";
                                 mc << "    if (!gSlotDiskNebtex[s][0]) {\n";
-                                mc << "      dbgio_printf(\"[NEBULA][DC] Missing disk texture path for slot %d\\n\", s);\n";
+                                mc << "      dbgio_printf(\"[NEBULA][DC] Missing disk texture path for slot %d logical=%s\\n\", s, gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\");\n";
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "    {\n";
                                 mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
                                 mc << "      if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture compat-open/load failed: %s\\n\", tp);\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture compat-open/load failed: logical=%s resolved=%s\\n\", gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\", tp);\n";
                                 mc << "        return 1;\n";
                                 mc << "      }\n";
                                 mc << "      buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
@@ -6656,7 +6770,7 @@ int main(int, char**)
                                 mc << "      } else {\n";
                                 mc << "        char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", gDiskMeshFile);\n";
                                 mc << "        if (!dc_try_load_nebmesh(mp, &diskMesh)) {\n";
-                                mc << "          dbgio_printf(\"[NEBULA][DC] Scene mesh compat-open/load failed: %s\\n\", mp);\n";
+                                mc << "          dbgio_printf(\"[NEBULA][DC] Scene mesh compat-open/load failed: logical=%s resolved=%s\\n\", gDiskMeshLogical[0]?gDiskMeshLogical:\"(none)\", mp);\n";
                                 mc << "        } else {\n";
                                 mc << "          activeMesh = diskMesh;\n";
                                 mc << "          kVertCount = activeMesh.vert_count;\n";
@@ -6681,7 +6795,7 @@ int main(int, char**)
                                 mc << "          for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "            if (!gSlotDiskNebtex[s][0]) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture slot missing: %d\\n\", s); break; }\n";
                                 mc << "            char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
-                                mc << "            if (!dc_try_load_nebtex(tp, &diskTex[s])) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture compat-open/load failed: %s\\n\", tp); break; }\n";
+                                mc << "            if (!dc_try_load_nebtex(tp, &diskTex[s])) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture compat-open/load failed: logical=%s resolved=%s\\n\", gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\", tp); break; }\n";
                                 mc << "            slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
                                 mc << "            slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs;\n";
                                 mc << "            slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1);\n";

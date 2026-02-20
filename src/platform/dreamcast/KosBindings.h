@@ -2,6 +2,7 @@
 
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {

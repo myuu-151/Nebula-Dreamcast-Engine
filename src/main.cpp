@@ -5809,6 +5809,16 @@ int main(int, char**)
                             float tgtExportX = meshSrc.x + kDcTargetOffsetX;
                             float tgtExportY = meshSrc.y + kDcTargetOffsetY;
                             float tgtExportZ = meshSrc.z + kDcTargetOffsetZ;
+                            Vec3 camRightExport{}, camUpExport{}, camForwardExport{};
+                            GetLocalAxesFromEuler(camSrc.rotX, camSrc.rotY, camSrc.rotZ, camRightExport, camUpExport, camForwardExport);
+                            float camProjFovExport = std::clamp(camSrc.fovY * kDcFovScale, 5.0f, 170.0f);
+                            float camProjAspectExport = 640.0f / 570.0f;
+                            float camProjNearExport = std::max(camSrc.nearZ, 0.001f);
+                            float camProjFarExport = std::max(camSrc.farZ, camProjNearExport + 0.01f);
+                            constexpr float kRuntimeProjNear = 0.05f;
+                            constexpr float kRuntimeProjFocal = 420.0f;
+                            constexpr float kRuntimeViewW = 640.0f;
+                            constexpr float kRuntimeViewH = 570.0f;
 
                             std::vector<Vec3> runtimeVerts;
                             std::vector<Vec3> runtimeUvs;
@@ -7009,9 +7019,13 @@ int main(int, char**)
                                 {
                                     lf << "[DreamcastBuild] start\n";
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
-                                       << " pos=(" << camExportX << "," << camExportY << "," << camExportZ << ")"
-                                       << " target=(" << tgtExportX << "," << tgtExportY << "," << tgtExportZ << ")"
-                                       << " fovScale=" << kDcFovScale << "\n";
+                                       << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
+                                       << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"
+                                       << " expPos=(" << camExportX << "," << camExportY << "," << camExportZ << ")"
+                                       << " expTarget=(" << tgtExportX << "," << tgtExportY << "," << tgtExportZ << ")"
+                                       << " expUp=(" << camUpExport.x << "," << camUpExport.y << "," << camUpExport.z << ")"
+                                       << " expProjNode=(fov=" << camProjFovExport << ",a=" << camProjAspectExport << ",n=" << camProjNearExport << ",f=" << camProjFarExport << ")"
+                                       << " expProjRuntime=(focal=" << kRuntimeProjFocal << ",view=" << kRuntimeViewW << "x" << kRuntimeViewH << ",near=" << kRuntimeProjNear << ")\n";
                                     lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
                                     lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
                                        << " copied_c=" << scriptCopiedC

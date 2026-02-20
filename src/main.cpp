@@ -3464,7 +3464,6 @@ static DcCameraConverted ConvertCamera3DForDreamcast(const Camera3DNode& cam, fl
               out.forward.z * out.up.x - out.forward.x * out.up.z,
               out.forward.x * out.up.y - out.forward.y * out.up.x },
         Vec3{ 1.0f, 0.0f, 0.0f });
-    out.right = Vec3{ -out.right.x, -out.right.y, -out.right.z }; // Mirror fix: flip lateral basis.
     out.up = NormalizeVec3Safe(
         Vec3{ out.right.y * out.forward.z - out.right.z * out.forward.y,
               out.right.z * out.forward.x - out.right.x * out.forward.z,
@@ -3885,6 +3884,7 @@ int main(int, char**)
                 float orthoHeight = cv.orthoWidth / cv.aspect;
                 proj = Mat4Orthographic(-cv.orthoWidth, cv.orthoWidth, -orthoHeight, orthoHeight, cv.nearZ, cv.farZ);
             }
+            proj.m[0] = -proj.m[0]; // Play-only horizontal mirror correction.
 
             eye = cv.eye;
             viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;

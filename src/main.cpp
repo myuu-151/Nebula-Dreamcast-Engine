@@ -6074,7 +6074,7 @@ int main(int, char**)
                                 mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
                                 mc << "  }\n";
                                 mc << "  if (diskMesh.vertCount > 0 && diskMesh.triCount > 0) activeMesh = diskMesh;\n";
-                                mc << "  else { activeMesh.pos = (V3*)baseEmbedded; activeMesh.triUv = (V3*)triUvEmbedded; activeMesh.indices = (uint16_t*)trisEmbedded; activeMesh.triMat = (uint16_t*)triMatEmbedded; activeMesh.vertCount = kVertCountEmbedded; activeMesh.triCount = kTriCountEmbedded; }\n";
+                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh load failed: /cd/data/meshes/%s\\n\", kDiskMeshFile); return 1; }\n";
                                 mc << "  int kVertCount = activeMesh.vertCount;\n";
                                 mc << "  int kTriCount = activeMesh.triCount;\n";
                                 mc << "  V3* base = activeMesh.pos;\n";
@@ -6144,20 +6144,19 @@ int main(int, char**)
                                 mc << "  RuntimeTex diskTex[MAX_SLOT]; memset(diskTex, 0, sizeof(diskTex));\n";
                                 mc << "  for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "    const uint16_t *buf = 0;\n";
-                                mc << "    switch (s) {\n";
-                                for (int si = 0; si < runtimeSlotCount; ++si)
-                                {
-                                    mc << "      case " << si << ": buf = texbuf_" << si << "; break;\n";
-                                }
-                                mc << "      default: buf = texbuf_0; break;\n";
+                                mc << "    if (!(slotDiskNebtex[s] && slotDiskNebtex[s][0])) {\n";
+                                mc << "      dbgio_printf(\"[NEBULA][DC] Missing disk texture path for slot %d\\n\", s);\n";
+                                mc << "      return 1;\n";
                                 mc << "    }\n";
-                                mc << "    if (slotDiskNebtex[s] && slotDiskNebtex[s][0]) {\n";
+                                mc << "    {\n";
                                 mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", slotDiskNebtex[s]);\n";
-                                mc << "      if (dc_try_load_nebtex(tp, &diskTex[s])) {\n";
-                                mc << "        buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
-                                mc << "        slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs; slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1); slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
-                                mc << "        slotFilter[s]=(uint8_t)diskTex[s].filter;\n";
+                                mc << "      if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture load failed: %s\\n\", tp);\n";
+                                mc << "        return 1;\n";
                                 mc << "      }\n";
+                                mc << "      buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
+                                mc << "      slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs; slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1); slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
+                                mc << "      slotFilter[s]=(uint8_t)diskTex[s].filter;\n";
                                 mc << "    }\n";
                                 mc << "    int tw = slotW[s], th = slotH[s];\n";
                                 mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";

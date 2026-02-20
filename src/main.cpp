@@ -3920,11 +3920,15 @@ int main(int, char**)
         }
 
         DcCameraConverted playCam{};
+        Vec3 playForward{};
+        bool hasPlayForward = false;
         bool hasPlayCam = false;
         if (activeCam && gPlayMode)
         {
             playCam = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
             hasPlayCam = true;
+            playForward = { -playCam.forward.x, -playCam.forward.y, -playCam.forward.z };
+            hasPlayForward = true;
             if (playCam.perspective)
             {
                 proj = Mat4Perspective(playCam.fovYRad, playCam.aspect, playCam.nearZ, playCam.farZ);
@@ -3935,8 +3939,8 @@ int main(int, char**)
                 proj = Mat4Orthographic(-playCam.orthoWidth, playCam.orthoWidth, -orthoHeight, orthoHeight, playCam.nearZ, playCam.farZ);
             }
             eye = playCam.eye;
-            viewYaw = atan2f(playCam.forward.z, playCam.forward.x) * 180.0f / 3.14159f;
-            viewPitch = asinf(std::clamp(playCam.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
+            viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
+            viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
 
             static double sLastParityCamLog = -10.0;
             if ((now - sLastParityCamLog) >= 1.0)
@@ -3944,7 +3948,7 @@ int main(int, char**)
                 sLastParityCamLog = now;
                 printf("[CameraParity][EditorPlay] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\n",
                     playCam.eye.x, playCam.eye.y, playCam.eye.z,
-                    playCam.forward.x, playCam.forward.y, playCam.forward.z,
+                    playForward.x, playForward.y, playForward.z,
                     playCam.right.x, playCam.right.y, playCam.right.z,
                     playCam.up.x, playCam.up.y, playCam.up.z);
             }
@@ -3971,7 +3975,7 @@ int main(int, char**)
         if (hasPlayCam)
         {
             up = playCam.up;
-            forward = playCam.forward;
+            forward = hasPlayForward ? playForward : playCam.forward;
         }
         else
         {

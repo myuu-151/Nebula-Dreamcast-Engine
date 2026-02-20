@@ -14,3 +14,41 @@ typedef struct NB_KOS_RawPadState {
 
 void NB_KOS_BindingsInit(void);
 void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState);
+
+typedef struct NB_Vec3 {
+    float x;
+    float y;
+    float z;
+} NB_Vec3;
+
+typedef struct NB_Mesh {
+    NB_Vec3* pos;
+    NB_Vec3* tri_uv;
+    uint16_t* indices;
+    uint16_t* tri_mat;
+    int vert_count;
+    int tri_count;
+} NB_Mesh;
+
+typedef struct NB_Texture {
+    uint16_t* pixels;
+    int w;
+    int h;
+    float us;
+    float vs;
+    int filter;
+} NB_Texture;
+
+int NB_DC_LoadScene(const char* scenePath);
+void NB_DC_UnloadScene(void);
+int NB_DC_SwitchScene(const char* scenePath);
+
+int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out);
+int NB_DC_LoadTexture(const char* texPath, NB_Texture* out);
+void NB_DC_FreeMesh(NB_Mesh* m);
+void NB_DC_FreeTexture(NB_Texture* t);
+
+const char* NB_DC_GetSceneName(void);
+const char* NB_DC_GetSceneMeshPath(void);
+const char* NB_DC_GetSceneTexturePath(int slotIndex);
+void NB_DC_GetSceneTransform(float outPos[3], float outRot[3], float outScale[3]);

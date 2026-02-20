@@ -151,6 +151,15 @@ static int gForceSelectSceneTab = -1;
 static bool gPlayMode = false;
 static bool gRequestDreamcastGenerate = false;
 static bool gEnableScriptHotReload = false;
+static std::unordered_map<std::string, std::filesystem::file_time_type> gScriptHotReloadKnownMtimes;
+static std::string gScriptHotReloadTrackedProjectDir;
+static double gScriptHotReloadNextPollAt = 0.0;
+static unsigned long long gScriptHotReloadGeneration = 0;
+
+// Optional editor runtime hook. v1 only signals "scripts changed"; no compile/rebind yet.
+using ScriptHotReloadCallback = void(*)(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger);
+static ScriptHotReloadCallback gOnScriptHotReloadEvent = nullptr;
+
 static bool gWireframePreview = false;
 static bool gSaveAllInProgress = false;
 static std::vector<StaticMesh3DNode> gStaticMeshNodes;
@@ -235,6 +244,149 @@ static bool StaticMeshCreatesCycle(int childIdx, int candidateParentIdx)
 static bool Node3DCreatesCycle(int childIdx, int candidateParentIdx)
 {
     return NebulaNodes::Node3DCreatesCycle(gNode3DNodes, childIdx, candidateParentIdx);
+}
+
+static bool BuildScriptFileMtimeSnapshot(const std::filesystem::path& scriptsDir, std::unordered_map<std::string, std::filesystem::file_time_type>& outSnapshot)
+{
+    outSnapshot.clear();
+    std::error_code ec;
+    if (!std::filesystem::exists(scriptsDir, ec) || !std::filesystem::is_directory(scriptsDir, ec))
+        return false;
+
+    for (std::filesystem::recursive_directory_iterator it(scriptsDir, ec), end; !ec && it != end; it.increment(ec))
+    {
+        if (ec || !it->is_regular_file(ec))
+            continue;
+
+        std::filesystem::path p = it->path();
+        if (p.extension() != ".c")
+            continue;
+
+        std::error_code relEc;
+        std::filesystem::path rel = std::filesystem::relative(p, scriptsDir, relEc);
+        std::string key = relEc ? p.generic_string() : rel.generic_string();
+
+        std::error_code timeEc;
+        std::filesystem::file_time_type ft = std::filesystem::last_write_time(p, timeEc);
+        if (!timeEc)
+            outSnapshot[key] = ft;
+    }
+    return true;
+}
+
+static void RunScriptHotReloadV1(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger)
+{
+    ++gScriptHotReloadGeneration;
+
+    if (gOnScriptHotReloadEvent)
+        gOnScriptHotReloadEvent(changedFiles, manualTrigger);
+
+    std::string mode = manualTrigger ? "manual" : "auto";
+    if (manualTrigger && changedFiles.empty())
+    {
+        gViewportToast = "Script Hot Reload v1: manual refresh complete (no compile/rebind)";
+        printf("[ScriptHotReload] v1 %s refresh: state update only (no compile/rebind). generation=%llu\n", mode.c_str(), gScriptHotReloadGeneration);
+    }
+    else
+    {
+        gViewportToast = "Script Hot Reload v1: detected " + std::to_string((int)changedFiles.size()) + " .c change(s), state refreshed";
+        printf("[ScriptHotReload] v1 %s reload: %zu .c file(s) changed. state update only (no compile/rebind). generation=%llu\n",
+               mode.c_str(), changedFiles.size(), gScriptHotReloadGeneration);
+        for (const auto& c : changedFiles)
+            printf("[ScriptHotReload] changed: %s\n", c.generic_string().c_str());
+    }
+    gViewportToastUntil = glfwGetTime() + 3.0;
+}
+
+static void ForceScriptHotReloadNowV1()
+{
+    if (!gEnableScriptHotReload)
+        return;
+
+    if (gProjectDir.empty())
+    {
+        gViewportToast = "Script Hot Reload v1: open a project first";
+        gViewportToastUntil = glfwGetTime() + 2.0;
+        return;
+    }
+
+    std::filesystem::path scriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
+    std::unordered_map<std::string, std::filesystem::file_time_type> snapshot;
+    if (!BuildScriptFileMtimeSnapshot(scriptsDir, snapshot))
+    {
+        gScriptHotReloadKnownMtimes.clear();
+        gViewportToast = "Script Hot Reload v1: Scripts folder not found";
+        gViewportToastUntil = glfwGetTime() + 2.5;
+        printf("[ScriptHotReload] v1 manual refresh skipped: missing folder %s\n", scriptsDir.string().c_str());
+        return;
+    }
+
+    std::vector<std::filesystem::path> changed;
+    changed.reserve(snapshot.size());
+    for (const auto& kv : snapshot)
+    {
+        auto it = gScriptHotReloadKnownMtimes.find(kv.first);
+        if (it == gScriptHotReloadKnownMtimes.end() || it->second != kv.second)
+            changed.push_back(std::filesystem::path(kv.first));
+    }
+    for (const auto& kv : gScriptHotReloadKnownMtimes)
+    {
+        if (snapshot.find(kv.first) == snapshot.end())
+            changed.push_back(std::filesystem::path(kv.first));
+    }
+
+    gScriptHotReloadKnownMtimes = snapshot;
+    RunScriptHotReloadV1(changed, true);
+}
+
+static void PollScriptHotReloadV1(double now)
+{
+    if (!gEnableScriptHotReload || gProjectDir.empty())
+        return;
+
+    if (gScriptHotReloadTrackedProjectDir != gProjectDir)
+    {
+        gScriptHotReloadTrackedProjectDir = gProjectDir;
+        gScriptHotReloadKnownMtimes.clear();
+        gScriptHotReloadNextPollAt = 0.0;
+    }
+
+    if (now < gScriptHotReloadNextPollAt)
+        return;
+    gScriptHotReloadNextPollAt = now + 0.75;
+
+    std::filesystem::path scriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
+    std::unordered_map<std::string, std::filesystem::file_time_type> snapshot;
+    if (!BuildScriptFileMtimeSnapshot(scriptsDir, snapshot))
+    {
+        gScriptHotReloadKnownMtimes.clear();
+        return;
+    }
+
+    if (gScriptHotReloadKnownMtimes.empty())
+    {
+        gScriptHotReloadKnownMtimes = snapshot;
+        return;
+    }
+
+    std::vector<std::filesystem::path> changed;
+    for (const auto& kv : snapshot)
+    {
+        auto it = gScriptHotReloadKnownMtimes.find(kv.first);
+        if (it == gScriptHotReloadKnownMtimes.end() || it->second != kv.second)
+            changed.push_back(std::filesystem::path(kv.first));
+    }
+    for (const auto& kv : gScriptHotReloadKnownMtimes)
+    {
+        if (snapshot.find(kv.first) == snapshot.end())
+            changed.push_back(std::filesystem::path(kv.first));
+    }
+
+    if (!changed.empty())
+    {
+        gScriptHotReloadKnownMtimes = snapshot;
+        RunScriptHotReloadV1(changed, false);
+    }
 }
 
 static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
@@ -3468,6 +3620,8 @@ int main(int, char**)
         lastTime = now;
         if (deltaTime > 0.1f) deltaTime = 0.1f; // clamp
 
+        PollScriptHotReloadV1(now);
+
         // Mouse orbit (MMB) / rotate in place (RMB)
         double mx, my;
         glfwGetCursorPos(window, &mx, &my);
@@ -5374,16 +5528,25 @@ int main(int, char**)
                 if (ImGui::MenuItem("Enable Hot Reloading"))
                 {
                     gEnableScriptHotReload = true;
-                    gViewportToast = "Hot reloading enabled";
-                    gViewportToastUntil = glfwGetTime() + 2.0;
+                    gScriptHotReloadKnownMtimes.clear();
+                    gScriptHotReloadTrackedProjectDir.clear();
+                    gScriptHotReloadNextPollAt = 0.0;
+                    gViewportToast = "Script Hot Reload v1 enabled (detect + state refresh only)";
+                    gViewportToastUntil = glfwGetTime() + 2.5;
                 }
             }
             else
             {
+                if (ImGui::MenuItem("Reload Scripts Now"))
+                {
+                    ForceScriptHotReloadNowV1();
+                }
                 if (ImGui::MenuItem("Disable Hot Reloading"))
                 {
                     gEnableScriptHotReload = false;
-                    gViewportToast = "Hot reloading disabled";
+                    gScriptHotReloadKnownMtimes.clear();
+                    gScriptHotReloadTrackedProjectDir.clear();
+                    gViewportToast = "Script Hot Reload v1 disabled";
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
             }

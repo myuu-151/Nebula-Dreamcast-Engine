@@ -32,6 +32,7 @@
 #include <assimp/postprocess.h>
 
 #include "audio3d.h"
+#include "editor/math_types.h"
 #include "assets/meta_io.h"
 #include "platform/dreamcast/build_helpers.h"
 #include "scene/SceneIO.h"
@@ -58,16 +59,6 @@ static std::filesystem::path GetExecutableDirectory()
     std::filesystem::path p(pathBuf);
     return p.parent_path();
 }
-
-struct Vec3
-{
-    float x, y, z;
-};
-
-struct Mat4
-{
-    float m[16];
-};
 
 struct CameraBasis
 {
@@ -10482,6 +10473,7 @@ int main(int, char**)
     glfwTerminate();
     return 0;
 }
+
 
 
 

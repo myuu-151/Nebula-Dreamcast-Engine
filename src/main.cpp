@@ -69,6 +69,15 @@ struct Mat4
     float m[16];
 };
 
+struct CameraBasis
+{
+    Vec3 forward{};
+    Vec3 right{};
+    Vec3 up{};
+};
+
+static CameraBasis BuildCanonicalDreamcastCameraBasis(const Vec3& forwardHint, const Vec3& upHint);
+
 static std::string gProjectDir;
 static std::string gProjectFile;
 static std::vector<std::string> gRecentProjects;
@@ -150,6 +159,7 @@ static int gActiveScene = -1;
 static int gForceSelectSceneTab = -1;
 static bool gPlayMode = false;
 static bool gRequestDreamcastGenerate = false;
+static bool gDebugCanonicalCameraLog = false;
 static bool gEnableScriptHotReload = false;
 static std::unordered_map<std::string, std::filesystem::file_time_type> gScriptHotReloadKnownMtimes;
 static std::string gScriptHotReloadTrackedProjectDir;
@@ -3299,23 +3309,16 @@ static Mat4 Mat4Orthographic(float left, float right, float bottom, float top, f
 
 static Mat4 Mat4LookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
 {
-    Vec3 f = { target.x - eye.x, target.y - eye.y, target.z - eye.z };
-    float flen = sqrtf(f.x * f.x + f.y * f.y + f.z * f.z);
-    f.x /= flen; f.y /= flen; f.z /= flen;
-
-    Vec3 s = { f.y * up.z - f.z * up.y, f.z * up.x - f.x * up.z, f.x * up.y - f.y * up.x };
-    float slen = sqrtf(s.x * s.x + s.y * s.y + s.z * s.z);
-    s.x /= slen; s.y /= slen; s.z /= slen;
-
-    Vec3 u = { s.y * f.z - s.z * f.y, s.z * f.x - s.x * f.z, s.x * f.y - s.y * f.x };
+    Vec3 fwd = { target.x - eye.x, target.y - eye.y, target.z - eye.z };
+    CameraBasis b = BuildCanonicalDreamcastCameraBasis(fwd, up);
 
     Mat4 r = Mat4Identity();
-    r.m[0] = s.x; r.m[1] = u.x; r.m[2] = -f.x;
-    r.m[4] = s.y; r.m[5] = u.y; r.m[6] = -f.y;
-    r.m[8] = s.z; r.m[9] = u.z; r.m[10] = -f.z;
-    r.m[12] = -(s.x * eye.x + s.y * eye.y + s.z * eye.z);
-    r.m[13] = -(u.x * eye.x + u.y * eye.y + u.z * eye.z);
-    r.m[14] = (f.x * eye.x + f.y * eye.y + f.z * eye.z);
+    r.m[0] = b.right.x; r.m[1] = b.up.x; r.m[2] = -b.forward.x;
+    r.m[4] = b.right.y; r.m[5] = b.up.y; r.m[6] = -b.forward.y;
+    r.m[8] = b.right.z; r.m[9] = b.up.z; r.m[10] = -b.forward.z;
+    r.m[12] = -(b.right.x * eye.x + b.right.y * eye.y + b.right.z * eye.z);
+    r.m[13] = -(b.up.x * eye.x + b.up.y * eye.y + b.up.z * eye.z);
+    r.m[14] = (b.forward.x * eye.x + b.forward.y * eye.y + b.forward.z * eye.z);
     return r;
 }
 
@@ -3434,44 +3437,89 @@ static Vec3 NormalizeVec3Safe(const Vec3& v, const Vec3& fallback)
     return Vec3{ v.x / m, v.y / m, v.z / m };
 }
 
-static DcCameraConverted ConvertCamera3DForDreamcast(const Camera3DNode& cam, float aspect, const Vec3& targetOffset)
+static Vec3 CrossVec3(const Vec3& a, const Vec3& b)
+{
+    return Vec3{
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
+
+static CameraBasis BuildCanonicalDreamcastCameraBasis(const Vec3& forwardHint, const Vec3& upHint)
+{
+    CameraBasis basis{};
+    // Canonical Dreamcast camera convention shared by editor and runtime:
+    // right-handed basis in world space, +Y world up, +Z forward.
+    // Cross order is fixed: right = normalize(cross(up, forward)),
+    // then up = normalize(cross(forward, right)).
+    basis.forward = NormalizeVec3Safe(forwardHint, Vec3{ 0.0f, 0.0f, 1.0f });
+    basis.up = NormalizeVec3Safe(upHint, Vec3{ 0.0f, 1.0f, 0.0f });
+    basis.right = NormalizeVec3Safe(CrossVec3(basis.up, basis.forward), Vec3{ 1.0f, 0.0f, 0.0f });
+    if (std::fabs(basis.right.x) < 1e-5f && std::fabs(basis.right.y) < 1e-5f && std::fabs(basis.right.z) < 1e-5f)
+    {
+        Vec3 fallbackUp = (std::fabs(basis.forward.y) < 0.99f) ? Vec3{ 0.0f, 1.0f, 0.0f } : Vec3{ 1.0f, 0.0f, 0.0f };
+        basis.right = NormalizeVec3Safe(CrossVec3(fallbackUp, basis.forward), Vec3{ 1.0f, 0.0f, 0.0f });
+    }
+    basis.up = NormalizeVec3Safe(CrossVec3(basis.forward, basis.right), Vec3{ 0.0f, 1.0f, 0.0f });
+    basis.right = NormalizeVec3Safe(CrossVec3(basis.up, basis.forward), Vec3{ 1.0f, 0.0f, 0.0f });
+    return basis;
+}
+
+static DcCameraConverted BuildCanonicalDreamcastCamera(
+    const Vec3& cameraPos,
+    const Vec3& forwardHint,
+    const Vec3& upHint,
+    bool perspective,
+    float fovYDeg,
+    float aspect,
+    float nearZ,
+    float farZ,
+    float orthoWidth)
 {
     DcCameraConverted out{};
-    out.perspective = cam.perspective;
-    out.fovYDeg = std::clamp(cam.fovY, 5.0f, 170.0f);
+    out.perspective = perspective;
+    out.fovYDeg = std::clamp(fovYDeg, 5.0f, 170.0f);
     out.fovYRad = out.fovYDeg * 3.14159f / 180.0f;
     out.aspect = std::max(aspect, 1e-4f);
-    out.nearZ = std::max(cam.nearZ, 0.001f);
-    out.farZ = std::max(cam.farZ, out.nearZ + 0.01f);
-    out.orthoWidth = std::max(cam.orthoWidth, 0.01f);
-    out.eye = { cam.x, cam.y, cam.z };
+    out.nearZ = std::max(nearZ, 0.001f);
+    out.farZ = std::max(farZ, out.nearZ + 0.01f);
+    out.orthoWidth = std::max(orthoWidth, 0.01f);
+    out.eye = cameraPos;
 
-    // Neb Camera3D convention: right-handed world, +Y up, forward from local +Z after Rz*Ry*Rx.
-    // Dreamcast runtime projection uses camera basis (right/up/forward) and positive-forward depth.
-    GetLocalAxesFromEuler(cam.rotX, cam.rotY, cam.rotZ, out.right, out.up, out.forward);
-    out.forward = NormalizeVec3Safe(out.forward, Vec3{ 0.0f, 0.0f, 1.0f });
-    out.target = {
-        out.eye.x + out.forward.x + targetOffset.x,
-        out.eye.y + out.forward.y + targetOffset.y,
-        out.eye.z + out.forward.z + targetOffset.z
-    };
-
-    out.forward = NormalizeVec3Safe(
-        Vec3{ out.target.x - out.eye.x, out.target.y - out.eye.y, out.target.z - out.eye.z },
-        Vec3{ 0.0f, 0.0f, 1.0f });
-    out.right = NormalizeVec3Safe(
-        Vec3{ out.forward.y * out.up.z - out.forward.z * out.up.y,
-              out.forward.z * out.up.x - out.forward.x * out.up.z,
-              out.forward.x * out.up.y - out.forward.y * out.up.x },
-        Vec3{ 1.0f, 0.0f, 0.0f });
-    out.up = NormalizeVec3Safe(
-        Vec3{ out.right.y * out.forward.z - out.right.z * out.forward.y,
-              out.right.z * out.forward.x - out.right.x * out.forward.z,
-              out.right.x * out.forward.y - out.right.y * out.forward.x },
-        Vec3{ 0.0f, 1.0f, 0.0f });
+    CameraBasis basis = BuildCanonicalDreamcastCameraBasis(forwardHint, upHint);
+    out.forward = basis.forward;
+    out.right = basis.right;
+    out.up = basis.up;
+    out.target = { out.eye.x + out.forward.x, out.eye.y + out.forward.y, out.eye.z + out.forward.z };
 
     out.dcFocalY = (out.dcViewH * 0.5f) / std::max(1e-4f, std::tanf(out.fovYRad * 0.5f));
     out.dcFocalX = out.dcFocalY * out.aspect;
+    return out;
+}
+
+static DcCameraConverted ConvertCamera3DForDreamcast(const Camera3DNode& cam, float aspect, const Vec3& targetOffset)
+{
+    Vec3 localRight{}, localUp{}, localForward{};
+    GetLocalAxesFromEuler(cam.rotX, cam.rotY, cam.rotZ, localRight, localUp, localForward);
+    DcCameraConverted out = BuildCanonicalDreamcastCamera(
+        Vec3{ cam.x, cam.y, cam.z },
+        localForward,
+        localUp,
+        cam.perspective,
+        cam.fovY,
+        aspect,
+        cam.nearZ,
+        cam.farZ,
+        cam.orthoWidth);
+    out.target = { out.target.x + targetOffset.x, out.target.y + targetOffset.y, out.target.z + targetOffset.z };
+    out.forward = NormalizeVec3Safe(
+        Vec3{ out.target.x - out.eye.x, out.target.y - out.eye.y, out.target.z - out.eye.z },
+        Vec3{ 0.0f, 0.0f, 1.0f });
+    CameraBasis basis = BuildCanonicalDreamcastCameraBasis(out.forward, out.up);
+    out.forward = basis.forward;
+    out.right = basis.right;
+    out.up = basis.up;
     return out;
 }
 
@@ -3718,17 +3766,17 @@ int main(int, char**)
                     sinf(viewPitchRad),
                     cosf(viewPitchRad) * sinf(viewYawRad)
                 };
-                // compute eye from current orbit params (approx)
+                // compute eye from current orbit params
                 float oYawRad = orbitYaw * 3.14159f / 180.0f;
                 float oPitchRad = orbitPitch * 3.14159f / 180.0f;
                 Vec3 eye = {
-                    orbitCenter.x + distance * cosf(oPitchRad) * cosf(oYawRad),
-                    orbitCenter.y + distance * sinf(oPitchRad),
-                    orbitCenter.z + distance * cosf(oPitchRad) * sinf(oYawRad)
+                    orbitCenter.x - distance * cosf(oPitchRad) * cosf(oYawRad),
+                    orbitCenter.y - distance * sinf(oPitchRad),
+                    orbitCenter.z - distance * cosf(oPitchRad) * sinf(oYawRad)
                 };
                 orbitCenter = { eye.x + forward.x * distance, eye.y + forward.y * distance, eye.z + forward.z * distance };
-                orbitYaw = viewYaw + 180.0f;
-                orbitPitch = -viewPitch;
+                orbitYaw = viewYaw;
+                orbitPitch = viewPitch;
             }
             else
             {
@@ -3737,16 +3785,15 @@ int main(int, char**)
                 lastX = mx;
                 lastY = my;
 
-                float yawSign = gPlayMode ? 1.0f : -1.0f;
-                orbitYaw   += (float)dx * orbitSensitivity * yawSign;
+                orbitYaw   += (float)dx * orbitSensitivity;
                 orbitPitch += (float)dy * orbitSensitivity;
                 if (orbitPitch > 89.0f) orbitPitch = 89.0f;
                 if (orbitPitch < -89.0f) orbitPitch = -89.0f;
 
                 // keep view aligned to orbit (look at orbit center)
                 viewLocked = true;
-                viewYaw = orbitYaw + 180.0f;
-                viewPitch = -orbitPitch;
+                viewYaw = orbitYaw;
+                viewPitch = orbitPitch;
             }
         }
         else
@@ -3770,8 +3817,7 @@ int main(int, char**)
                 lastY = my;
 
                 viewLocked = false;
-                float yawSign = gPlayMode ? 1.0f : -1.0f;
-                viewYaw   += (float)dx * rotateSensitivity * yawSign;
+                viewYaw   += (float)dx * rotateSensitivity;
                 viewPitch -= (float)dy * rotateSensitivity;
                 if (viewPitch > 89.0f) viewPitch = 89.0f;
                 if (viewPitch < -89.0f) viewPitch = -89.0f;
@@ -3807,7 +3853,6 @@ int main(int, char**)
             float yawRad = viewYaw * 3.14159f / 180.0f;
             Vec3 forwardXZ = { cosf(yawRad), 0.0f, sinf(yawRad) };
             Vec3 rightXZ = { -sinf(yawRad), 0.0f, cosf(yawRad) };
-            if (!gPlayMode) rightXZ = { -rightXZ.x, -rightXZ.y, -rightXZ.z };
 
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
             {
@@ -3858,9 +3903,9 @@ int main(int, char**)
         float orbitYawRad = orbitYaw * 3.14159f / 180.0f;
         float orbitPitchRad = orbitPitch * 3.14159f / 180.0f;
         Vec3 eye = {
-            orbitCenter.x + distance * cosf(orbitPitchRad) * cosf(orbitYawRad),
-            orbitCenter.y + distance * sinf(orbitPitchRad),
-            orbitCenter.z + distance * cosf(orbitPitchRad) * sinf(orbitYawRad)
+            orbitCenter.x - distance * cosf(orbitPitchRad) * cosf(orbitYawRad),
+            orbitCenter.y - distance * sinf(orbitPitchRad),
+            orbitCenter.z - distance * cosf(orbitPitchRad) * sinf(orbitYawRad)
         };
 
         Camera3DNode* activeCam = nullptr;
@@ -3887,15 +3932,21 @@ int main(int, char**)
                 float orthoHeight = cv.orthoWidth / cv.aspect;
                 proj = Mat4Orthographic(-cv.orthoWidth, cv.orthoWidth, -orthoHeight, orthoHeight, cv.nearZ, cv.farZ);
             }
-            proj.m[0] = -proj.m[0]; // Play-only horizontal mirror correction.
-
             eye = cv.eye;
             viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;
             viewPitch = asinf(std::clamp(cv.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
-        }
-        else
-        {
-            proj.m[0] = -proj.m[0]; // Non-play viewport horizontal mirror to match play/runtime orientation.
+
+            static double sLastCanonicalCamLog = -10.0;
+            if (gDebugCanonicalCameraLog && (now - sLastCanonicalCamLog) >= 1.0)
+            {
+                sLastCanonicalCamLog = now;
+                printf("[CameraCanonical] pos=(%.3f,%.3f,%.3f) fwd=(%.3f,%.3f,%.3f) right=(%.3f,%.3f,%.3f) up=(%.3f,%.3f,%.3f) proj(fov=%.2f,a=%.3f,n=%.3f,f=%.3f)\n",
+                    cv.eye.x, cv.eye.y, cv.eye.z,
+                    cv.forward.x, cv.forward.y, cv.forward.z,
+                    cv.right.x, cv.right.y, cv.right.z,
+                    cv.up.x, cv.up.y, cv.up.z,
+                    cv.fovYDeg, cv.aspect, cv.nearZ, cv.farZ);
+            }
         }
 
         UpdateAudio3DNodes(eye.x, eye.y, eye.z);
@@ -6604,6 +6655,7 @@ int main(int, char**)
                                 mc << "static const float kCamPosInit[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
                                 mc << "static float gCamPos[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
                                 mc << "static float gCamForward[3] = {" << fstr(dcCamConverted.forward.x) << "," << fstr(dcCamConverted.forward.y) << "," << fstr(dcCamConverted.forward.z) << "};\n";
+                                mc << "static float gCamRight[3] = {" << fstr(dcCamConverted.right.x) << "," << fstr(dcCamConverted.right.y) << "," << fstr(dcCamConverted.right.z) << "};\n";
                                 mc << "static float gCamUp[3] = {" << fstr(dcCamConverted.up.x) << "," << fstr(dcCamConverted.up.y) << "," << fstr(dcCamConverted.up.z) << "};\n";
                                 mc << "static const float kProjFovYDeg = " << fstr(dcCamConverted.fovYDeg) << ";\n";
                                 mc << "static const float kProjAspect = " << fstr(dcCamConverted.aspect) << ";\n";
@@ -6683,10 +6735,10 @@ int main(int, char**)
                                 mc << "static int project_point(V3 wp, SV *out) {\n";
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
                                 mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
-                                mc << "  V3 upw = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
-                                mc << "  V3 right = norm3(cross3(upw, fwd));\n";
-                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){1,0,0});\n";
-                                mc << "  V3 up = cross3(fwd, right);\n";
+                                mc << "  V3 right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
+                                mc << "  V3 up = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
+                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3(cross3(up, fwd));\n";
+                                mc << "  if (fabsf(dot3(up,up)) < 1e-6f) up = norm3(cross3(fwd, right));\n";
                                 mc << "  V3 d = sub3(wp, cam);\n";
                                 mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
                                 mc << "  if (cp.z <= kProjNear) return 0;\n";
@@ -7094,6 +7146,7 @@ int main(int, char**)
                                 if (lf.is_open())
                                 {
                                     lf << "[DreamcastBuild] start\n";
+                                    lf << "[DreamcastCameraConvention] RH +Y-up +Z-forward right=cross(up,forward) up=cross(forward,right)\n";
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
                                        << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
                                        << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"

@@ -5483,8 +5483,7 @@ int main(int, char**)
                                 bs << "if not exist cd_root\\data mkdir cd_root\\data\n";
                                 bs << "if not exist cd_root\\data\\meshes mkdir cd_root\\data\\meshes\n";
                                 bs << "if not exist cd_root\\data\\textures mkdir cd_root\\data\\textures\n";
-                                bs << "for /R ..\\Assets %%F in (*.nebmesh) do copy /Y \"%%F\" cd_root\\data\\meshes\\ >nul\n";
-                                bs << "for /R ..\\Assets %%F in (*.nebtex) do copy /Y \"%%F\" cd_root\\data\\textures\\ >nul\n";
+                                bs << "if not exist cd_root\\data\\scenes mkdir cd_root\\data\\scenes\n";
                                 bs << "if exist \"%MKISOFS_EXE%\" if exist IP.BIN \"%MKISOFS_EXE%\" -C 0,11702 -V NEBULA_DC -G IP.BIN -l -o nebula_dreamcast.iso cd_root\n";
                                 bs << "if exist \"%CDI4DC_EXE%\" if exist nebula_dreamcast.iso \"%CDI4DC_EXE%\" nebula_dreamcast.iso nebula_dreamcast.cdi\n";
                                 bs << "popd\n";
@@ -5949,6 +5948,166 @@ int main(int, char**)
                             if (!meshSrc.mesh.empty())
                                 runtimeMeshDiskName = std::filesystem::path(meshSrc.mesh).filename().string();
 
+                            auto sanitizeSceneToken = [](const std::string& in)->std::string
+                            {
+                                std::string out;
+                                out.reserve(in.size());
+                                for (char c : in)
+                                {
+                                    unsigned char uc = (unsigned char)c;
+                                    if (std::isalnum(uc) || c == '_' || c == '-') out.push_back(c);
+                                    else out.push_back('_');
+                                }
+                                if (out.empty()) out = "scene";
+                                return out;
+                            };
+
+                            std::filesystem::path cdDataDir = buildDir / "cd_root" / "data";
+                            std::filesystem::path cdScenesDir = cdDataDir / "scenes";
+                            std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
+                            std::filesystem::path cdTexturesDir = cdDataDir / "textures";
+                            std::filesystem::create_directories(cdScenesDir);
+                            std::filesystem::create_directories(cdMeshesDir);
+                            std::filesystem::create_directories(cdTexturesDir);
+
+                            auto makeStableAssetName = [&](const std::filesystem::path& absPath, const std::string& defaultStem, const std::string& ext)->std::string
+                            {
+                                std::string stem = sanitizeSceneToken(defaultStem.empty() ? absPath.stem().string() : defaultStem);
+                                size_t hv = std::hash<std::string>{}(absPath.generic_string());
+                                char hex[17] = {};
+                                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)hv);
+                                return stem + "_" + std::string(hex) + ext;
+                            };
+
+                            std::unordered_map<std::string, std::string> stagedMeshByAbs;
+                            std::unordered_map<std::string, std::string> stagedTexByAbs;
+                            auto stageMeshAsset = [&](const std::filesystem::path& absPath)->std::string
+                            {
+                                std::string key = absPath.generic_string();
+                                auto it = stagedMeshByAbs.find(key);
+                                if (it != stagedMeshByAbs.end()) return it->second;
+                                if (!std::filesystem::exists(absPath)) return {};
+                                std::string outName = makeStableAssetName(absPath, absPath.stem().string(), ".nebmesh");
+                                std::error_code ec;
+                                std::filesystem::copy_file(absPath, cdMeshesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                if (ec) return {};
+                                stagedMeshByAbs[key] = outName;
+                                return outName;
+                            };
+                            auto stageTextureAsset = [&](const std::filesystem::path& absPath)->std::string
+                            {
+                                std::string key = absPath.generic_string();
+                                auto it = stagedTexByAbs.find(key);
+                                if (it != stagedTexByAbs.end()) return it->second;
+                                if (!std::filesystem::exists(absPath)) return {};
+                                std::string outName = makeStableAssetName(absPath, absPath.stem().string(), ".nebtex");
+                                std::error_code ec;
+                                std::filesystem::copy_file(absPath, cdTexturesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                if (ec) return {};
+                                stagedTexByAbs[key] = outName;
+                                return outName;
+                            };
+
+                            std::vector<std::filesystem::path> sourceScenes;
+                            {
+                                std::set<std::string> dedup;
+                                if (!defaultSceneCfg.empty())
+                                {
+                                    std::filesystem::path p(defaultSceneCfg);
+                                    if (p.is_relative()) p = std::filesystem::path(gProjectDir) / p;
+                                    std::string k = std::filesystem::weakly_canonical(p).generic_string();
+                                    dedup.insert(k);
+                                    sourceScenes.push_back(p);
+                                }
+                                std::filesystem::path scenesRoot = std::filesystem::path(gProjectDir) / "Assets" / "Scenes";
+                                if (std::filesystem::exists(scenesRoot))
+                                {
+                                    for (const auto& e : std::filesystem::recursive_directory_iterator(scenesRoot))
+                                    {
+                                        if (!e.is_regular_file() || e.path().extension() != ".nebscene") continue;
+                                        std::string k = std::filesystem::weakly_canonical(e.path()).generic_string();
+                                        if (dedup.insert(k).second) sourceScenes.push_back(e.path());
+                                    }
+                                }
+                            }
+                            if (sourceScenes.empty())
+                            {
+                                std::filesystem::path fallbackScene = buildDir / "_runtime_default.nebscene";
+                                SaveSceneToPath(fallbackScene, exportNodes, exportStatics, exportCameras, gNode3DNodes);
+                                sourceScenes.push_back(fallbackScene);
+                            }
+
+                            std::vector<std::string> runtimeSceneFiles;
+                            std::string defaultSceneRuntimeFile;
+                            for (const auto& scenePath : sourceScenes)
+                            {
+                                SceneData stagedScene{};
+                                if (!LoadSceneFromPath(scenePath, stagedScene)) continue;
+
+                                std::string sceneOutName = sanitizeSceneToken(scenePath.stem().string()) + ".dcscene";
+                                std::filesystem::path sceneOutPath = cdScenesDir / sceneOutName;
+                                std::ofstream so(sceneOutPath, std::ios::out | std::ios::trunc);
+                                if (!so.is_open()) continue;
+
+                                so << "scene=" << stagedScene.name << "\n";
+                                for (const auto& sm : stagedScene.staticMeshes)
+                                {
+                                    std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
+                                    std::string stagedMesh = stageMeshAsset(meshAbs);
+                                    if (stagedMesh.empty()) continue;
+
+                                    std::array<std::string, kStaticMeshMaterialSlots> slotTexNames{};
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        std::string matRef = sm.materialSlots[si];
+                                        if (matRef.empty() && si == 0) matRef = sm.material;
+                                        if (matRef.empty()) continue;
+
+                                        std::filesystem::path matAbs = std::filesystem::path(gProjectDir) / matRef;
+                                        std::filesystem::path texAbs;
+                                        if (matAbs.extension() == ".nebmat")
+                                        {
+                                            std::string texRel;
+                                            if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty())
+                                                texAbs = std::filesystem::path(gProjectDir) / texRel;
+                                        }
+                                        else if (matAbs.extension() == ".nebtex")
+                                        {
+                                            texAbs = matAbs;
+                                        }
+                                        if (!texAbs.empty())
+                                            slotTexNames[(size_t)si] = stageTextureAsset(texAbs);
+                                    }
+
+                                    so << "staticmesh " << stagedMesh << " "
+                                       << sm.x << " " << sm.y << " " << sm.z << " "
+                                       << sm.rotX << " " << sm.rotY << " " << sm.rotZ << " "
+                                       << sm.scaleX << " " << sm.scaleY << " " << sm.scaleZ;
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                        so << " " << (slotTexNames[(size_t)si].empty() ? "-" : slotTexNames[(size_t)si]);
+                                    so << "\n";
+                                }
+                                runtimeSceneFiles.push_back(sceneOutName);
+                                if (defaultSceneRuntimeFile.empty()) defaultSceneRuntimeFile = sceneOutName;
+                            }
+                            if (runtimeSceneFiles.empty())
+                            {
+                                runtimeSceneFiles.push_back("default.dcscene");
+                                std::ofstream so(cdScenesDir / "default.dcscene", std::ios::out | std::ios::trunc);
+                                if (so.is_open())
+                                {
+                                    so << "scene=Default\n";
+                                    so << "staticmesh " << runtimeMeshDiskName << " "
+                                       << meshSrc.x << " " << meshSrc.y << " " << meshSrc.z << " "
+                                       << meshSrc.rotX << " " << meshSrc.rotY << " " << meshSrc.rotZ << " "
+                                       << meshSrc.scaleX << " " << meshSrc.scaleY << " " << meshSrc.scaleZ;
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                        so << " " << (runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)].empty() ? "-" : runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)]);
+                                    so << "\n";
+                                }
+                                defaultSceneRuntimeFile = "default.dcscene";
+                            }
+
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
                             if (mc.is_open())
                             {
@@ -5981,10 +6140,36 @@ int main(int, char**)
                                 mc << "static float gCamPos[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
                                 mc << "static int gFlipWinding = 0;\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
-                                mc << "static const float kMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
-                                mc << "static const float kMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
-                                mc << "static const float kMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
-                                mc << "static const char* kDiskMeshFile = \"" << runtimeMeshDiskName << "\";\n";
+                                mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
+                                mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
+                                mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
+                                mc << "static char gSceneName[64] = \"Default\";\n";
+                                mc << "static int gSceneIndex = 0;\n";
+                                mc << "static const char* gSceneFiles[] = {";
+                                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                                {
+                                    mc << "\"" << runtimeSceneFiles[si] << "\"";
+                                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                                }
+                                mc << "};\n";
+                                mc << "static const int gSceneCount = " << (int)runtimeSceneFiles.size() << ";\n";
+                                mc << "static const char* kDefaultSceneFile = \"" << defaultSceneRuntimeFile << "\";\n";
+                                mc << "static char gSlotDiskNebtex[16][128] = {";
+                                for (int si = 0; si < 16; ++si)
+                                {
+                                    std::string nm;
+                                    if (si < runtimeSlotCount) nm = runtimeSlotDiskName[(size_t)si];
+                                    for (char& ch : nm) if (ch == '\\') ch = '/';
+                                    mc << "\"" << nm << "\"";
+                                    if (si + 1 < 16) mc << ",";
+                                }
+                                mc << "};\n";
+                                mc << "static int scene_tokenize(char* s, char* toks[], int maxTok){ int n=0; char* p=strtok(s, \" \\t\\r\\n\"); while(p && n<maxTok){ toks[n++]=p; p=strtok(NULL, \" \\t\\r\\n\"); } return n; }\n";
+                                mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); FILE* f=fopen(path,\"r\"); if(!f) return 0; char line[1024]; int found=0; while(fgets(line,sizeof(line),f)){ if(line[0]=='#'||line[0]=='\\n'||line[0]=='\\r') continue; if(!strncmp(line,\"scene=\",6)){ strncpy(gSceneName,line+6,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; size_t ln=strlen(gSceneName); while(ln>0&&(gSceneName[ln-1]=='\\n'||gSceneName[ln-1]=='\\r')) gSceneName[--ln]=0; continue; } if(strncmp(line,\"staticmesh \",11)==0){ char* toks[64]; int tc=scene_tokenize(line,toks,64); if(tc < 25) continue; strncpy(gDiskMeshFile,toks[1],sizeof(gDiskMeshFile)-1); gDiskMeshFile[sizeof(gDiskMeshFile)-1]=0; gMeshPos[0]=strtof(toks[2],0); gMeshPos[1]=strtof(toks[3],0); gMeshPos[2]=strtof(toks[4],0); gMeshRot[0]=strtof(toks[5],0); gMeshRot[1]=strtof(toks[6],0); gMeshRot[2]=strtof(toks[7],0); gMeshScale[0]=strtof(toks[8],0); gMeshScale[1]=strtof(toks[9],0); gMeshScale[2]=strtof(toks[10],0); for(int i=0;i<16;++i){ gSlotDiskNebtex[i][0]=0; if(11+i<tc && strcmp(toks[11+i],\"-\")!=0){ strncpy(gSlotDiskNebtex[i],toks[11+i],127); gSlotDiskNebtex[i][127]=0; } } found=1; break; } } fclose(f); return found; }\n";
+                                mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; if(!NB_LoadScene(gSceneFiles[idx])) return 0; gSceneIndex=idx; return 1; }\n";
+                                mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
+                                mc << "static int NB_PrevScene(void){ return NB_LoadSceneIndex(gSceneIndex-1); }\n";
                                 mc << "\n";
                                 mc << "static inline float deg2rad(float d){ return d*0.0174532925f; }\n";
                                 mc << "\n";
@@ -6003,7 +6188,7 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "static int project_point(V3 wp, SV *out) {\n";
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
-                                mc << "  V3 tgt = {kMeshPos[0], kMeshPos[1], kMeshPos[2]};\n";
+                                mc << "  V3 tgt = {gMeshPos[0], gMeshPos[1], gMeshPos[2]};\n";
                                 mc << "  V3 fwd = norm3(sub3(tgt, cam));\n";
                                 mc << "  V3 upw = {0,1,0};\n";
                                 mc << "  V3 right = norm3(cross3(upw, fwd));\n";
@@ -6031,6 +6216,12 @@ int main(int, char**)
                                 mc << "  pvr_init_defaults();\n";
                                 mc << "  dbgio_dev_select(\"fb\");\n";
                                 mc << "  dbgio_printf(\"Nebula Dreamcast Runtime (Scene Export v2)\\n\");\n";
+                                mc << "  if (!NB_LoadScene(kDefaultSceneFile)) {\n";
+                                mc << "    if (!NB_LoadSceneIndex(0)) {\n";
+                                mc << "      dbgio_printf(\"[NEBULA][DC] Scene load failed: %s\\n\", kDefaultSceneFile);\n";
+                                mc << "      return 1;\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
                                 mc << "\n";
                                 mc << "\n";
                                 mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";
@@ -6069,12 +6260,12 @@ int main(int, char**)
                                 mc << "};\n";
                                 mc << "  RuntimeMesh diskMesh = {0};\n";
                                 mc << "  RuntimeMesh activeMesh = {0};\n";
-                                mc << "  if (kDiskMeshFile[0]) {\n";
-                                mc << "    char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", kDiskMeshFile);\n";
+                                mc << "  if (gDiskMeshFile[0]) {\n";
+                                mc << "    char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", gDiskMeshFile);\n";
                                 mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
                                 mc << "  }\n";
                                 mc << "  if (diskMesh.vertCount > 0 && diskMesh.triCount > 0) activeMesh = diskMesh;\n";
-                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh load failed: /cd/data/meshes/%s\\n\", kDiskMeshFile); return 1; }\n";
+                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh load failed: /cd/data/meshes/%s\\n\", gDiskMeshFile); return 1; }\n";
                                 mc << "  int kVertCount = activeMesh.vertCount;\n";
                                 mc << "  int kTriCount = activeMesh.triCount;\n";
                                 mc << "  V3* base = activeMesh.pos;\n";
@@ -6121,15 +6312,7 @@ int main(int, char**)
                                 mc << "  static uint8_t slotFilter[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFilter[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
-                                mc << "  static const char* slotDiskNebtex[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si)
-                                {
-                                    std::string nm = runtimeSlotDiskName[(size_t)si];
-                                    for (char& ch : nm) if (ch == '\\') ch = '/';
-                                    mc << "\"" << nm << "\"";
-                                    if (si + 1 < runtimeSlotCount) mc << ",";
-                                }
-                                mc << "};\n";
+                                mc << "  /* texture slot names come from scene metadata */\n";
                                 for (int si = 0; si < runtimeSlotCount; ++si)
                                 {
                                     mc << "  static uint16_t texbuf_" << si << "[] = {";
@@ -6144,12 +6327,12 @@ int main(int, char**)
                                 mc << "  RuntimeTex diskTex[MAX_SLOT]; memset(diskTex, 0, sizeof(diskTex));\n";
                                 mc << "  for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "    const uint16_t *buf = 0;\n";
-                                mc << "    if (!(slotDiskNebtex[s] && slotDiskNebtex[s][0])) {\n";
+                                mc << "    if (!gSlotDiskNebtex[s][0]) {\n";
                                 mc << "      dbgio_printf(\"[NEBULA][DC] Missing disk texture path for slot %d\\n\", s);\n";
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "    {\n";
-                                mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", slotDiskNebtex[s]);\n";
+                                mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
                                 mc << "      if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
                                 mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture load failed: %s\\n\", tp);\n";
                                 mc << "        return 1;\n";
@@ -6186,15 +6369,21 @@ int main(int, char**)
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_A))          gCamPos[1] += move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_Y))          gCamPos[1] -= move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_B) || NB_KOS_ButtonDown(NB_BTN_X)) {\n";
-                                mc << "        float dx = gCamPos[0] - kMeshPos[0];\n";
-                                mc << "        float dz = gCamPos[2] - kMeshPos[2];\n";
+                                mc << "        float dx = gCamPos[0] - gMeshPos[0];\n";
+                                mc << "        float dz = gCamPos[2] - gMeshPos[2];\n";
                                 mc << "        float r = sqrtf(dx*dx + dz*dz);\n";
                                 mc << "        float ang = atan2f(dz, dx);\n";
                                 mc << "        ang += NB_KOS_ButtonDown(NB_BTN_B) ? 0.03f : -0.03f;\n";
-                                mc << "        gCamPos[0] = kMeshPos[0] + cosf(ang) * r;\n";
-                                mc << "        gCamPos[2] = kMeshPos[2] + sinf(ang) * r;\n";
+                                mc << "        gCamPos[0] = gMeshPos[0] + cosf(ang) * r;\n";
+                                mc << "        gCamPos[2] = gMeshPos[2] + sinf(ang) * r;\n";
                                 mc << "      }\n";
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_START)) gFlipWinding = !gFlipWinding;\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_Z)) {\n";
+                                mc << "        if (NB_NextScene()) dbgio_printf(\"[NEBULA][DC] Scene switch stub -> %s\\n\", gSceneName);\n";
+                                mc << "      }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_D)) {\n";
+                                mc << "        if (NB_PrevScene()) dbgio_printf(\"[NEBULA][DC] Scene switch stub -> %s\\n\", gSceneName);\n";
+                                mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    pvr_wait_ready();\n";
                                 mc << "    pvr_scene_begin();\n";
@@ -6203,9 +6392,9 @@ int main(int, char**)
                                 mc << "    SV sv[kVertCount]; int ok[kVertCount];\n";
                                 mc << "    for (int i=0;i<kVertCount;++i){\n";
                                 mc << "      V3 v = base[i];\n";
-                                mc << "      v.x *= kMeshScale[0]; v.y *= kMeshScale[1]; v.z *= kMeshScale[2];\n";
-                                mc << "      v = rot_xyz(v, deg2rad(kMeshRot[0]), deg2rad(kMeshRot[1]), deg2rad(kMeshRot[2]));\n";
-                                mc << "      v.x += kMeshPos[0]; v.y += kMeshPos[1]; v.z += kMeshPos[2];\n";
+                                mc << "      v.x *= gMeshScale[0]; v.y *= gMeshScale[1]; v.z *= gMeshScale[2];\n";
+                                mc << "      v = rot_xyz(v, deg2rad(gMeshRot[0]), deg2rad(gMeshRot[1]), deg2rad(gMeshRot[2]));\n";
+                                mc << "      v.x += gMeshPos[0]; v.y += gMeshPos[1]; v.z += gMeshPos[2];\n";
                                 mc << "      ok[i] = project_point(v, &sv[i]);\n";
                                 mc << "    }\n";
                                 mc << "\n";

@@ -6183,20 +6183,6 @@ int main(int, char**)
                             if (!meshSrc.mesh.empty())
                                 runtimeMeshDiskName = std::filesystem::path(meshSrc.mesh).filename().string();
 
-                            auto sanitizeSceneToken = [](const std::string& in)->std::string
-                            {
-                                std::string out;
-                                out.reserve(in.size());
-                                for (char c : in)
-                                {
-                                    unsigned char uc = (unsigned char)c;
-                                    if (std::isalnum(uc) || c == '_' || c == '-') out.push_back(c);
-                                    else out.push_back('_');
-                                }
-                                if (out.empty()) out = "scene";
-                                return out;
-                            };
-
                             std::filesystem::path cdDataDir = buildDir / "cd_root" / "data";
                             std::filesystem::path cdScenesDir = cdDataDir / "scenes";
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
@@ -6327,6 +6313,7 @@ int main(int, char**)
 
                             std::unordered_map<std::string, std::string> stagedMeshByAbs;
                             std::unordered_map<std::string, std::string> stagedTexByAbs;
+                            std::unordered_map<std::string, std::string> stagedSceneByAbs;
                             std::vector<std::pair<std::string, std::string>> meshRefMapEntries;
                             std::vector<std::pair<std::string, std::string>> texRefMapEntries;
                             bool stagingNameCollision = false;
@@ -6373,6 +6360,25 @@ int main(int, char**)
                                         texRefMapEntries.push_back({ texLogicalByAbs[key], outName });
                                     }
                                 }
+                                if (!stagingNameCollision)
+                                {
+                                    std::unordered_map<std::string, std::string> sceneAbsByOutName;
+                                    for (const auto& ls : loadedScenes)
+                                    {
+                                        std::string key = normalizeAbsKey(ls.sourcePath);
+                                        std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                        auto hit = sceneAbsByOutName.find(outName);
+                                        if (hit != sceneAbsByOutName.end() && hit->second != key)
+                                        {
+                                            stagingNameCollision = true;
+                                            stagingNameCollisionMessage = std::string("[DreamcastBuild] ERROR: scene staging filename collision: ") + outName +
+                                                " <= " + hit->second + " | " + key;
+                                            break;
+                                        }
+                                        sceneAbsByOutName[outName] = key;
+                                        stagedSceneByAbs[key] = outName;
+                                    }
+                                }
                             }
                             if (!meshSrc.mesh.empty())
                             {
@@ -6388,7 +6394,13 @@ int main(int, char**)
                                 const auto& scenePath = ls.sourcePath;
                                 const auto& stagedScene = ls.data;
 
-                                std::string sceneOutName = sanitizeSceneToken(scenePath.stem().string()) + ".dcscene";
+                                std::string sceneOutName;
+                                {
+                                    std::string sceneKey = normalizeAbsKey(scenePath);
+                                    auto it = stagedSceneByAbs.find(sceneKey);
+                                    if (it != stagedSceneByAbs.end()) sceneOutName = it->second;
+                                    if (sceneOutName.empty()) sceneOutName = stageUpperDiskNameFromAbsKey(sceneKey);
+                                }
                                 std::filesystem::path sceneOutPath = cdScenesDir / sceneOutName;
                                 std::ofstream so(sceneOutPath, std::ios::out | std::ios::trunc);
                                 if (!so.is_open()) continue;
@@ -6445,8 +6457,8 @@ int main(int, char**)
                             }
                             if (runtimeSceneFiles.empty())
                             {
-                                runtimeSceneFiles.push_back("default.dcscene");
-                                std::ofstream so(cdScenesDir / "default.dcscene", std::ios::out | std::ios::trunc);
+                                runtimeSceneFiles.push_back("DEFAULT.NEBSCENE");
+                                std::ofstream so(cdScenesDir / "DEFAULT.NEBSCENE", std::ios::out | std::ios::trunc);
                                 if (so.is_open())
                                 {
                                     so << "scene=Default\n";
@@ -6458,7 +6470,7 @@ int main(int, char**)
                                         so << " " << (runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)].empty() ? "-" : runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)]);
                                     so << "\n";
                                 }
-                                defaultSceneRuntimeFile = "default.dcscene";
+                                defaultSceneRuntimeFile = "DEFAULT.NEBSCENE";
                             }
 
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);

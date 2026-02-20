@@ -78,3 +78,58 @@ struct SceneData
     std::vector<Camera3DNode> cameras;
     std::vector<Node3DNode> node3d;
 };
+
+namespace NebulaNodes
+{
+    int FindStaticMeshByName(const std::vector<StaticMesh3DNode>& staticMeshNodes, const std::string& name);
+    int FindNode3DByName(const std::vector<Node3DNode>& node3DNodes, const std::string& name);
+
+    bool TryGetParentByNodeName(
+        const std::vector<Audio3DNode>& audioNodes,
+        const std::vector<StaticMesh3DNode>& staticMeshNodes,
+        const std::vector<Camera3DNode>& cameraNodes,
+        const std::vector<Node3DNode>& node3DNodes,
+        const std::string& name,
+        std::string& outParent);
+    bool WouldCreateHierarchyCycle(
+        const std::vector<Audio3DNode>& audioNodes,
+        const std::vector<StaticMesh3DNode>& staticMeshNodes,
+        const std::vector<Camera3DNode>& cameraNodes,
+        const std::vector<Node3DNode>& node3DNodes,
+        const std::string& childName,
+        const std::string& candidateParentName);
+    bool StaticMeshCreatesCycle(const std::vector<StaticMesh3DNode>& staticMeshNodes, int childIdx, int candidateParentIdx);
+    bool Node3DCreatesCycle(const std::vector<Node3DNode>& node3DNodes, int childIdx, int candidateParentIdx);
+
+    void GetStaticMeshWorldTRS(
+        const std::vector<StaticMesh3DNode>& staticMeshNodes,
+        const std::vector<Node3DNode>& node3DNodes,
+        int idx,
+        float& ox,
+        float& oy,
+        float& oz,
+        float& orx,
+        float& ory,
+        float& orz,
+        float& osx,
+        float& osy,
+        float& osz);
+    void GetNode3DWorldTRS(
+        const std::vector<StaticMesh3DNode>& staticMeshNodes,
+        const std::vector<Node3DNode>& node3DNodes,
+        int idx,
+        float& ox,
+        float& oy,
+        float& oz,
+        float& orx,
+        float& ory,
+        float& orz,
+        float& osx,
+        float& osy,
+        float& osz);
+
+    std::string GetStaticMeshPrimaryMaterial(const StaticMesh3DNode& n);
+    std::string GetStaticMeshMaterialByIndex(const StaticMesh3DNode& n, int matIndex);
+    std::string GetStaticMeshSlotLabel(const StaticMesh3DNode& n, int slotIndex, const std::string& projectDir);
+    void AutoAssignMaterialSlotsFromMesh(StaticMesh3DNode& n);
+}

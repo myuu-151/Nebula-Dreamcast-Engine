@@ -208,143 +208,42 @@ static bool TransformChanged(const Node3DNode& a, const Node3DNode& b)
 
 static int FindStaticMeshByName(const std::string& name)
 {
-    for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
-        if (gStaticMeshNodes[i].name == name) return i;
-    return -1;
+    return NebulaNodes::FindStaticMeshByName(gStaticMeshNodes, name);
 }
 
 static int FindNode3DByName(const std::string& name)
 {
-    for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
-        if (gNode3DNodes[i].name == name) return i;
-    return -1;
+    return NebulaNodes::FindNode3DByName(gNode3DNodes, name);
 }
 
 static bool TryGetParentByNodeName(const std::string& name, std::string& outParent)
 {
-    for (const auto& a : gAudio3DNodes) if (a.name == name) { outParent = a.parent; return true; }
-    for (const auto& s : gStaticMeshNodes) if (s.name == name) { outParent = s.parent; return true; }
-    for (const auto& c : gCamera3DNodes) if (c.name == name) { outParent = c.parent; return true; }
-    for (const auto& n : gNode3DNodes) if (n.name == name) { outParent = n.parent; return true; }
-    return false;
+    return NebulaNodes::TryGetParentByNodeName(gAudio3DNodes, gStaticMeshNodes, gCamera3DNodes, gNode3DNodes, name, outParent);
 }
 
 static bool WouldCreateHierarchyCycle(const std::string& childName, const std::string& candidateParentName)
 {
-    if (childName.empty() || candidateParentName.empty()) return false;
-    if (childName == candidateParentName) return true;
-    std::string p = candidateParentName;
-    int guard = 0;
-    while (!p.empty() && guard++ < 512)
-    {
-        if (p == childName) return true;
-        std::string next;
-        if (!TryGetParentByNodeName(p, next)) break;
-        p = next;
-    }
-    return false;
+    return NebulaNodes::WouldCreateHierarchyCycle(gAudio3DNodes, gStaticMeshNodes, gCamera3DNodes, gNode3DNodes, childName, candidateParentName);
 }
 
 static bool StaticMeshCreatesCycle(int childIdx, int candidateParentIdx)
 {
-    if (childIdx < 0 || candidateParentIdx < 0) return false;
-    if (childIdx == candidateParentIdx) return true;
-    std::string p = gStaticMeshNodes[candidateParentIdx].parent;
-    int guard = 0;
-    while (!p.empty() && guard++ < 256)
-    {
-        int pi = FindStaticMeshByName(p);
-        if (pi < 0) break;
-        if (pi == childIdx) return true;
-        p = gStaticMeshNodes[pi].parent;
-    }
-    return false;
+    return NebulaNodes::StaticMeshCreatesCycle(gStaticMeshNodes, childIdx, candidateParentIdx);
 }
 
 static bool Node3DCreatesCycle(int childIdx, int candidateParentIdx)
 {
-    if (childIdx < 0 || candidateParentIdx < 0) return false;
-    if (childIdx == candidateParentIdx) return true;
-    std::string p = gNode3DNodes[candidateParentIdx].parent;
-    int guard = 0;
-    while (!p.empty() && guard++ < 256)
-    {
-        int pi = FindNode3DByName(p);
-        if (pi < 0) break;
-        if (pi == childIdx) return true;
-        p = gNode3DNodes[pi].parent;
-    }
-    return false;
+    return NebulaNodes::Node3DCreatesCycle(gNode3DNodes, childIdx, candidateParentIdx);
 }
 
 static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
 {
-    if (idx < 0 || idx >= (int)gStaticMeshNodes.size()) { ox=oy=oz=orx=ory=orz=0.0f; osx=osy=osz=1.0f; return; }
-    const auto& n = gStaticMeshNodes[idx];
-    ox = n.x; oy = n.y; oz = n.z;
-    orx = n.rotX; ory = n.rotY; orz = n.rotZ;
-    osx = n.scaleX; osy = n.scaleY; osz = n.scaleZ;
-    std::string p = n.parent;
-    int guard = 0;
-    while (!p.empty() && guard++ < 256)
-    {
-        int pi = FindStaticMeshByName(p);
-        if (pi >= 0)
-        {
-            const auto& pn = gStaticMeshNodes[pi];
-            ox += pn.x; oy += pn.y; oz += pn.z;
-            orx += pn.rotX; ory += pn.rotY; orz += pn.rotZ;
-            osx *= pn.scaleX; osy *= pn.scaleY; osz *= pn.scaleZ;
-            p = pn.parent;
-            continue;
-        }
-        int ni = FindNode3DByName(p);
-        if (ni >= 0)
-        {
-            const auto& nn = gNode3DNodes[ni];
-            ox += nn.x; oy += nn.y; oz += nn.z;
-            orx += nn.rotX; ory += nn.rotY; orz += nn.rotZ;
-            osx *= nn.scaleX; osy *= nn.scaleY; osz *= nn.scaleZ;
-            p = nn.parent;
-            continue;
-        }
-        break;
-    }
+    NebulaNodes::GetStaticMeshWorldTRS(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, orx, ory, orz, osx, osy, osz);
 }
 
 static void GetNode3DWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
 {
-    if (idx < 0 || idx >= (int)gNode3DNodes.size()) { ox=oy=oz=orx=ory=orz=0.0f; osx=osy=osz=1.0f; return; }
-    const auto& n = gNode3DNodes[idx];
-    ox = n.x; oy = n.y; oz = n.z;
-    orx = n.rotX; ory = n.rotY; orz = n.rotZ;
-    osx = n.scaleX; osy = n.scaleY; osz = n.scaleZ;
-    std::string p = n.parent;
-    int guard = 0;
-    while (!p.empty() && guard++ < 256)
-    {
-        int ni = FindNode3DByName(p);
-        if (ni >= 0)
-        {
-            const auto& nn = gNode3DNodes[ni];
-            ox += nn.x; oy += nn.y; oz += nn.z;
-            orx += nn.rotX; ory += nn.rotY; orz += nn.rotZ;
-            osx *= nn.scaleX; osy *= nn.scaleY; osz *= nn.scaleZ;
-            p = nn.parent;
-            continue;
-        }
-        int si = FindStaticMeshByName(p);
-        if (si >= 0)
-        {
-            const auto& sn = gStaticMeshNodes[si];
-            ox += sn.x; oy += sn.y; oz += sn.z;
-            orx += sn.rotX; ory += sn.rotY; orz += sn.rotZ;
-            osx *= sn.scaleX; osy *= sn.scaleY; osz *= sn.scaleZ;
-            p = sn.parent;
-            continue;
-        }
-        break;
-    }
+    NebulaNodes::GetNode3DWorldTRS(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, orx, ory, orz, osx, osy, osz);
 }
 
 static void BeginTransformSnapshot()
@@ -764,59 +663,17 @@ static bool SaveMaterialUvTransform(const std::filesystem::path& matPath, float 
 
 static std::string GetStaticMeshPrimaryMaterial(const StaticMesh3DNode& n)
 {
-    int si = n.materialSlot;
-    if (si < 0 || si >= kStaticMeshMaterialSlots) si = 0;
-    if (!n.materialSlots[si].empty()) return n.materialSlots[si];
-    if (!n.materialSlots[0].empty()) return n.materialSlots[0];
-    return n.material;
+    return NebulaNodes::GetStaticMeshPrimaryMaterial(n);
 }
 
 static std::string GetStaticMeshMaterialByIndex(const StaticMesh3DNode& n, int matIndex)
 {
-    if (matIndex >= 0 && matIndex < kStaticMeshMaterialSlots)
-        return n.materialSlots[matIndex];
-    return std::string();
+    return NebulaNodes::GetStaticMeshMaterialByIndex(n, matIndex);
 }
 
 static std::string GetStaticMeshSlotLabel(const StaticMesh3DNode& n, int slotIndex)
 {
-    if (slotIndex < 0 || slotIndex >= kStaticMeshMaterialSlots)
-        return "material";
-
-    // Preferred source: imported FBX material stack for this mesh, encoded as
-    // m_<meshStem>_<NN>_<materialName>.nebmat files in sibling mat/ folder.
-    if (!gProjectDir.empty() && !n.mesh.empty())
-    {
-        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / n.mesh;
-        std::filesystem::path matDir = meshPath.parent_path() / "mat";
-        std::string meshStem = meshPath.stem().string();
-        for (char& c : meshStem)
-        {
-            unsigned char uc = (unsigned char)c;
-            if (!(std::isalnum(uc) || c == '_' || c == '-')) c = '_';
-        }
-        char num[8];
-        snprintf(num, sizeof(num), "%02d", slotIndex + 1);
-        std::string prefix = "m_" + meshStem + "_" + std::string(num) + "_";
-
-        if (std::filesystem::exists(matDir) && std::filesystem::is_directory(matDir))
-        {
-            for (const auto& e : std::filesystem::directory_iterator(matDir))
-            {
-                if (!e.is_regular_file() || e.path().extension() != ".nebmat") continue;
-                std::string stem = e.path().stem().string();
-                if (stem.rfind(prefix, 0) == 0 && stem.size() > prefix.size())
-                    return stem.substr(prefix.size());
-            }
-        }
-    }
-
-    // Fallback: derive from the currently assigned mat path for this row.
-    const std::string& p = n.materialSlots[slotIndex];
-    if (p.empty()) return "material";
-    std::string stem = std::filesystem::path(p).stem().string();
-    if (stem.rfind("m_", 0) == 0 && stem.size() > 2) return stem.substr(2);
-    return stem.empty() ? "material" : stem;
+    return NebulaNodes::GetStaticMeshSlotLabel(n, slotIndex, gProjectDir);
 }
 
 static std::filesystem::path GetNebSlotsPathForMesh(const std::filesystem::path& absMeshPath)
@@ -836,12 +693,7 @@ static bool LoadNebSlotsManifest(const std::filesystem::path& absMeshPath, std::
 
 static void AutoAssignMaterialSlotsFromMesh(StaticMesh3DNode& n)
 {
-    // Manual workflow: do not auto-apply .nebslots on mesh assignment/instantiation.
-    // Nebslot application is explicit via "Load Nebslot" in Inspector.
-    if (n.materialSlots[0].empty() && !n.material.empty())
-        n.materialSlots[0] = n.material;
-    if (!n.materialSlots[0].empty() && n.material.empty())
-        n.material = n.materialSlots[0];
+    NebulaNodes::AutoAssignMaterialSlotsFromMesh(n);
 }
 
 static std::string ToProjectRelativePath(const std::filesystem::path& p)

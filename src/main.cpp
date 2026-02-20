@@ -6645,7 +6645,7 @@ int main(int, char**)
                                 mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
                                 mc << "  if (cp.z <= kProjNear) return 0;\n";
                                 mc << "  out->x = (kProjViewW * 0.5f) + (cp.x / cp.z) * kProjFocalX;\n";
-                                mc << "  out->y = (kProjViewH * 0.5f) + (cp.y / cp.z) * kProjFocalY;\n";
+                                mc << "  out->y = (kProjViewH * 0.5f) - (cp.y / cp.z) * kProjFocalY;\n";
                                 mc << "  out->z = kProjNear + cp.z * 0.01f;\n";
                                 mc << "  return 1;\n";
                                 mc << "}\n";

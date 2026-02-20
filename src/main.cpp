@@ -6637,7 +6637,7 @@ int main(int, char**)
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
                                 mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
                                 mc << "  V3 up = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
-                                mc << "  V3 right = norm3(cross3(up, fwd));\n";
+                                mc << "  V3 right = norm3(cross3(fwd, up));\n";
                                 mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
                                 mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3(cross3((V3){0,1,0}, fwd));\n";
                                 mc << "  up = norm3(cross3(fwd, right));\n";
@@ -6669,7 +6669,7 @@ int main(int, char**)
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "  }\n";
-                                mc << "  { V3 f=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(u,f)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[CameraParity][Runtime] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", gCamPos[0],gCamPos[1],gCamPos[2],f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
+                                mc << "  { V3 f=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(f,u)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[CameraParity][Runtime] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", gCamPos[0],gCamPos[1],gCamPos[2],f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
                                 mc << "\n";
                                 mc << "\n";
                                 mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";

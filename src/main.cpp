@@ -3890,6 +3890,10 @@ int main(int, char**)
             viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;
             viewPitch = asinf(std::clamp(cv.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
         }
+        else
+        {
+            proj.m[0] = -proj.m[0]; // Non-play viewport horizontal mirror to match play/runtime orientation.
+        }
 
         UpdateAudio3DNodes(eye.x, eye.y, eye.z);
 

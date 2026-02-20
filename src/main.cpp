@@ -3876,7 +3876,10 @@ int main(int, char**)
         else
         {
             Vec3 target = { eye.x + forward.x, eye.y + forward.y, eye.z + forward.z };
-            view = Mat4LookAt(eye, target, up);
+            // Viewport parity flip: mirror editor viewport X/Z so orientation matches runtime-facing convention.
+            Vec3 eyeMirrored = { -eye.x, eye.y, -eye.z };
+            Vec3 targetMirrored = { -target.x, target.y, -target.z };
+            view = Mat4LookAt(eyeMirrored, targetMirrored, up);
         }
 
         // Transform hotkeys (GLFW-level, toggles)

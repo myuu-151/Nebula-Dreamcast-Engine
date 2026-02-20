@@ -5492,10 +5492,6 @@ int main(int, char**)
                             std::filesystem::path makefilePath = buildDir / "Makefile.dreamcast";
                             std::filesystem::path runtimeCPath = buildDir / "main.c";
                             std::filesystem::path entryCPath = buildDir / "entry.c";
-                            std::filesystem::path kosBindingsHPath = buildDir / "KosBindings.h";
-                            std::filesystem::path kosBindingsCPath = buildDir / "KosBindings.c";
-                            std::filesystem::path kosInputHPath = buildDir / "KosInput.h";
-                            std::filesystem::path kosInputCPath = buildDir / "KosInput.c";
 
                             std::vector<Audio3DNode> exportNodes = gAudio3DNodes;
                             std::vector<StaticMesh3DNode> exportStatics = gStaticMeshNodes;
@@ -6194,117 +6190,30 @@ int main(int, char**)
                                 }
                             }
 
-                            {
-                                std::ofstream kh(kosBindingsHPath, std::ios::out | std::ios::trunc);
-                                if (kh.is_open())
-                                {
-                                    kh << "#pragma once\n";
-                                    kh << "#include <dc/maple.h>\n";
-                                    kh << "#include <dc/maple/controller.h>\n";
-                                    kh << "#include <stdint.h>\n";
-                                    kh << "typedef struct NB_KOS_RawPadState {\n";
-                                    kh << "    int has_controller;\n";
-                                    kh << "    uint32_t buttons;\n";
-                                    kh << "    int8_t stick_x;\n";
-                                    kh << "    int8_t stick_y;\n";
-                                    kh << "    uint8_t l_trigger;\n";
-                                    kh << "    uint8_t r_trigger;\n";
-                                    kh << "} NB_KOS_RawPadState;\n";
-                                    kh << "void NB_KOS_BindingsInit(void);\n";
-                                    kh << "void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState);\n";
-                                }
-                            }
+                            // KOS bindings are now consumed from engine source (src/platform/dreamcast)
+                            // instead of generating local copies in build_dreamcast.
 
                             {
-                                std::ofstream kc(kosBindingsCPath, std::ios::out | std::ios::trunc);
-                                if (kc.is_open())
+                                std::filesystem::path bindingsDir = std::filesystem::weakly_canonical(GetExecutableDirectory() / ".." / ".." / "src" / "platform" / "dreamcast");
+                                std::string bindingsPosix = bindingsDir.string();
+                                std::replace(bindingsPosix.begin(), bindingsPosix.end(), '\\', '/');
+                                if (bindingsPosix.size() > 2 && std::isalpha((unsigned char)bindingsPosix[0]) && bindingsPosix[1] == ':')
                                 {
-                                    kc << "#include \"KosBindings.h\"\n";
-                                    kc << "#include <string.h>\n";
-                                    kc << "void NB_KOS_BindingsInit(void) {}\n";
-                                    kc << "void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState) {\n";
-                                    kc << "  if (!outState) return;\n";
-                                    kc << "  memset(outState, 0, sizeof(*outState));\n";
-                                    kc << "  maple_device_t* dev = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);\n";
-                                    kc << "  if (!dev) return;\n";
-                                    kc << "  cont_state_t* st = (cont_state_t*)maple_dev_status(dev);\n";
-                                    kc << "  if (!st) return;\n";
-                                    kc << "  outState->has_controller = 1;\n";
-                                    kc << "  outState->buttons = st->buttons;\n";
-                                    kc << "  outState->stick_x = st->joyx;\n";
-                                    kc << "  outState->stick_y = st->joyy;\n";
-                                    kc << "  outState->l_trigger = st->ltrig;\n";
-                                    kc << "  outState->r_trigger = st->rtrig;\n";
-                                    kc << "}\n";
+                                    char drive = (char)std::tolower((unsigned char)bindingsPosix[0]);
+                                    bindingsPosix = std::string("/") + drive + bindingsPosix.substr(2);
                                 }
-                            }
 
-                            {
-                                std::ofstream ih(kosInputHPath, std::ios::out | std::ios::trunc);
-                                if (ih.is_open())
-                                {
-                                    ih << "#pragma once\n";
-                                    ih << "#include <dc/maple/controller.h>\n";
-                                    ih << "#include <stdint.h>\n";
-                                    ih << "#define NB_BTN_A CONT_A\n";
-                                    ih << "#define NB_BTN_B CONT_B\n";
-                                    ih << "#define NB_BTN_X CONT_X\n";
-                                    ih << "#define NB_BTN_Y CONT_Y\n";
-                                    ih << "#define NB_BTN_START CONT_START\n";
-                                    ih << "#define NB_BTN_DPAD_UP CONT_DPAD_UP\n";
-                                    ih << "#define NB_BTN_DPAD_DOWN CONT_DPAD_DOWN\n";
-                                    ih << "#define NB_BTN_DPAD_LEFT CONT_DPAD_LEFT\n";
-                                    ih << "#define NB_BTN_DPAD_RIGHT CONT_DPAD_RIGHT\n";
-                                    ih << "#define NB_BTN_Z CONT_Z\n";
-                                    ih << "#define NB_BTN_D CONT_D\n";
-                                    ih << "void NB_KOS_InitInput(void);\n";
-                                    ih << "void NB_KOS_PollInput(void);\n";
-                                    ih << "int NB_KOS_ButtonDown(int buttonMask);\n";
-                                    ih << "int NB_KOS_ButtonPressed(int buttonMask);\n";
-                                    ih << "int NB_KOS_ButtonReleased(int buttonMask);\n";
-                                    ih << "float NB_KOS_GetStickX(void);\n";
-                                    ih << "float NB_KOS_GetStickY(void);\n";
-                                    ih << "float NB_KOS_GetLTrigger(void);\n";
-                                    ih << "float NB_KOS_GetRTrigger(void);\n";
-                                    ih << "int NB_KOS_HasController(void);\n";
-                                    ih << "uint32_t NB_KOS_GetRawButtons(void);\n";
-                                }
-                            }
-
-                            {
-                                std::ofstream ic(kosInputCPath, std::ios::out | std::ios::trunc);
-                                if (ic.is_open())
-                                {
-                                    ic << "#include \"KosInput.h\"\n";
-                                    ic << "#include \"KosBindings.h\"\n";
-                                    ic << "static NB_KOS_RawPadState gPrevState;\n";
-                                    ic << "static NB_KOS_RawPadState gCurrState;\n";
-                                    ic << "static float NB_NormalizeStick(int8_t v){ float f=(float)v/127.0f; if(f<-1.0f)return -1.0f; if(f>1.0f)return 1.0f; return f; }\n";
-                                    ic << "static float NB_NormalizeTrigger(uint8_t v){ return (float)v/255.0f; }\n";
-                                    ic << "void NB_KOS_InitInput(void){ NB_KOS_BindingsInit(); gPrevState.has_controller=0; gPrevState.buttons=0; gPrevState.stick_x=0; gPrevState.stick_y=0; gPrevState.l_trigger=0; gPrevState.r_trigger=0; gCurrState=gPrevState; NB_KOS_BindingsRead(&gCurrState); gPrevState=gCurrState; }\n";
-                                    ic << "void NB_KOS_PollInput(void){ gPrevState=gCurrState; NB_KOS_BindingsRead(&gCurrState); }\n";
-                                    ic << "int NB_KOS_ButtonDown(int buttonMask){ return (gCurrState.buttons & (uint32_t)buttonMask) != 0; }\n";
-                                    ic << "int NB_KOS_ButtonPressed(int buttonMask){ uint32_t mask=(uint32_t)buttonMask; return (gCurrState.buttons & mask) != 0 && (gPrevState.buttons & mask) == 0; }\n";
-                                    ic << "int NB_KOS_ButtonReleased(int buttonMask){ uint32_t mask=(uint32_t)buttonMask; return (gCurrState.buttons & mask) == 0 && (gPrevState.buttons & mask) != 0; }\n";
-                                    ic << "float NB_KOS_GetStickX(void){ return NB_NormalizeStick(gCurrState.stick_x); }\n";
-                                    ic << "float NB_KOS_GetStickY(void){ return NB_NormalizeStick(gCurrState.stick_y); }\n";
-                                    ic << "float NB_KOS_GetLTrigger(void){ return NB_NormalizeTrigger(gCurrState.l_trigger); }\n";
-                                    ic << "float NB_KOS_GetRTrigger(void){ return NB_NormalizeTrigger(gCurrState.r_trigger); }\n";
-                                    ic << "int NB_KOS_HasController(void){ return gCurrState.has_controller; }\n";
-                                    ic << "uint32_t NB_KOS_GetRawButtons(void){ return gCurrState.buttons; }\n";
-                                }
-                            }
-
-                            {
                                 std::ofstream mk(makefilePath, std::ios::out | std::ios::trunc);
                                 if (mk.is_open())
                                 {
                                     mk << "TARGET = nebula_dreamcast.elf\n";
+                                    mk << "NEBULA_DC_BINDINGS ?= " << bindingsPosix << "\n";
+                                    mk << "VPATH += $(NEBULA_DC_BINDINGS)\n";
                                     mk << "SOURCES = main.c KosBindings.c KosInput.c\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";
-                                    mk << "CFLAGS += -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include\n";
+                                    mk << "CFLAGS += -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS)\n";
                                     mk << "all: rm-elf $(TARGET)\n";
                                     mk << "include $(KOS_BASE)/Makefile.rules\n";
                                     mk << "%.o: %.c\n";

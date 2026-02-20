@@ -1,12 +1,7 @@
 #pragma once
-
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 typedef struct NB_KOS_RawPadState {
     int has_controller;
@@ -19,7 +14,3 @@ typedef struct NB_KOS_RawPadState {
 
 void NB_KOS_BindingsInit(void);
 void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState);
-
-#ifdef __cplusplus
-}
-#endif

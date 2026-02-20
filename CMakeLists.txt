@@ -10,6 +10,8 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/main.cpp"
     "${CMAKE_SOURCE_DIR}/src/audio3d.cpp"
     "${CMAKE_SOURCE_DIR}/src/audio3d.h"
+    "${CMAKE_SOURCE_DIR}/src/assets/meta_io.cpp"
+    "${CMAKE_SOURCE_DIR}/src/assets/meta_io.h"
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.cpp"
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.h"
     "${CMAKE_SOURCE_DIR}/nebula.rc"

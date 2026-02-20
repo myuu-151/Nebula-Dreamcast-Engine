@@ -32,6 +32,7 @@
 #include <assimp/postprocess.h>
 
 #include "audio3d.h"
+#include "assets/meta_io.h"
 #include <GL/gl.h>
 
 #ifndef GL_POINT_SPRITE
@@ -787,127 +788,47 @@ static std::filesystem::path CreateMaterialAsset(const std::filesystem::path& as
 
 static bool LoadMaterialTexture(const std::filesystem::path& matPath, std::string& outTex)
 {
-    std::ifstream in(matPath);
-    if (!in.is_open()) return false;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("texture=", 0) == 0)
-        {
-            outTex = line.substr(8);
-            return true;
-        }
-    }
-    return false;
+    return NebulaAssets::LoadMaterialTexture(matPath, outTex);
 }
 
 static bool LoadMaterialUvScale(const std::filesystem::path& matPath, float& outUvScale)
 {
-    outUvScale = 0.0f;
-    std::ifstream in(matPath);
-    if (!in.is_open()) return false;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("uv_scale=", 0) == 0)
-        {
-            outUvScale = (float)atof(line.substr(9).c_str());
-            return true;
-        }
-    }
-    return false;
+    return NebulaAssets::LoadMaterialUvScale(matPath, outUvScale);
 }
 
 static bool LoadMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool& outAllowUvRepeat)
 {
-    outAllowUvRepeat = false;
-    std::ifstream in(matPath);
-    if (!in.is_open()) return false;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("saturn_allow_uv_repeat=", 0) == 0)
-        {
-            outAllowUvRepeat = (line.substr(23) == "1");
-            return true;
-        }
-    }
-    return false;
+    return NebulaAssets::LoadMaterialAllowUvRepeat(matPath, outAllowUvRepeat);
 }
 
 static void LoadMaterialUvTransform(const std::filesystem::path& matPath, float& su, float& sv, float& ou, float& ov, float& rotDeg)
 {
-    su = 1.0f; sv = 1.0f; ou = 0.0f; ov = 0.0f; rotDeg = 0.0f;
-    std::ifstream in(matPath);
-    if (!in.is_open()) return;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("uv_scale_u=", 0) == 0) su = (float)atof(line.substr(11).c_str());
-        else if (line.rfind("uv_scale_v=", 0) == 0) sv = (float)atof(line.substr(11).c_str());
-        else if (line.rfind("uv_offset_u=", 0) == 0) ou = (float)atof(line.substr(12).c_str());
-        else if (line.rfind("uv_offset_v=", 0) == 0) ov = (float)atof(line.substr(12).c_str());
-        else if (line.rfind("uv_rotate_deg=", 0) == 0) rotDeg = (float)atof(line.substr(14).c_str());
-    }
+    NebulaAssets::LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
 }
 
 static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg)
 {
-    std::ofstream out(matPath, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "texture=" << tex << "\n";
-    out << "uv_scale=" << uvScale << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "uv_scale_u=" << su << "\n";
-    out << "uv_scale_v=" << sv << "\n";
-    out << "uv_offset_u=" << ou << "\n";
-    out << "uv_offset_v=" << ov << "\n";
-    out << "uv_rotate_deg=" << rotDeg << "\n";
-    return true;
+    return NebulaAssets::SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
 }
 
 static bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
 {
-    float uvScale = 0.0f;
-    bool allowUvRepeat = false;
-    float su, sv, ou, ov, rotDeg;
-    LoadMaterialUvScale(matPath, uvScale);
-    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
-    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
-    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+    return NebulaAssets::SaveMaterialTexture(matPath, tex);
 }
 
 static bool SaveMaterialUvScale(const std::filesystem::path& matPath, float uvScale)
 {
-    std::string tex;
-    bool allowUvRepeat = false;
-    float su, sv, ou, ov, rotDeg;
-    LoadMaterialTexture(matPath, tex);
-    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
-    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
-    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+    return NebulaAssets::SaveMaterialUvScale(matPath, uvScale);
 }
 
 static bool SaveMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool allowUvRepeat)
 {
-    std::string tex;
-    float uvScale = 0.0f;
-    float su, sv, ou, ov, rotDeg;
-    LoadMaterialTexture(matPath, tex);
-    LoadMaterialUvScale(matPath, uvScale);
-    LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
-    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+    return NebulaAssets::SaveMaterialAllowUvRepeat(matPath, allowUvRepeat);
 }
 
 static bool SaveMaterialUvTransform(const std::filesystem::path& matPath, float su, float sv, float ou, float ov, float rotDeg)
 {
-    std::string tex;
-    float uvScale = 0.0f;
-    bool allowUvRepeat = false;
-    LoadMaterialTexture(matPath, tex);
-    LoadMaterialUvScale(matPath, uvScale);
-    LoadMaterialAllowUvRepeat(matPath, allowUvRepeat);
-    return SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+    return NebulaAssets::SaveMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
 }
 
 static std::string GetStaticMeshPrimaryMaterial(const StaticMesh3DNode& n)
@@ -969,51 +890,17 @@ static std::string GetStaticMeshSlotLabel(const StaticMesh3DNode& n, int slotInd
 
 static std::filesystem::path GetNebSlotsPathForMesh(const std::filesystem::path& absMeshPath)
 {
-    return absMeshPath.parent_path() / "nebslot" / (absMeshPath.stem().string() + ".nebslots");
+    return NebulaAssets::GetNebSlotsPathForMesh(absMeshPath);
 }
 
 static bool LoadNebSlotsManifestFile(const std::filesystem::path& slotFilePath, std::vector<std::string>& outSlots)
 {
-    outSlots.clear();
-    std::ifstream in(slotFilePath);
-    if (!in.is_open()) return false;
-
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("slot", 0) != 0) continue;
-        size_t eq = line.find('=');
-        if (eq == std::string::npos || eq <= 4) continue;
-        int idx = atoi(line.substr(4, eq - 4).c_str());
-        if (idx < 1 || idx > kStaticMeshMaterialSlots) continue;
-        std::string val = line.substr(eq + 1);
-
-        // If folder names changed after .nebslots was authored, try to remap
-        // missing material paths to the current sibling mat/ folder by filename.
-        if (!val.empty() && !gProjectDir.empty())
-        {
-            std::filesystem::path absMat = std::filesystem::path(gProjectDir) / val;
-            if (!std::filesystem::exists(absMat))
-            {
-                std::filesystem::path fallback = slotFilePath.parent_path().parent_path() / "mat" / std::filesystem::path(val).filename();
-                if (std::filesystem::exists(fallback))
-                {
-                    std::error_code ec;
-                    std::filesystem::path rel = std::filesystem::relative(fallback, std::filesystem::path(gProjectDir), ec);
-                    val = ec ? fallback.filename().generic_string() : rel.generic_string();
-                }
-            }
-        }
-
-        if ((int)outSlots.size() < idx) outSlots.resize(idx);
-        outSlots[idx - 1] = val;
-    }
-    return !outSlots.empty();
+    return NebulaAssets::LoadNebSlotsManifestFile(slotFilePath, outSlots, gProjectDir);
 }
 
 static bool LoadNebSlotsManifest(const std::filesystem::path& absMeshPath, std::vector<std::string>& outSlots)
 {
-    return LoadNebSlotsManifestFile(GetNebSlotsPathForMesh(absMeshPath), outSlots);
+    return NebulaAssets::LoadNebSlotsManifest(absMeshPath, outSlots, gProjectDir);
 }
 
 static void AutoAssignMaterialSlotsFromMesh(StaticMesh3DNode& n)
@@ -1127,17 +1014,7 @@ static bool FindTextureByMaterialNameFallback(const std::filesystem::path& model
 
 static bool SaveNebSlotsManifest(const std::filesystem::path& absMeshPath, const std::vector<std::string>& slotMaterials)
 {
-    std::filesystem::path slotPath = GetNebSlotsPathForMesh(absMeshPath);
-    std::filesystem::create_directories(slotPath.parent_path());
-    std::ofstream out(slotPath, std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-
-    for (int i = 0; i < kStaticMeshMaterialSlots; ++i)
-    {
-        std::string v = (i < (int)slotMaterials.size()) ? slotMaterials[i] : std::string();
-        out << "slot" << (i + 1) << "=" << v << "\n";
-    }
-    return true;
+    return NebulaAssets::SaveNebSlotsManifest(absMeshPath, slotMaterials);
 }
 
 static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
@@ -1260,244 +1137,62 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
 
 static std::filesystem::path GetNebTexMetaPath(const std::filesystem::path& nebtexPath)
 {
-    return std::filesystem::path(nebtexPath.string() + ".meta");
+    return NebulaAssets::GetNebTexMetaPath(nebtexPath);
 }
 
 static int LoadNebTexWrapMode(const std::filesystem::path& nebtexPath)
 {
-    // 0=Repeat, 1=Extend, 2=Clip, 3=Mirror
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return 0;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("wrap=", 0) == 0)
-        {
-            std::string v = line.substr(5);
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            if (v == "repeat") return 0;
-            if (v == "extend") return 1;
-            if (v == "clip") return 2;
-            if (v == "mirror") return 3;
-        }
-    }
-    return 0;
+    return NebulaAssets::LoadNebTexWrapMode(nebtexPath);
 }
 
 static int LoadNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath)
 {
-    // 0=pad, 1=resample (Dreamcast NPOT handling)
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return 0; // default pad
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("npot=", 0) == 0)
-        {
-            std::string v = line.substr(5);
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            if (v == "pad") return 0;
-            if (v == "resample") return 1;
-        }
-        // Legacy Saturn NPOT keys intentionally unsupported in Dreamcast-only fork.
-    }
-    return 0;
+    return NebulaAssets::LoadNebTexSaturnNpotMode(nebtexPath);
 }
 
 static bool LoadNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath)
 {
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return false;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("saturn_allow_uv_repeat=", 0) == 0)
-            return (line.substr(23) == "1");
-    }
-    return false;
+    return NebulaAssets::LoadNebTexAllowUvRepeat(nebtexPath);
 }
 
 static int LoadNebTexFilterMode(const std::filesystem::path& nebtexPath)
 {
-    // 0=nearest, 1=bilinear
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return 1; // Dreamcast default currently bilinear
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("filter=", 0) == 0)
-        {
-            std::string v = line.substr(7);
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            if (v == "nearest") return 0;
-            if (v == "bilinear" || v == "linear") return 1;
-        }
-    }
-    return 1;
+    return NebulaAssets::LoadNebTexFilterMode(nebtexPath);
 }
 
 static bool SaveNebTexWrapMode(const std::filesystem::path& nebtexPath, int mode)
 {
-    const char* names[] = { "repeat", "extend", "clip", "mirror" };
-    if (mode < 0 || mode > 3) mode = 0;
-
-    bool flipU = false, flipV = false;
-    int saturnNpot = 1;
-    bool allowUvRepeat = false;
-    int filterMode = 1;
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("flip_u=", 0) == 0) flipU = (line.substr(7) == "1");
-        if (line.rfind("flip_v=", 0) == 0) flipV = (line.substr(7) == "1");
-        if (line.rfind("npot=", 0) == 0)
-        {
-            std::string v = line.substr(5);
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            saturnNpot = (v == "pad") ? 0 : 1;
-        }
-        if (line.rfind("saturn_allow_uv_repeat=", 0) == 0)
-            allowUvRepeat = (line.substr(23) == "1");
-        if (line.rfind("filter=", 0) == 0)
-        {
-            std::string v = line.substr(7);
-            std::transform(v.begin(), v.end(), v.begin(), ::tolower);
-            filterMode = (v == "nearest") ? 0 : 1;
-        }
-    }
-
-    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "wrap=" << names[mode] << "\n";
-    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
-    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
-    return true;
+    return NebulaAssets::SaveNebTexWrapMode(nebtexPath, mode);
 }
 
 static void LoadNebTexFlipOptions(const std::filesystem::path& nebtexPath, bool& flipU, bool& flipV)
 {
-    flipU = false;
-    flipV = false;
-    std::ifstream in(GetNebTexMetaPath(nebtexPath));
-    if (!in.is_open()) return;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.rfind("flip_u=", 0) == 0) flipU = (line.substr(7) == "1");
-        else if (line.rfind("flip_v=", 0) == 0) flipV = (line.substr(7) == "1");
-    }
+    NebulaAssets::LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
 }
 
 static bool ReadNebTexDimensions(const std::filesystem::path& nebtexPath, int& outW, int& outH)
 {
-    outW = 0; outH = 0;
-    std::ifstream in(nebtexPath, std::ios::binary | std::ios::in);
-    if (!in.is_open()) return false;
-
-    char magic[4];
-    if (!in.read(magic, 4)) return false;
-    if (!(magic[0] == 'N' && magic[1] == 'E' && magic[2] == 'B' && magic[3] == 'T')) return false;
-
-    auto readU16BE_local = [&](uint16_t& out)->bool {
-        unsigned char b[2];
-        if (!in.read((char*)b, 2)) return false;
-        out = (uint16_t)((b[0] << 8) | b[1]);
-        return true;
-    };
-
-    uint16_t w = 0, h = 0, format = 0, flags = 0;
-    if (!readU16BE_local(w) || !readU16BE_local(h) || !readU16BE_local(format) || !readU16BE_local(flags)) return false;
-    outW = (int)w;
-    outH = (int)h;
-    return (outW > 0 && outH > 0);
+    return NebulaAssets::ReadNebTexDimensions(nebtexPath, outW, outH);
 }
 
 static bool SaveNebTexSaturnNpotMode(const std::filesystem::path& nebtexPath, int mode)
 {
-    int wrapMode = LoadNebTexWrapMode(nebtexPath);
-    bool flipU = false, flipV = false;
-    bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
-    int filterMode = LoadNebTexFilterMode(nebtexPath);
-    LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
-    const char* wrapNames[] = { "repeat", "extend", "clip", "mirror" };
-    if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
-    if (mode < 0 || mode > 1) mode = 1;
-
-    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "wrap=" << wrapNames[wrapMode] << "\n";
-    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
-    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "npot=" << (mode == 0 ? "pad" : "resample") << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
-    return true;
+    return NebulaAssets::SaveNebTexSaturnNpotMode(nebtexPath, mode);
 }
 
 static bool SaveNebTexFlipOptions(const std::filesystem::path& nebtexPath, bool flipU, bool flipV)
 {
-    int wrapMode = LoadNebTexWrapMode(nebtexPath);
-    int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
-    bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
-    int filterMode = LoadNebTexFilterMode(nebtexPath);
-    const char* names[] = { "repeat", "extend", "clip", "mirror" };
-    if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
-    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "wrap=" << names[wrapMode] << "\n";
-    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
-    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
-    return true;
+    return NebulaAssets::SaveNebTexFlipOptions(nebtexPath, flipU, flipV);
 }
 
 static bool SaveNebTexAllowUvRepeat(const std::filesystem::path& nebtexPath, bool allowUvRepeat)
 {
-    int wrapMode = LoadNebTexWrapMode(nebtexPath);
-    int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
-    int filterMode = LoadNebTexFilterMode(nebtexPath);
-    bool flipU = false, flipV = false;
-    LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
-    const char* names[] = { "repeat", "extend", "clip", "mirror" };
-    if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
-
-    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "wrap=" << names[wrapMode] << "\n";
-    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
-    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
-    return true;
+    return NebulaAssets::SaveNebTexAllowUvRepeat(nebtexPath, allowUvRepeat);
 }
 
 static bool SaveNebTexFilterMode(const std::filesystem::path& nebtexPath, int filterMode)
 {
-    int wrapMode = LoadNebTexWrapMode(nebtexPath);
-    int saturnNpot = LoadNebTexSaturnNpotMode(nebtexPath);
-    bool allowUvRepeat = LoadNebTexAllowUvRepeat(nebtexPath);
-    bool flipU = false, flipV = false;
-    LoadNebTexFlipOptions(nebtexPath, flipU, flipV);
-    const char* names[] = { "repeat", "extend", "clip", "mirror" };
-    if (wrapMode < 0 || wrapMode > 3) wrapMode = 0;
-    if (filterMode < 0 || filterMode > 1) filterMode = 1;
-
-    std::ofstream out(GetNebTexMetaPath(nebtexPath), std::ios::out | std::ios::trunc);
-    if (!out.is_open()) return false;
-    out << "wrap=" << names[wrapMode] << "\n";
-    out << "flip_u=" << (flipU ? 1 : 0) << "\n";
-    out << "flip_v=" << (flipV ? 1 : 0) << "\n";
-    out << "npot=" << (saturnNpot == 0 ? "pad" : "resample") << "\n";
-    out << "saturn_allow_uv_repeat=" << (allowUvRepeat ? 1 : 0) << "\n";
-    out << "filter=" << (filterMode == 0 ? "nearest" : "bilinear") << "\n";
-    return true;
+    return NebulaAssets::SaveNebTexFilterMode(nebtexPath, filterMode);
 }
 
 static std::filesystem::path gRenamePath;

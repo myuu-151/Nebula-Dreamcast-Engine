@@ -3407,6 +3407,75 @@ static void GetLocalAxesFromEuler(float rotX, float rotY, float rotZ, Vec3& righ
     forward = { m02, m12, m22 };
 }
 
+struct DcCameraConverted
+{
+    Vec3 eye{};
+    Vec3 target{};
+    Vec3 up{};
+    Vec3 forward{};
+    Vec3 right{};
+    bool perspective = true;
+    float fovYDeg = 45.0f;
+    float fovYRad = 45.0f * 3.14159f / 180.0f;
+    float aspect = 1.0f;
+    float nearZ = 0.1f;
+    float farZ = 2000.0f;
+    float orthoWidth = 8.0f;
+    float dcViewW = 640.0f;
+    float dcViewH = 570.0f;
+    float dcFocalX = 420.0f;
+    float dcFocalY = 420.0f;
+};
+
+static Vec3 NormalizeVec3Safe(const Vec3& v, const Vec3& fallback)
+{
+    float m = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (m <= 1e-6f) return fallback;
+    return Vec3{ v.x / m, v.y / m, v.z / m };
+}
+
+static DcCameraConverted ConvertCamera3DForDreamcast(const Camera3DNode& cam, float aspect, const Vec3& targetOffset)
+{
+    DcCameraConverted out{};
+    out.perspective = cam.perspective;
+    out.fovYDeg = std::clamp(cam.fovY, 5.0f, 170.0f);
+    out.fovYRad = out.fovYDeg * 3.14159f / 180.0f;
+    out.aspect = std::max(aspect, 1e-4f);
+    out.nearZ = std::max(cam.nearZ, 0.001f);
+    out.farZ = std::max(cam.farZ, out.nearZ + 0.01f);
+    out.orthoWidth = std::max(cam.orthoWidth, 0.01f);
+    out.eye = { cam.x, cam.y, cam.z };
+
+    // Neb Camera3D convention: right-handed world, +Y up, forward from local +Z after Rz*Ry*Rx.
+    // Dreamcast runtime projection uses camera basis (right/up/forward) and positive-forward depth.
+    GetLocalAxesFromEuler(cam.rotX, cam.rotY, cam.rotZ, out.right, out.up, out.forward);
+    out.forward = NormalizeVec3Safe(out.forward, Vec3{ 0.0f, 0.0f, 1.0f });
+    out.target = {
+        out.eye.x + out.forward.x + targetOffset.x,
+        out.eye.y + out.forward.y + targetOffset.y,
+        out.eye.z + out.forward.z + targetOffset.z
+    };
+
+    out.forward = NormalizeVec3Safe(
+        Vec3{ out.target.x - out.eye.x, out.target.y - out.eye.y, out.target.z - out.eye.z },
+        Vec3{ 0.0f, 0.0f, 1.0f });
+    out.right = NormalizeVec3Safe(
+        Vec3{ out.forward.y * out.up.z - out.forward.z * out.up.y,
+              out.forward.z * out.up.x - out.forward.x * out.up.z,
+              out.forward.x * out.up.y - out.forward.y * out.up.x },
+        Vec3{ 1.0f, 0.0f, 0.0f });
+    out.right = Vec3{ -out.right.x, -out.right.y, -out.right.z }; // Mirror fix: flip lateral basis.
+    out.up = NormalizeVec3Safe(
+        Vec3{ out.right.y * out.forward.z - out.right.z * out.forward.y,
+              out.right.z * out.forward.x - out.right.x * out.forward.z,
+              out.right.x * out.forward.y - out.right.y * out.forward.x },
+        Vec3{ 0.0f, 1.0f, 0.0f });
+
+    out.dcFocalY = (out.dcViewH * 0.5f) / std::max(1e-4f, std::tanf(out.fovYRad * 0.5f));
+    out.dcFocalX = out.dcFocalY * out.aspect;
+    return out;
+}
+
 static void GetLocalAxes(const Audio3DNode& n, Vec3& right, Vec3& up, Vec3& forward)
 {
     GetLocalAxesFromEuler(n.rotX, n.rotY, n.rotZ, right, up, forward);
@@ -3806,24 +3875,20 @@ int main(int, char**)
 
         if (activeCam && gPlayMode)
         {
-            activeCam->fovY = std::clamp(activeCam->fovY, 5.0f, 170.0f);
-            activeCam->nearZ = std::max(activeCam->nearZ, 0.001f);
-            activeCam->farZ = std::max(activeCam->farZ, activeCam->nearZ + 0.01f);
-            activeCam->orthoWidth = std::max(activeCam->orthoWidth, 0.01f);
-
-            if (activeCam->perspective)
+            DcCameraConverted cv = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
+            if (cv.perspective)
             {
-                proj = Mat4Perspective(activeCam->fovY * 3.14159f / 180.0f, aspect, activeCam->nearZ, activeCam->farZ);
+                proj = Mat4Perspective(cv.fovYRad, cv.aspect, cv.nearZ, cv.farZ);
             }
             else
             {
-                float orthoHeight = activeCam->orthoWidth / aspect;
-                proj = Mat4Orthographic(-activeCam->orthoWidth, activeCam->orthoWidth, -orthoHeight, orthoHeight, activeCam->nearZ, activeCam->farZ);
+                float orthoHeight = cv.orthoWidth / cv.aspect;
+                proj = Mat4Orthographic(-cv.orthoWidth, cv.orthoWidth, -orthoHeight, orthoHeight, cv.nearZ, cv.farZ);
             }
 
-            eye = { activeCam->x, activeCam->y, activeCam->z };
-            viewYaw = activeCam->rotY;
-            viewPitch = activeCam->rotX;
+            eye = cv.eye;
+            viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;
+            viewPitch = asinf(std::clamp(cv.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
         }
 
         UpdateAudio3DNodes(eye.x, eye.y, eye.z);
@@ -3846,8 +3911,9 @@ int main(int, char**)
 
         if (activeCam && gPlayMode)
         {
-            Vec3 right{};
-            GetLocalAxesFromEuler(activeCam->rotX, activeCam->rotY, activeCam->rotZ, right, up, forward);
+            DcCameraConverted cv = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
+            up = cv.up;
+            forward = cv.forward;
         }
         else
         {
@@ -5802,23 +5868,16 @@ int main(int, char**)
                             constexpr float kDcCamOffsetX = 0.0f, kDcCamOffsetY = 0.0f, kDcCamOffsetZ = 0.0f;
                             constexpr float kDcTargetOffsetX = 0.0f, kDcTargetOffsetY = 0.0f, kDcTargetOffsetZ = 0.0f;
                             constexpr float kDcFovScale = 1.0f;
-                            (void)kDcFovScale;
-                            float camExportX = camSrc.x + kDcCamOffsetX;
-                            float camExportY = camSrc.y + kDcCamOffsetY;
-                            float camExportZ = camSrc.z + kDcCamOffsetZ;
-                            float tgtExportX = meshSrc.x + kDcTargetOffsetX;
-                            float tgtExportY = meshSrc.y + kDcTargetOffsetY;
-                            float tgtExportZ = meshSrc.z + kDcTargetOffsetZ;
-                            Vec3 camRightExport{}, camUpExport{}, camForwardExport{};
-                            GetLocalAxesFromEuler(camSrc.rotX, camSrc.rotY, camSrc.rotZ, camRightExport, camUpExport, camForwardExport);
-                            float camProjFovExport = std::clamp(camSrc.fovY * kDcFovScale, 5.0f, 170.0f);
-                            float camProjAspectExport = 640.0f / 570.0f;
-                            float camProjNearExport = std::max(camSrc.nearZ, 0.001f);
-                            float camProjFarExport = std::max(camSrc.farZ, camProjNearExport + 0.01f);
-                            constexpr float kRuntimeProjNear = 0.05f;
-                            constexpr float kRuntimeProjFocal = 420.0f;
-                            constexpr float kRuntimeViewW = 640.0f;
-                            constexpr float kRuntimeViewH = 570.0f;
+                            Camera3DNode dcCamNode = camSrc;
+                            dcCamNode.x += kDcCamOffsetX;
+                            dcCamNode.y += kDcCamOffsetY;
+                            dcCamNode.z += kDcCamOffsetZ;
+                            dcCamNode.fovY *= kDcFovScale;
+                            Vec3 dcTargetOffset = { kDcTargetOffsetX, kDcTargetOffsetY, kDcTargetOffsetZ };
+                            DcCameraConverted dcCamConverted = ConvertCamera3DForDreamcast(
+                                dcCamNode,
+                                640.0f / 570.0f,
+                                dcTargetOffset);
 
                             std::vector<Vec3> runtimeVerts;
                             std::vector<Vec3> runtimeUvs;
@@ -6535,10 +6594,20 @@ int main(int, char**)
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "/* Dreamcast camera defaults come from scene camera export (+ optional neutral calibration offsets). */\n";
-                                mc << "static const float kCamPosInit[3] = {" << fstr(camExportX) << "," << fstr(camExportY) << "," << fstr(camExportZ) << "};\n";
-                                mc << "static float gCamPos[3] = {" << fstr(camExportX) << "," << fstr(camExportY) << "," << fstr(camExportZ) << "};\n";
+                                mc << "static const float kCamPosInit[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
+                                mc << "static float gCamPos[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
+                                mc << "static float gCamForward[3] = {" << fstr(dcCamConverted.forward.x) << "," << fstr(dcCamConverted.forward.y) << "," << fstr(dcCamConverted.forward.z) << "};\n";
+                                mc << "static float gCamUp[3] = {" << fstr(dcCamConverted.up.x) << "," << fstr(dcCamConverted.up.y) << "," << fstr(dcCamConverted.up.z) << "};\n";
+                                mc << "static const float kProjFovYDeg = " << fstr(dcCamConverted.fovYDeg) << ";\n";
+                                mc << "static const float kProjAspect = " << fstr(dcCamConverted.aspect) << ";\n";
+                                mc << "static const float kProjNear = " << fstr(dcCamConverted.nearZ) << ";\n";
+                                mc << "static const float kProjFar = " << fstr(dcCamConverted.farZ) << ";\n";
+                                mc << "static const float kProjViewW = " << fstr(dcCamConverted.dcViewW) << ";\n";
+                                mc << "static const float kProjViewH = " << fstr(dcCamConverted.dcViewH) << ";\n";
+                                mc << "static const float kProjFocalX = " << fstr(dcCamConverted.dcFocalX) << ";\n";
+                                mc << "static const float kProjFocalY = " << fstr(dcCamConverted.dcFocalY) << ";\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
-                                mc << "static float gMeshPos[3] = {" << fstr(tgtExportX) << "," << fstr(tgtExportY) << "," << fstr(tgtExportZ) << "};\n";
+                                mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
                                 mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
@@ -6606,18 +6675,17 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "static int project_point(V3 wp, SV *out) {\n";
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
-                                mc << "  V3 tgt = {gMeshPos[0], gMeshPos[1], gMeshPos[2]};\n";
-                                mc << "  V3 fwd = norm3(sub3(tgt, cam));\n";
-                                mc << "  V3 upw = {0,1,0};\n";
+                                mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
+                                mc << "  V3 upw = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
                                 mc << "  V3 right = norm3(cross3(upw, fwd));\n";
+                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){1,0,0});\n";
                                 mc << "  V3 up = cross3(fwd, right);\n";
                                 mc << "  V3 d = sub3(wp, cam);\n";
                                 mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
-                                mc << "  if (cp.z <= 0.05f) return 0;\n";
-                                mc << "  const float f = 420.0f;\n";
-                                mc << "  out->x = 320.0f + (cp.x / cp.z) * f;\n";
-                                mc << "  out->y = 285.0f - (cp.y / cp.z) * f;\n";
-                                mc << "  out->z = 0.05f + cp.z * 0.01f;\n";
+                                mc << "  if (cp.z <= kProjNear) return 0;\n";
+                                mc << "  out->x = (kProjViewW * 0.5f) + (cp.x / cp.z) * kProjFocalX;\n";
+                                mc << "  out->y = (kProjViewH * 0.5f) - (cp.y / cp.z) * kProjFocalY;\n";
+                                mc << "  out->z = kProjNear + cp.z * 0.01f;\n";
                                 mc << "  return 1;\n";
                                 mc << "}\n";
                                 mc << "\n";
@@ -6798,6 +6866,7 @@ int main(int, char**)
                                 mc << "        ang += NB_KOS_ButtonDown(NB_BTN_X) ? 0.03f : -0.03f;\n";
                                 mc << "        gCamPos[0] = gMeshPos[0] + cosf(ang) * r;\n";
                                 mc << "        gCamPos[2] = gMeshPos[2] + sinf(ang) * r;\n";
+                                mc << "        { V3 toMesh = { gMeshPos[0]-gCamPos[0], gMeshPos[1]-gCamPos[1], gMeshPos[2]-gCamPos[2] }; toMesh = norm3(toMesh); gCamForward[0]=toMesh.x; gCamForward[1]=toMesh.y; gCamForward[2]=toMesh.z; }\n";
                                 mc << "      }\n";
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_Z)) {\n";
                                 mc << "        sceneSwitchReq = 1;\n";
@@ -7021,11 +7090,12 @@ int main(int, char**)
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
                                        << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
                                        << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"
-                                       << " expPos=(" << camExportX << "," << camExportY << "," << camExportZ << ")"
-                                       << " expTarget=(" << tgtExportX << "," << tgtExportY << "," << tgtExportZ << ")"
-                                       << " expUp=(" << camUpExport.x << "," << camUpExport.y << "," << camUpExport.z << ")"
-                                       << " expProjNode=(fov=" << camProjFovExport << ",a=" << camProjAspectExport << ",n=" << camProjNearExport << ",f=" << camProjFarExport << ")"
-                                       << " expProjRuntime=(focal=" << kRuntimeProjFocal << ",view=" << kRuntimeViewW << "x" << kRuntimeViewH << ",near=" << kRuntimeProjNear << ")\n";
+                                       << " convPos=(" << dcCamConverted.eye.x << "," << dcCamConverted.eye.y << "," << dcCamConverted.eye.z << ")"
+                                       << " convTarget=(" << dcCamConverted.target.x << "," << dcCamConverted.target.y << "," << dcCamConverted.target.z << ")"
+                                       << " convForward=(" << dcCamConverted.forward.x << "," << dcCamConverted.forward.y << "," << dcCamConverted.forward.z << ")"
+                                       << " convRight=(" << dcCamConverted.right.x << "," << dcCamConverted.right.y << "," << dcCamConverted.right.z << ")"
+                                       << " convUp=(" << dcCamConverted.up.x << "," << dcCamConverted.up.y << "," << dcCamConverted.up.z << ")"
+                                       << " proj=(fov=" << dcCamConverted.fovYDeg << ",a=" << dcCamConverted.aspect << ",n=" << dcCamConverted.nearZ << ",f=" << dcCamConverted.farZ << ")\n";
                                     lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
                                     lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
                                        << " copied_c=" << scriptCopiedC

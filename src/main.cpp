@@ -6870,7 +6870,7 @@ int main(int, char**)
                                 mc << "        float dz = gCamPos[2] - gMeshPos[2];\n";
                                 mc << "        float r = sqrtf(dx*dx + dz*dz);\n";
                                 mc << "        float ang = atan2f(dz, dx);\n";
-                                mc << "        ang += NB_KOS_ButtonDown(NB_BTN_X) ? -0.03f : 0.03f;\n";
+                                mc << "        ang += NB_KOS_ButtonDown(NB_BTN_X) ? 0.03f : -0.03f;\n";
                                 mc << "        gCamPos[0] = gMeshPos[0] + cosf(ang) * r;\n";
                                 mc << "        gCamPos[2] = gMeshPos[2] + sinf(ang) * r;\n";
                                 mc << "        { V3 toMesh = { gMeshPos[0]-gCamPos[0], gMeshPos[1]-gCamPos[1], gMeshPos[2]-gCamPos[2] }; toMesh = norm3(toMesh); gCamForward[0]=toMesh.x; gCamForward[1]=toMesh.y; gCamForward[2]=toMesh.z; }\n";

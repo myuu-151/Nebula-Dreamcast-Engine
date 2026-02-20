@@ -159,7 +159,6 @@ static int gActiveScene = -1;
 static int gForceSelectSceneTab = -1;
 static bool gPlayMode = false;
 static bool gRequestDreamcastGenerate = false;
-static bool gDebugCanonicalCameraLog = false;
 static bool gEnableScriptHotReload = false;
 static std::unordered_map<std::string, std::filesystem::file_time_type> gScriptHotReloadKnownMtimes;
 static std::string gScriptHotReloadTrackedProjectDir;
@@ -3920,32 +3919,34 @@ int main(int, char**)
                 activeCam = &gCamera3DNodes[0];
         }
 
+        DcCameraConverted playCam{};
+        bool hasPlayCam = false;
         if (activeCam && gPlayMode)
         {
-            DcCameraConverted cv = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
-            if (cv.perspective)
+            playCam = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
+            hasPlayCam = true;
+            if (playCam.perspective)
             {
-                proj = Mat4Perspective(cv.fovYRad, cv.aspect, cv.nearZ, cv.farZ);
+                proj = Mat4Perspective(playCam.fovYRad, playCam.aspect, playCam.nearZ, playCam.farZ);
             }
             else
             {
-                float orthoHeight = cv.orthoWidth / cv.aspect;
-                proj = Mat4Orthographic(-cv.orthoWidth, cv.orthoWidth, -orthoHeight, orthoHeight, cv.nearZ, cv.farZ);
+                float orthoHeight = playCam.orthoWidth / playCam.aspect;
+                proj = Mat4Orthographic(-playCam.orthoWidth, playCam.orthoWidth, -orthoHeight, orthoHeight, playCam.nearZ, playCam.farZ);
             }
-            eye = cv.eye;
-            viewYaw = atan2f(cv.forward.z, cv.forward.x) * 180.0f / 3.14159f;
-            viewPitch = asinf(std::clamp(cv.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
+            eye = playCam.eye;
+            viewYaw = atan2f(playCam.forward.z, playCam.forward.x) * 180.0f / 3.14159f;
+            viewPitch = asinf(std::clamp(playCam.forward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
 
-            static double sLastCanonicalCamLog = -10.0;
-            if (gDebugCanonicalCameraLog && (now - sLastCanonicalCamLog) >= 1.0)
+            static double sLastParityCamLog = -10.0;
+            if ((now - sLastParityCamLog) >= 1.0)
             {
-                sLastCanonicalCamLog = now;
-                printf("[CameraCanonical] pos=(%.3f,%.3f,%.3f) fwd=(%.3f,%.3f,%.3f) right=(%.3f,%.3f,%.3f) up=(%.3f,%.3f,%.3f) proj(fov=%.2f,a=%.3f,n=%.3f,f=%.3f)\n",
-                    cv.eye.x, cv.eye.y, cv.eye.z,
-                    cv.forward.x, cv.forward.y, cv.forward.z,
-                    cv.right.x, cv.right.y, cv.right.z,
-                    cv.up.x, cv.up.y, cv.up.z,
-                    cv.fovYDeg, cv.aspect, cv.nearZ, cv.farZ);
+                sLastParityCamLog = now;
+                printf("[CameraParity][EditorPlay] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\n",
+                    playCam.eye.x, playCam.eye.y, playCam.eye.z,
+                    playCam.forward.x, playCam.forward.y, playCam.forward.z,
+                    playCam.right.x, playCam.right.y, playCam.right.z,
+                    playCam.up.x, playCam.up.y, playCam.up.z);
             }
         }
 
@@ -3967,11 +3968,10 @@ int main(int, char**)
         Vec3 forward{};
         Vec3 up = { 0.0f, 1.0f, 0.0f };
 
-        if (activeCam && gPlayMode)
+        if (hasPlayCam)
         {
-            DcCameraConverted cv = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
-            up = cv.up;
-            forward = cv.forward;
+            up = playCam.up;
+            forward = playCam.forward;
         }
         else
         {
@@ -6734,7 +6734,7 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "static int project_point(V3 wp, SV *out) {\n";
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
-                                mc << "  V3 fwd = norm3((V3){-gCamForward[0], -gCamForward[1], -gCamForward[2]});\n";
+                                mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
                                 mc << "  V3 up = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
                                 mc << "  V3 right = norm3(cross3(up, fwd));\n";
                                 mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
@@ -6768,7 +6768,7 @@ int main(int, char**)
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "  }\n";
-                                mc << "  { V3 f=norm3((V3){-gCamForward[0],-gCamForward[1],-gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(u,f)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[NEBULA][DC] CamBasis f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
+                                mc << "  { V3 f=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(u,f)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[CameraParity][Runtime] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", gCamPos[0],gCamPos[1],gCamPos[2],f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
                                 mc << "\n";
                                 mc << "\n";
                                 mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";

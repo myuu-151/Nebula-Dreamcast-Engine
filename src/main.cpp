@@ -33,6 +33,7 @@
 
 #include "audio3d.h"
 #include "editor/math_types.h"
+#include "editor/camera3d_v2.h"
 #include "assets/meta_io.h"
 #include "platform/dreamcast/build_helpers.h"
 #include "scene/SceneIO.h"
@@ -2402,7 +2403,7 @@ static Vec3 ApplyImportBasis(const Vec3& v)
 {
     switch (gImportBasisMode)
     {
-    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90Â° X so imported mesh is upright)
+    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90° X so imported mesh is upright)
         return Vec3{ v.z, v.y, -v.x };
     case 2: // Maya-style (+Z forward, Y up)
         return Vec3{ v.y, -v.x, v.z };
@@ -3910,26 +3911,32 @@ int main(int, char**)
                 activeCam = &gCamera3DNodes[0];
         }
 
-        DcCameraConverted playCam{};
-        Vec3 playForward{};
-        bool hasPlayForward = false;
+        Camera3DV2View playView{};
+        Camera3DV2Projection playProj{};
         bool hasPlayCam = false;
         if (activeCam && gPlayMode)
         {
-            playCam = ConvertCamera3DForDreamcast(*activeCam, aspect, Vec3{ 0.0f, 0.0f, 0.0f });
+            Camera3DV2 playCam = BuildCamera3DV2FromLegacyEuler(
+                activeCam->name,
+                activeCam->parent,
+                activeCam->x, activeCam->y, activeCam->z,
+                activeCam->rotX, activeCam->rotY, activeCam->rotZ,
+                activeCam->perspective,
+                activeCam->fovY,
+                activeCam->nearZ,
+                activeCam->farZ,
+                activeCam->orthoWidth,
+                activeCam->priority,
+                activeCam->main);
+
+            playView = BuildCamera3DV2View(playCam);
+            playProj = BuildCamera3DV2Projection(playCam, aspect);
             hasPlayCam = true;
-            playForward = { -playCam.forward.x, -playCam.forward.y, -playCam.forward.z };
-            hasPlayForward = true;
-            if (playCam.perspective)
-            {
-                proj = Mat4Perspective(playCam.fovYRad, playCam.aspect, playCam.nearZ, playCam.farZ);
-            }
-            else
-            {
-                float orthoHeight = playCam.orthoWidth / playCam.aspect;
-                proj = Mat4Orthographic(-playCam.orthoWidth, playCam.orthoWidth, -orthoHeight, orthoHeight, playCam.nearZ, playCam.farZ);
-            }
-            eye = playCam.eye;
+
+            proj = BuildCamera3DV2ProjectionMatrix(playProj);
+            eye = playView.eye;
+
+            Vec3 playForward = playView.basis.forward;
             viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
             viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
 
@@ -3938,10 +3945,10 @@ int main(int, char**)
             {
                 sLastParityCamLog = now;
                 printf("[CameraParity][EditorPlay] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\n",
-                    playCam.eye.x, playCam.eye.y, playCam.eye.z,
-                    playForward.x, playForward.y, playForward.z,
-                    playCam.right.x, playCam.right.y, playCam.right.z,
-                    playCam.up.x, playCam.up.y, playCam.up.z);
+                    playView.eye.x, playView.eye.y, playView.eye.z,
+                    playView.basis.forward.x, playView.basis.forward.y, playView.basis.forward.z,
+                    playView.basis.right.x, playView.basis.right.y, playView.basis.right.z,
+                    playView.basis.up.x, playView.basis.up.y, playView.basis.up.z);
             }
         }
 
@@ -3965,8 +3972,8 @@ int main(int, char**)
 
         if (hasPlayCam)
         {
-            up = playCam.up;
-            forward = hasPlayForward ? playForward : playCam.forward;
+            up = playView.basis.up;
+            forward = playView.basis.forward;
         }
         else
         {
@@ -3979,8 +3986,16 @@ int main(int, char**)
             };
         }
 
-        Vec3 target = { eye.x + forward.x, eye.y + forward.y, eye.z + forward.z };
-        Mat4 view = Mat4LookAt(eye, target, up);
+        Mat4 view = {};
+        if (hasPlayCam)
+        {
+            view = BuildCamera3DV2ViewMatrix(playView);
+        }
+        else
+        {
+            Vec3 target = { eye.x + forward.x, eye.y + forward.y, eye.z + forward.z };
+            view = Mat4LookAt(eye, target, up);
+        }
 
         // Transform hotkeys (GLFW-level, toggles)
         {
@@ -4779,7 +4794,7 @@ int main(int, char**)
                 glVertex3f(nebula[i][0], nebula[i][1], nebula[i][2]);
             }
 
-            // Stars (front) â€“ GL_POINTS buckets (3/6/12px)
+            // Stars (front) – GL_POINTS buckets (3/6/12px)
             auto drawPoints = [&](float sizeMin, float sizeMax, float px)
             {
                 glPointSize(px);
@@ -10473,6 +10488,10 @@ int main(int, char**)
     glfwTerminate();
     return 0;
 }
+
+
+
+
 
 
 

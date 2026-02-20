@@ -15,6 +15,8 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/scene/scene_io.cpp"
     "${CMAKE_SOURCE_DIR}/src/scene/scene_io.h"
     "${CMAKE_SOURCE_DIR}/src/scene/scene_types.h"
+    "${CMAKE_SOURCE_DIR}/src/platform/dreamcast/build_helpers.cpp"
+    "${CMAKE_SOURCE_DIR}/src/platform/dreamcast/build_helpers.h"
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.cpp"
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.h"
     "${CMAKE_SOURCE_DIR}/nebula.rc"

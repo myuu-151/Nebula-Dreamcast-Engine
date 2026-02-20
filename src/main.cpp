@@ -6217,11 +6217,12 @@ int main(int, char**)
                                 if (ec) p = in;
                                 return p.lexically_normal().generic_string();
                             };
-                            auto shortIsoName = [&](char kind, int idx, const char* ext)->std::string
+                            auto stageUpperDiskNameFromAbsKey = [](const std::string& absKey)->std::string
                             {
-                                char buf[32] = {};
-                                snprintf(buf, sizeof(buf), "%c%04d%s", kind, idx, ext);
-                                return std::string(buf);
+                                std::string out = std::filesystem::path(absKey).filename().string();
+                                if (out.empty()) out = "ASSET";
+                                std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return (char)std::toupper(c); });
+                                return out;
                             };
 
                             std::vector<std::filesystem::path> sourceScenes;
@@ -6328,26 +6329,49 @@ int main(int, char**)
                             std::unordered_map<std::string, std::string> stagedTexByAbs;
                             std::vector<std::pair<std::string, std::string>> meshRefMapEntries;
                             std::vector<std::pair<std::string, std::string>> texRefMapEntries;
+                            bool stagingNameCollision = false;
+                            std::string stagingNameCollisionMessage;
                             {
-                                int meshIdx = 1;
+                                std::unordered_map<std::string, std::string> meshAbsByOutName;
                                 for (const auto& key : sortedMeshAbs)
                                 {
-                                    std::string outName = shortIsoName('M', meshIdx++, ".NBM");
+                                    std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                    auto hit = meshAbsByOutName.find(outName);
+                                    if (hit != meshAbsByOutName.end() && hit->second != key)
+                                    {
+                                        stagingNameCollision = true;
+                                        stagingNameCollisionMessage = std::string("[DreamcastBuild] ERROR: mesh staging filename collision: ") + outName +
+                                            " <= " + hit->second + " | " + key;
+                                        break;
+                                    }
+                                    meshAbsByOutName[outName] = key;
                                     std::error_code ec;
                                     std::filesystem::copy_file(std::filesystem::path(key), cdMeshesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
                                     if (ec) continue;
                                     stagedMeshByAbs[key] = outName;
                                     meshRefMapEntries.push_back({ meshLogicalByAbs[key], outName });
                                 }
-                                int texIdx = 1;
-                                for (const auto& key : sortedTexAbs)
+                                if (!stagingNameCollision)
                                 {
-                                    std::string outName = shortIsoName('T', texIdx++, ".NBT");
-                                    std::error_code ec;
-                                    std::filesystem::copy_file(std::filesystem::path(key), cdTexturesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
-                                    if (ec) continue;
-                                    stagedTexByAbs[key] = outName;
-                                    texRefMapEntries.push_back({ texLogicalByAbs[key], outName });
+                                    std::unordered_map<std::string, std::string> texAbsByOutName;
+                                    for (const auto& key : sortedTexAbs)
+                                    {
+                                        std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                        auto hit = texAbsByOutName.find(outName);
+                                        if (hit != texAbsByOutName.end() && hit->second != key)
+                                        {
+                                            stagingNameCollision = true;
+                                            stagingNameCollisionMessage = std::string("[DreamcastBuild] ERROR: texture staging filename collision: ") + outName +
+                                                " <= " + hit->second + " | " + key;
+                                            break;
+                                        }
+                                        texAbsByOutName[outName] = key;
+                                        std::error_code ec;
+                                        std::filesystem::copy_file(std::filesystem::path(key), cdTexturesDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                        if (ec) continue;
+                                        stagedTexByAbs[key] = outName;
+                                        texRefMapEntries.push_back({ texLogicalByAbs[key], outName });
+                                    }
                                 }
                             }
                             if (!meshSrc.mesh.empty())
@@ -6972,9 +6996,19 @@ int main(int, char**)
                             std::string logPathCmd = logPath.string();
                             std::replace(logPathCmd.begin(), logPathCmd.end(), '\\', '/');
 
-                            std::string scriptPathCmd = buildDirCmd + "/_nebula_build_dreamcast.bat";
-                            std::string batCmd = "cmd /c \"\"" + scriptPathCmd + "\" >> \"" + logPathCmd + "\" 2>&1\"";
-                            int rc = RunCommand(batCmd.c_str());
+                            int rc = 1;
+                            if (!stagingNameCollision)
+                            {
+                                std::string scriptPathCmd = buildDirCmd + "/_nebula_build_dreamcast.bat";
+                                std::string batCmd = "cmd /c \"\"" + scriptPathCmd + "\" >> \"" + logPathCmd + "\" 2>&1\"";
+                                rc = RunCommand(batCmd.c_str());
+                            }
+                            else
+                            {
+                                std::ofstream lf(logPath, std::ios::out | std::ios::app);
+                                if (lf.is_open()) lf << stagingNameCollisionMessage << "\n";
+                                printf("%s\n", stagingNameCollisionMessage.c_str());
+                            }
 
                             std::filesystem::path elfPath = buildDir / "nebula_dreamcast.elf";
                             std::filesystem::path binPath = buildDir / "nebula_dreamcast.bin";
@@ -6989,7 +7023,11 @@ int main(int, char**)
                             bool haveCdi = std::filesystem::exists(cdiPath);
                             bool artifactsOk = haveElf && haveBin && have1st && haveIso && haveCdi;
 
-                            if (rc == 0 && artifactsOk)
+                            if (stagingNameCollision)
+                            {
+                                gViewportToast = "Dreamcast build failed (staged filename collision; see package.log)";
+                            }
+                            else if (rc == 0 && artifactsOk)
                             {
                                 gViewportToast = "Dreamcast build complete (see build_dreamcast)";
                             }

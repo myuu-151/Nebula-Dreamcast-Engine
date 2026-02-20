@@ -5936,16 +5936,32 @@ int main(int, char**)
                             constexpr float kDcCamOffsetX = 0.0f, kDcCamOffsetY = 0.0f, kDcCamOffsetZ = 0.0f;
                             constexpr float kDcTargetOffsetX = 0.0f, kDcTargetOffsetY = 0.0f, kDcTargetOffsetZ = 0.0f;
                             constexpr float kDcFovScale = 1.0f;
-                            Camera3DNode dcCamNode = camSrc;
+                                                        Camera3DNode dcCamNode = camSrc;
                             dcCamNode.x += kDcCamOffsetX;
                             dcCamNode.y += kDcCamOffsetY;
                             dcCamNode.z += kDcCamOffsetZ;
                             dcCamNode.fovY *= kDcFovScale;
-                            Vec3 dcTargetOffset = { kDcTargetOffsetX, kDcTargetOffsetY, kDcTargetOffsetZ };
-                            DcCameraConverted dcCamConverted = ConvertCamera3DForDreamcast(
-                                dcCamNode,
-                                640.0f / 570.0f,
-                                dcTargetOffset);
+
+                            Camera3DV2 dcCamV2 = BuildCamera3DV2FromLegacyEuler(
+                                dcCamNode.name,
+                                dcCamNode.parent,
+                                dcCamNode.x, dcCamNode.y, dcCamNode.z,
+                                dcCamNode.rotX, dcCamNode.rotY, dcCamNode.rotZ,
+                                dcCamNode.perspective,
+                                dcCamNode.fovY,
+                                dcCamNode.nearZ,
+                                dcCamNode.farZ,
+                                dcCamNode.orthoWidth,
+                                dcCamNode.priority,
+                                dcCamNode.main);
+
+                            Camera3DV2View dcCamView = BuildCamera3DV2View(dcCamV2);
+                            Camera3DV2Projection dcCamProj = BuildCamera3DV2Projection(dcCamV2, 640.0f / 570.0f);
+
+                            const float dcViewW = 640.0f;
+                            const float dcViewH = 570.0f;
+                            const float dcFocalY = (dcViewH * 0.5f) / std::max(1.0e-4f, std::tanf(dcCamProj.fovYRad * 0.5f));
+                            const float dcFocalX = dcFocalY * dcCamProj.aspect;
 
                             std::vector<Vec3> runtimeVerts;
                             std::vector<Vec3> runtimeUvs;
@@ -6662,19 +6678,19 @@ int main(int, char**)
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "/* Dreamcast camera defaults come from scene camera export (+ optional neutral calibration offsets). */\n";
-                                mc << "static const float kCamPosInit[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
-                                mc << "static float gCamPos[3] = {" << fstr(dcCamConverted.eye.x) << "," << fstr(dcCamConverted.eye.y) << "," << fstr(dcCamConverted.eye.z) << "};\n";
-                                mc << "static float gCamForward[3] = {" << fstr(dcCamConverted.forward.x) << "," << fstr(dcCamConverted.forward.y) << "," << fstr(dcCamConverted.forward.z) << "};\n";
-                                mc << "static float gCamRight[3] = {" << fstr(dcCamConverted.right.x) << "," << fstr(dcCamConverted.right.y) << "," << fstr(dcCamConverted.right.z) << "};\n";
-                                mc << "static float gCamUp[3] = {" << fstr(dcCamConverted.up.x) << "," << fstr(dcCamConverted.up.y) << "," << fstr(dcCamConverted.up.z) << "};\n";
-                                mc << "static const float kProjFovYDeg = " << fstr(dcCamConverted.fovYDeg) << ";\n";
-                                mc << "static const float kProjAspect = " << fstr(dcCamConverted.aspect) << ";\n";
-                                mc << "static const float kProjNear = " << fstr(dcCamConverted.nearZ) << ";\n";
-                                mc << "static const float kProjFar = " << fstr(dcCamConverted.farZ) << ";\n";
-                                mc << "static const float kProjViewW = " << fstr(dcCamConverted.dcViewW) << ";\n";
-                                mc << "static const float kProjViewH = " << fstr(dcCamConverted.dcViewH) << ";\n";
-                                mc << "static const float kProjFocalX = " << fstr(dcCamConverted.dcFocalX) << ";\n";
-                                mc << "static const float kProjFocalY = " << fstr(dcCamConverted.dcFocalY) << ";\n";
+                                mc << "static const float kCamPosInit[3] = {" << fstr(dcCamView.eye.x) << "," << fstr(dcCamView.eye.y) << "," << fstr(dcCamView.eye.z) << "};\n";
+                                mc << "static float gCamPos[3] = {" << fstr(dcCamView.eye.x) << "," << fstr(dcCamView.eye.y) << "," << fstr(dcCamView.eye.z) << "};\n";
+                                mc << "static float gCamForward[3] = {" << fstr(dcCamView.basis.forward.x) << "," << fstr(dcCamView.basis.forward.y) << "," << fstr(dcCamView.basis.forward.z) << "};\n";
+                                mc << "static float gCamRight[3] = {" << fstr(dcCamView.basis.right.x) << "," << fstr(dcCamView.basis.right.y) << "," << fstr(dcCamView.basis.right.z) << "};\n";
+                                mc << "static float gCamUp[3] = {" << fstr(dcCamView.basis.up.x) << "," << fstr(dcCamView.basis.up.y) << "," << fstr(dcCamView.basis.up.z) << "};\n";
+                                mc << "static const float kProjFovYDeg = " << fstr(dcCamProj.fovYDeg) << ";\n";
+                                mc << "static const float kProjAspect = " << fstr(dcCamProj.aspect) << ";\n";
+                                mc << "static const float kProjNear = " << fstr(dcCamProj.nearZ) << ";\n";
+                                mc << "static const float kProjFar = " << fstr(dcCamProj.farZ) << ";\n";
+                                mc << "static const float kProjViewW = " << fstr(dcViewW) << ";\n";
+                                mc << "static const float kProjViewH = " << fstr(dcViewH) << ";\n";
+                                mc << "static const float kProjFocalX = " << fstr(dcFocalX) << ";\n";
+                                mc << "static const float kProjFocalY = " << fstr(dcFocalY) << ";\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
                                 mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
@@ -7162,12 +7178,12 @@ int main(int, char**)
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
                                        << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
                                        << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"
-                                       << " convPos=(" << dcCamConverted.eye.x << "," << dcCamConverted.eye.y << "," << dcCamConverted.eye.z << ")"
-                                       << " convTarget=(" << dcCamConverted.target.x << "," << dcCamConverted.target.y << "," << dcCamConverted.target.z << ")"
-                                       << " convForward=(" << dcCamConverted.forward.x << "," << dcCamConverted.forward.y << "," << dcCamConverted.forward.z << ")"
-                                       << " convRight=(" << dcCamConverted.right.x << "," << dcCamConverted.right.y << "," << dcCamConverted.right.z << ")"
-                                       << " convUp=(" << dcCamConverted.up.x << "," << dcCamConverted.up.y << "," << dcCamConverted.up.z << ")"
-                                       << " proj=(fov=" << dcCamConverted.fovYDeg << ",a=" << dcCamConverted.aspect << ",n=" << dcCamConverted.nearZ << ",f=" << dcCamConverted.farZ << ")\n";
+                                       << " convPos=(" << dcCamView.eye.x << "," << dcCamView.eye.y << "," << dcCamView.eye.z << ")"
+                                       << " convTarget=(" << dcCamView.target.x << "," << dcCamView.target.y << "," << dcCamView.target.z << ")"
+                                       << " convForward=(" << dcCamView.basis.forward.x << "," << dcCamView.basis.forward.y << "," << dcCamView.basis.forward.z << ")"
+                                       << " convRight=(" << dcCamView.basis.right.x << "," << dcCamView.basis.right.y << "," << dcCamView.basis.right.z << ")"
+                                       << " convUp=(" << dcCamView.basis.up.x << "," << dcCamView.basis.up.y << "," << dcCamView.basis.up.z << ")"
+                                       << " proj=(fov=" << dcCamProj.fovYDeg << ",a=" << dcCamProj.aspect << ",n=" << dcCamProj.nearZ << ",f=" << dcCamProj.farZ << ")\n";
                                     lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
                                     lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
                                        << " copied_c=" << scriptCopiedC
@@ -10488,6 +10504,11 @@ int main(int, char**)
     glfwTerminate();
     return 0;
 }
+
+
+
+
+
 
 
 

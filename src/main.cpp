@@ -6555,9 +6555,9 @@ int main(int, char**)
                                 mc << "/* Dreamcast camera defaults come from scene camera export (+ optional neutral calibration offsets). */\n";
                                 mc << "static const float kCamPosInit[3] = {" << fstr(dcCam.view.eye.x) << "," << fstr(dcCam.view.eye.y) << "," << fstr(dcCam.view.eye.z) << "};\n";
                                 mc << "static float gCamPos[3] = {" << fstr(dcCam.view.eye.x) << "," << fstr(dcCam.view.eye.y) << "," << fstr(dcCam.view.eye.z) << "};\n";
-                                mc << "static float gCamForward[3] = {" << fstr(dcCam.view.basis.forward.x) << "," << fstr(dcCam.view.basis.forward.y) << "," << fstr(dcCam.view.basis.forward.z) << "};\n";
+                                mc << "static float gCamForward[3] = {" << fstr(dcCam.view.basis.forward.x) << "," << fstr(-dcCam.view.basis.forward.y) << "," << fstr(dcCam.view.basis.forward.z) << "};\n";
                                 mc << "static float gCamRight[3] = {" << fstr(dcCam.view.basis.right.x) << "," << fstr(dcCam.view.basis.right.y) << "," << fstr(dcCam.view.basis.right.z) << "};\n";
-                                mc << "static float gCamUp[3] = {" << fstr(dcCam.view.basis.up.x) << "," << fstr(dcCam.view.basis.up.y) << "," << fstr(dcCam.view.basis.up.z) << "};\n";
+                                mc << "static float gCamUp[3] = {" << fstr(dcCam.view.basis.up.x) << "," << fstr(-dcCam.view.basis.up.y) << "," << fstr(dcCam.view.basis.up.z) << "};\n";
                                 mc << "static const float kProjFovYDeg = " << fstr(dcCam.projection.fovYDeg) << ";\n";
                                 mc << "static const float kProjAspect = " << fstr(dcCam.projection.aspect) << ";\n";
                                 mc << "static const float kProjNear = " << fstr(dcCam.projection.nearZ) << ";\n";
@@ -6654,8 +6654,8 @@ int main(int, char**)
                                 mc << "  pvr_vertex_t v;\n";
                                 mc << "  pvr_prim(hdr, sizeof(*hdr));\n";
                                 mc << "  v.flags = PVR_CMD_VERTEX; v.x=a.x; v.y=a.y; v.z=a.z; v.u=a.u; v.v=a.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
                                 mc << "}\n";
                                 mc << "\n";
                                 mc << "int main(int argc, char **argv) {\n";
@@ -6808,6 +6808,11 @@ int main(int, char**)
                                 mc << "  int sceneReady = 1;\n";
                                 mc << "  int sceneSwitchReq = 0;\n";
                                 mc << "  NB_Game_OnStart();\n";
+                                mc << "  {\n";
+                                mc << "    V3 toHead = { gMeshPos[0]-gCamPos[0], (gMeshPos[1] + 1.2f)-gCamPos[1], gMeshPos[2]-gCamPos[2] };\n";
+                                mc << "    toHead = norm3(toHead);\n";
+                                mc << "    gCamForward[0]=toHead.x; gCamForward[1]=toHead.y; gCamForward[2]=toHead.z;\n";
+                                mc << "  }\n";
                                 mc << "\n";
                                 mc << "  for (;;) {\n";
                                 mc << "    NB_KOS_PollInput();\n";

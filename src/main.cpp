@@ -150,6 +150,7 @@ static int gActiveScene = -1;
 static int gForceSelectSceneTab = -1;
 static bool gPlayMode = false;
 static bool gRequestDreamcastGenerate = false;
+static bool gEnableScriptHotReload = false;
 static bool gWireframePreview = false;
 static bool gSaveAllInProgress = false;
 static std::vector<StaticMesh3DNode> gStaticMeshNodes;
@@ -5368,6 +5369,24 @@ int main(int, char**)
             // Open File disabled
             if (ImGui::MenuItem("Save", "Ctrl+S")) SaveActiveScene();
             if (ImGui::MenuItem("Save All", "Ctrl+Shift+S")) SaveAllProjectChanges();
+            if (!gEnableScriptHotReload)
+            {
+                if (ImGui::MenuItem("Enable Hot Reloading"))
+                {
+                    gEnableScriptHotReload = true;
+                    gViewportToast = "Hot reloading enabled";
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+            }
+            else
+            {
+                if (ImGui::MenuItem("Disable Hot Reloading"))
+                {
+                    gEnableScriptHotReload = false;
+                    gViewportToast = "Hot reloading disabled";
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Preferences...", "Ctrl+," ))
             {

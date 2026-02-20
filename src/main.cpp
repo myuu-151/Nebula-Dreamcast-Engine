@@ -6367,12 +6367,13 @@ int main(int, char**)
                                 mc << "typedef NB_Mesh RuntimeMesh;\n";
                                 mc << "typedef NB_Texture RuntimeTex;\n";
                                 mc << "static inline unsigned twid(unsigned x, unsigned y) { unsigned z=0; for (unsigned b=0; b<16; ++b) { z |= ((x>>b)&1u) << (2u*b); z |= ((y>>b)&1u) << (2u*b+1u); } return z; }\n";
-                                mc << "static int rd_u16be(FILE* f, uint16_t* out){ int a=fgetc(f), b=fgetc(f); if(a<0||b<0) return 0; *out=(uint16_t)(((uint16_t)a<<8)|(uint16_t)b); return 1; }\n";
-                                mc << "static int rd_s16be(FILE* f, int16_t* out){ uint16_t t=0; if(!rd_u16be(f,&t)) return 0; *out=(int16_t)t; return 1; }\n";
-                                mc << "static int rd_u32be(FILE* f, uint32_t* out){ int a=fgetc(f), b=fgetc(f), c=fgetc(f), d=fgetc(f); if(a<0||b<0||c<0||d<0) return 0; *out=((uint32_t)a<<24)|((uint32_t)b<<16)|((uint32_t)c<<8)|(uint32_t)d; return 1; }\n";
-                                mc << "static int dc_try_load_nebmesh(const char* path, RuntimeMesh* out){ return NB_DC_LoadMesh(path, out); }\n";
+                                mc << "static char dc_uc(char c){ return (c>='a'&&c<='z')?(char)(c-('a'-'A')):c; }\n";
+                                mc << "static int dc_eq_nocase(const char* a, const char* b){ if(!a||!b) return 0; while(*a&&*b){ if(dc_uc(*a)!=dc_uc(*b)) return 0; ++a; ++b; } return (*a==0&&*b==0)?1:0; }\n";
+                                mc << "static FILE* dc_try_open_rb(const char* cand, char* outPath, int outPathSize){ FILE* f=fopen(cand,\"rb\"); if(f&&outPath&&outPathSize>0){ strncpy(outPath,cand,(size_t)outPathSize-1u); outPath[(size_t)outPathSize-1u]=0; } return f; }\n";
+                                mc << "static FILE* dc_fopen_iso_compat(const char* path, char* outPath, int outPathSize){ if(!path||!path[0]) return 0; char cand[512]; FILE* f=0; strncpy(cand,path,sizeof(cand)-1u); cand[sizeof(cand)-1u]=0; f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; strncpy(cand,path,sizeof(cand)-1u); cand[sizeof(cand)-1u]=0; for(size_t i=0;cand[i];++i) cand[i]=dc_uc(cand[i]); f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; strncpy(cand,path,sizeof(cand)-1u); cand[sizeof(cand)-1u]=0; char* slash=strrchr(cand,'/'); char* bname=slash?slash+1:cand; char* dot=strrchr(bname,'.'); if(dot&&dc_eq_nocase(dot,\".nebmesh\")){ for(char* p=bname;p<dot;++p) *p=dc_uc(*p); strcpy(dot,\".NEBMESH\"); f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; strcpy(dot,\".nebmesh\"); f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; } else if(dot&&dc_eq_nocase(dot,\".nebtex\")){ for(char* p=bname;p<dot;++p) *p=dc_uc(*p); strcpy(dot,\".NEBTEX\"); f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; strcpy(dot,\".nebtex\"); f=dc_try_open_rb(cand,outPath,outPathSize); if(f) return f; } return 0; }\n";
+                                mc << "static int dc_try_load_nebmesh(const char* path, RuntimeMesh* out){ char resolved[512]; FILE* fp=dc_fopen_iso_compat(path,resolved,(int)sizeof(resolved)); if(!fp) return 0; fclose(fp); return NB_DC_LoadMesh(resolved, out); }\n";
                                 mc << "static void dc_free_mesh(RuntimeMesh* m){ NB_DC_FreeMesh(m); }\n";
-                                mc << "static int dc_try_load_nebtex(const char* path, RuntimeTex* out){ return NB_DC_LoadTexture(path, out); }\n";
+                                mc << "static int dc_try_load_nebtex(const char* path, RuntimeTex* out){ char resolved[512]; FILE* fp=dc_fopen_iso_compat(path,resolved,(int)sizeof(resolved)); if(!fp) return 0; fclose(fp); return NB_DC_LoadTexture(resolved, out); }\n";
                                 mc << "static void dc_free_tex(RuntimeTex* t){ NB_DC_FreeTexture(t); }\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
@@ -6505,7 +6506,7 @@ int main(int, char**)
                                 mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
                                 mc << "  }\n";
                                 mc << "  if (diskMesh.vert_count > 0 && diskMesh.tri_count > 0) activeMesh = diskMesh;\n";
-                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh load failed: /cd/data/meshes/%s\\n\", gDiskMeshFile); return 1; }\n";
+                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh compat-open/load failed: /cd/data/meshes/%s\\n\", gDiskMeshFile); return 1; }\n";
                                 mc << "  int kVertCount = activeMesh.vert_count;\n";
                                 mc << "  int kTriCount = activeMesh.tri_count;\n";
                                 mc << "  V3* base = activeMesh.pos;\n";
@@ -6574,7 +6575,7 @@ int main(int, char**)
                                 mc << "    {\n";
                                 mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
                                 mc << "      if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture load failed: %s\\n\", tp);\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture compat-open/load failed: %s\\n\", tp);\n";
                                 mc << "        return 1;\n";
                                 mc << "      }\n";
                                 mc << "      buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
@@ -6655,7 +6656,7 @@ int main(int, char**)
                                 mc << "      } else {\n";
                                 mc << "        char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", gDiskMeshFile);\n";
                                 mc << "        if (!dc_try_load_nebmesh(mp, &diskMesh)) {\n";
-                                mc << "          dbgio_printf(\"[NEBULA][DC] Scene mesh load failed: %s\\n\", mp);\n";
+                                mc << "          dbgio_printf(\"[NEBULA][DC] Scene mesh compat-open/load failed: %s\\n\", mp);\n";
                                 mc << "        } else {\n";
                                 mc << "          activeMesh = diskMesh;\n";
                                 mc << "          kVertCount = activeMesh.vert_count;\n";
@@ -6680,7 +6681,7 @@ int main(int, char**)
                                 mc << "          for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "            if (!gSlotDiskNebtex[s][0]) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture slot missing: %d\\n\", s); break; }\n";
                                 mc << "            char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
-                                mc << "            if (!dc_try_load_nebtex(tp, &diskTex[s])) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture load failed: %s\\n\", tp); break; }\n";
+                                mc << "            if (!dc_try_load_nebtex(tp, &diskTex[s])) { texOk = 0; dbgio_printf(\"[NEBULA][DC] Scene texture compat-open/load failed: %s\\n\", tp); break; }\n";
                                 mc << "            slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
                                 mc << "            slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs;\n";
                                 mc << "            slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1);\n";

@@ -6645,7 +6645,7 @@ int main(int, char**)
                                 mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
                                 mc << "  if (cp.z <= kProjNear) return 0;\n";
                                 mc << "  out->x = (kProjViewW * 0.5f) + (cp.x / cp.z) * kProjFocalX;\n";
-                                mc << "  out->y = (kProjViewH * 0.5f) - (cp.y / cp.z) * kProjFocalY;\n";
+                                mc << "  out->y = (kProjViewH * 0.5f) + (cp.y / cp.z) * kProjFocalY;\n";
                                 mc << "  out->z = kProjNear + cp.z * 0.01f;\n";
                                 mc << "  return 1;\n";
                                 mc << "}\n";
@@ -6654,8 +6654,8 @@ int main(int, char**)
                                 mc << "  pvr_vertex_t v;\n";
                                 mc << "  pvr_prim(hdr, sizeof(*hdr));\n";
                                 mc << "  v.flags = PVR_CMD_VERTEX; v.x=a.x; v.y=a.y; v.z=a.z; v.u=a.u; v.v=a.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
-                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
+                                mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
                                 mc << "}\n";
                                 mc << "\n";
                                 mc << "int main(int argc, char **argv) {\n";

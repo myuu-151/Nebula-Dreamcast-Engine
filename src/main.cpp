@@ -5735,6 +5735,9 @@ int main(int, char**)
                             std::vector<Audio3DNode> exportNodes = gAudio3DNodes;
                             std::vector<StaticMesh3DNode> exportStatics = gStaticMeshNodes;
                             std::vector<Camera3DNode> exportCameras = gCamera3DNodes;
+                            std::string cameraSourceScene = "(editor)";
+                            if (gActiveScene >= 0 && gActiveScene < (int)gOpenScenes.size() && !gOpenScenes[gActiveScene].path.empty())
+                                cameraSourceScene = gOpenScenes[gActiveScene].path.lexically_normal().generic_string();
 
                             if (gActiveScene >= 0 && gActiveScene < (int)gOpenScenes.size())
                             {
@@ -5758,6 +5761,7 @@ int main(int, char**)
                                         exportNodes = s.nodes;
                                         exportStatics = s.staticMeshes;
                                         exportCameras = s.cameras;
+                                        cameraSourceScene = defaultScenePath.lexically_normal().generic_string();
                                         foundOpen = true;
                                         break;
                                     }
@@ -5771,6 +5775,7 @@ int main(int, char**)
                                         exportNodes = loaded.nodes;
                                         exportStatics = loaded.staticMeshes;
                                         exportCameras = loaded.cameras;
+                                        cameraSourceScene = defaultScenePath.lexically_normal().generic_string();
                                     }
                                 }
                             }
@@ -5792,6 +5797,18 @@ int main(int, char**)
                             }
                             if (!haveMesh && !exportStatics.empty()) { meshSrc = exportStatics[0]; haveMesh = true; }
                             if (!haveMesh) { meshSrc.x = 0.f; meshSrc.y = 0.f; meshSrc.z = 0.f; meshSrc.scaleX = 1.f; meshSrc.scaleY = 1.f; meshSrc.scaleZ = 1.f; }
+
+                            // Optional Dreamcast camera calibration layer; neutral defaults preserve scene-authored values.
+                            constexpr float kDcCamOffsetX = 0.0f, kDcCamOffsetY = 0.0f, kDcCamOffsetZ = 0.0f;
+                            constexpr float kDcTargetOffsetX = 0.0f, kDcTargetOffsetY = 0.0f, kDcTargetOffsetZ = 0.0f;
+                            constexpr float kDcFovScale = 1.0f;
+                            (void)kDcFovScale;
+                            float camExportX = camSrc.x + kDcCamOffsetX;
+                            float camExportY = camSrc.y + kDcCamOffsetY;
+                            float camExportZ = camSrc.z + kDcCamOffsetZ;
+                            float tgtExportX = meshSrc.x + kDcTargetOffsetX;
+                            float tgtExportY = meshSrc.y + kDcTargetOffsetY;
+                            float tgtExportZ = meshSrc.z + kDcTargetOffsetZ;
 
                             std::vector<Vec3> runtimeVerts;
                             std::vector<Vec3> runtimeUvs;
@@ -6507,11 +6524,11 @@ int main(int, char**)
                                 mc << "static void dc_free_tex(RuntimeTex* t){ NB_DC_FreeTexture(t); }\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
-                                mc << "/* Calibrated Dreamcast camera defaults aligned to editor framing. */\n";
-                                mc << "static const float kCamPosInit[3] = {-3.404f,0.999f,-3.922f};\n";
-                                mc << "static float gCamPos[3] = {-3.404f,0.999f,-3.922f};\n";
+                                mc << "/* Dreamcast camera defaults come from scene camera export (+ optional neutral calibration offsets). */\n";
+                                mc << "static const float kCamPosInit[3] = {" << fstr(camExportX) << "," << fstr(camExportY) << "," << fstr(camExportZ) << "};\n";
+                                mc << "static float gCamPos[3] = {" << fstr(camExportX) << "," << fstr(camExportY) << "," << fstr(camExportZ) << "};\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
-                                mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
+                                mc << "static float gMeshPos[3] = {" << fstr(tgtExportX) << "," << fstr(tgtExportY) << "," << fstr(tgtExportZ) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
                                 mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
@@ -6991,6 +7008,10 @@ int main(int, char**)
                                 if (lf.is_open())
                                 {
                                     lf << "[DreamcastBuild] start\n";
+                                    lf << "[DreamcastCamera] source=" << cameraSourceScene
+                                       << " pos=(" << camExportX << "," << camExportY << "," << camExportZ << ")"
+                                       << " target=(" << tgtExportX << "," << tgtExportY << "," << tgtExportZ << ")"
+                                       << " fovScale=" << kDcFovScale << "\n";
                                     lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
                                     lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
                                        << " copied_c=" << scriptCopiedC

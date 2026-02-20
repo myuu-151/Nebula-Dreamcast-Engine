@@ -6821,8 +6821,11 @@ int main(int, char**)
                                 mc << "      const float move = 0.08f;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT))  gCamPos[0] -= move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) gCamPos[0] += move;\n";
-                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_UP))    gCamPos[2] -= move;\n";
-                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_DOWN))  gCamPos[2] += move;\n";
+                                mc << "      {\n";
+                                mc << "        V3 moveF = norm3((V3){gCamForward[0], 0.0f, gCamForward[2]});\n";
+                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_DPAD_UP))   { gCamPos[0] += moveF.x * move; gCamPos[2] += moveF.z * move; }\n";
+                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_DPAD_DOWN)) { gCamPos[0] -= moveF.x * move; gCamPos[2] -= moveF.z * move; }\n";
+                                mc << "      }\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_A))          gCamPos[1] += move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_B))          gCamPos[1] -= move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_X) || NB_KOS_ButtonDown(NB_BTN_Y)) {\n";

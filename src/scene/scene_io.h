@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "scene_types.h"
+#include "NodeTypes.h"
 
 namespace NebulaScene
 {

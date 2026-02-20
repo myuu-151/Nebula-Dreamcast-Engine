@@ -1,3 +1,1 @@
-#pragma once
-
 #include "NodeTypes.h"

@@ -5454,6 +5454,7 @@ int main(int, char**)
                                 bs << "set PATH=C:\\DreamSDK\\opt\\toolchains\\dc\\sh-elf\\bin;C:\\DreamSDK\\usr\\bin;C:\\DreamSDK\\mingw64\\bin;%PATH%\n";
                                 bs << "pushd \"%BUILD_DIR%\"\n";
                                 bs << "if exist \"*.o\" del /q *.o >nul 2>nul\n";
+                                bs << "if exist \"scripts\" for /r scripts %%f in (*.o) do del /q \"%%f\" >nul 2>nul\n";
                                 bs << "\"%MAKE_EXE%\" -f Makefile.dreamcast KOS_BASE=\"/c/DreamSDK/opt/toolchains/dc/kos\" KOS_CC_BASE=\"/c/DreamSDK/opt/toolchains/dc\" TMP=\"%TMP%\" TEMP=\"%TEMP%\"\n";
                                 bs << "if errorlevel 1 exit /b 1\n";
                                 bs << "sh-elf-objcopy -O binary nebula_dreamcast.elf nebula_dreamcast.bin\n";
@@ -5496,6 +5497,58 @@ int main(int, char**)
                             std::filesystem::path makefilePath = buildDir / "Makefile.dreamcast";
                             std::filesystem::path runtimeCPath = buildDir / "main.c";
                             std::filesystem::path entryCPath = buildDir / "entry.c";
+                            std::filesystem::path gameStubPath = buildDir / "NebulaGameStub.c";
+
+                            // Dreamcast script policy: compile project-local C scripts only.
+                            // Source root: <Project>/Scripts (recursive), staged under build_dreamcast/scripts.
+                            std::filesystem::path projectScriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
+                            std::filesystem::path buildScriptsDir = buildDir / "scripts";
+                            std::vector<std::string> scriptSourcesForMake;
+                            int scriptDiscoveredC = 0;
+                            int scriptCopiedC = 0;
+                            int scriptIgnoredCpp = 0;
+                            {
+                                std::error_code recEc;
+                                std::filesystem::remove_all(buildScriptsDir, recEc);
+                                std::filesystem::create_directories(buildScriptsDir, recEc);
+                                if (std::filesystem::exists(projectScriptsDir))
+                                {
+                                    std::filesystem::recursive_directory_iterator it(projectScriptsDir, recEc), end;
+                                    for (; !recEc && it != end; it.increment(recEc))
+                                    {
+                                        if (recEc) break;
+                                        const auto& srcPath = it->path();
+                                        std::error_code stEc;
+                                        if (!std::filesystem::is_regular_file(srcPath, stEc)) continue;
+
+                                        std::string ext = srcPath.extension().string();
+                                        for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+                                        if (ext == ".c")
+                                        {
+                                            ++scriptDiscoveredC;
+                                            std::error_code relEc;
+                                            std::filesystem::path rel = std::filesystem::relative(srcPath, projectScriptsDir, relEc);
+                                            if (relEc) continue;
+                                            std::filesystem::path dst = buildScriptsDir / rel;
+                                            std::error_code mkEc;
+                                            std::filesystem::create_directories(dst.parent_path(), mkEc);
+                                            std::error_code cpEc;
+                                            std::filesystem::copy_file(srcPath, dst, std::filesystem::copy_options::overwrite_existing, cpEc);
+                                            if (!cpEc)
+                                            {
+                                                std::string relSrc = (std::filesystem::path("scripts") / rel).string();
+                                                std::replace(relSrc.begin(), relSrc.end(), '\\', '/');
+                                                scriptSourcesForMake.push_back(relSrc);
+                                                ++scriptCopiedC;
+                                            }
+                                        }
+                                        else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx")
+                                        {
+                                            ++scriptIgnoredCpp;
+                                        }
+                                    }
+                                }
+                            }
 
                             std::vector<Audio3DNode> exportNodes = gAudio3DNodes;
                             std::vector<StaticMesh3DNode> exportStatics = gStaticMeshNodes;
@@ -6121,6 +6174,10 @@ int main(int, char**)
                                 mc << "#include \"KosInput.h\"\n";
                                 mc << "#include \"KosBindings.h\"\n";
                                 mc << "\n";
+                                mc << "extern void NB_Game_OnStart(void);\n";
+                                mc << "extern void NB_Game_OnUpdate(float dt);\n";
+                                mc << "extern void NB_Game_OnSceneSwitch(const char* sceneName);\n";
+                                mc << "\n";
                                 mc << "KOS_INIT_FLAGS(INIT_DEFAULT);\n";
                                 mc << "\n";
                                 mc << "typedef NB_Vec3 V3;\n";
@@ -6360,9 +6417,11 @@ int main(int, char**)
                                 mc << "  NB_KOS_InitInput();\n";
                                 mc << "  int sceneReady = 1;\n";
                                 mc << "  int sceneSwitchReq = 0;\n";
+                                mc << "  NB_Game_OnStart();\n";
                                 mc << "\n";
                                 mc << "  for (;;) {\n";
                                 mc << "    NB_KOS_PollInput();\n";
+                                mc << "    NB_Game_OnUpdate(0.016f);\n";
                                 mc << "    if (NB_KOS_HasController()) {\n";
                                 mc << "      const float move = 0.08f;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT))  gCamPos[0] -= move;\n";
@@ -6459,6 +6518,7 @@ int main(int, char**)
                                 mc << "          }\n";
                                 mc << "          sceneReady = texOk;\n";
                                 mc << "          if (!sceneReady) dbgio_printf(\"[NEBULA][DC] Scene switch failed, entering safe empty state\\n\");\n";
+                                mc << "          else NB_Game_OnSceneSwitch(gSceneName);\n";
                                 mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "    }\n";
@@ -6524,6 +6584,17 @@ int main(int, char**)
                                 }
                             }
 
+                            {
+                                std::ofstream gs(gameStubPath, std::ios::out | std::ios::trunc);
+                                if (gs.is_open())
+                                {
+                                    gs << "/* Auto-generated fallback gameplay hooks for Dreamcast runtime. */\n";
+                                    gs << "void __attribute__((weak)) NB_Game_OnStart(void) {}\n";
+                                    gs << "void __attribute__((weak)) NB_Game_OnUpdate(float dt) { (void)dt; }\n";
+                                    gs << "void __attribute__((weak)) NB_Game_OnSceneSwitch(const char* sceneName) { (void)sceneName; }\n";
+                                }
+                            }
+
                             // KOS bindings are now consumed from engine source (src/platform/dreamcast)
                             // instead of generating local copies in build_dreamcast.
 
@@ -6543,11 +6614,14 @@ int main(int, char**)
                                     mk << "TARGET = nebula_dreamcast.elf\n";
                                     mk << "NEBULA_DC_BINDINGS ?= " << bindingsPosix << "\n";
                                     mk << "VPATH += $(NEBULA_DC_BINDINGS)\n";
-                                    mk << "SOURCES = main.c KosBindings.c KosInput.c\n";
+                                    mk << "SOURCES = main.c KosBindings.c KosInput.c NebulaGameStub.c";
+                                    for (const auto& s : scriptSourcesForMake)
+                                        mk << " \\\n\t" << s;
+                                    mk << "\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";
-                                    mk << "CFLAGS += -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS)\n";
+                                    mk << "CFLAGS += -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS) -I. -Iscripts\n";
                                     mk << "all: rm-elf $(TARGET)\n";
                                     mk << "include $(KOS_BASE)/Makefile.rules\n";
                                     mk << "%.o: %.c\n";
@@ -6582,7 +6656,18 @@ int main(int, char**)
 
                             {
                                 std::ofstream lf(logPath, std::ios::out | std::ios::trunc);
-                                if (lf.is_open()) lf << "[DreamcastBuild] start\n";
+                                if (lf.is_open())
+                                {
+                                    lf << "[DreamcastBuild] start\n";
+                                    lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
+                                    lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
+                                       << " copied_c=" << scriptCopiedC
+                                       << " ignored_cpp=" << scriptIgnoredCpp << "\n";
+                                    for (const auto& s : scriptSourcesForMake)
+                                        lf << "[DreamcastScripts] source=" << s << "\n";
+                                    if (scriptSourcesForMake.empty())
+                                        lf << "[DreamcastScripts] using generated weak stub only\n";
+                                }
                             }
 
                             std::string buildDirCmd = buildDir.string();
@@ -6639,6 +6724,8 @@ int main(int, char**)
                                     }
                                     if (ecList)
                                         lf << "[DirListError] " << ecList.message() << "\n";
+                                    lf << "[DreamcastBuild] If script compile/link failed, check errors above and ensure gameplay hooks are valid C symbols.\n";
+                                    lf << "[DreamcastBuild] Expected hooks: NB_Game_OnStart, NB_Game_OnUpdate, NB_Game_OnSceneSwitch.\n";
                                 }
 
                                 int generatedCount = (haveElf ? 1 : 0) + (haveBin ? 1 : 0) + (have1st ? 1 : 0) + (haveIso ? 1 : 0) + (haveCdi ? 1 : 0);

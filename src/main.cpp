@@ -7188,7 +7188,7 @@ int main(int, char**)
                                 }
                                 else
                                 {
-                                    gViewportToast = "Dreamcast build files generated";
+                                    gViewportToast = "Dreamcast build files generated. Check dreamcast_build";
                                 }
                             }
                             gViewportToastUntil = glfwGetTime() + 4.0;

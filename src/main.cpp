@@ -6732,22 +6732,13 @@ int main(int, char**)
                                 mc << "static V3 cross3(V3 a, V3 b){ V3 r={a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; return r; }\n";
                                 mc << "static V3 norm3(V3 v){ float m=sqrtf(v.x*v.x+v.y*v.y+v.z*v.z); if(m<1e-6f){V3 z={0,0,1}; return z;} V3 r={v.x/m,v.y/m,v.z/m}; return r; }\n";
                                 mc << "\n";
-                                mc << "static void runtime_cam_basis(V3 *outFwd, V3 *outRight, V3 *outUp) {\n";
-                                mc << "  V3 fwd = norm3((V3){-gCamForward[0], -gCamForward[1], -gCamForward[2]});\n";
-                                mc << "  V3 up = norm3((V3){-gCamUp[0], -gCamUp[1], -gCamUp[2]});\n";
-                                mc << "  V3 right = norm3(cross3(up, fwd));\n";
-                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
-                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3(cross3((V3){0,1,0}, fwd));\n";
-                                mc << "  up = norm3(cross3(fwd, right));\n";
-                                mc << "  if (outFwd) *outFwd = fwd;\n";
-                                mc << "  if (outRight) *outRight = right;\n";
-                                mc << "  if (outUp) *outUp = up;\n";
-                                mc << "}\n";
-                                mc << "\n";
                                 mc << "static int project_point(V3 wp, SV *out) {\n";
                                 mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
-                                mc << "  V3 fwd, right, up;\n";
-                                mc << "  runtime_cam_basis(&fwd, &right, &up);\n";
+                                mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
+                                mc << "  V3 right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
+                                mc << "  V3 up = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
+                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3(cross3(up, fwd));\n";
+                                mc << "  if (fabsf(dot3(up,up)) < 1e-6f) up = norm3(cross3(fwd, right));\n";
                                 mc << "  V3 d = sub3(wp, cam);\n";
                                 mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
                                 mc << "  if (cp.z <= kProjNear) return 0;\n";
@@ -6776,7 +6767,6 @@ int main(int, char**)
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "  }\n";
-                                mc << "  { V3 f,r,u; runtime_cam_basis(&f,&r,&u); dbgio_printf(\"[NEBULA][DC] CamBasis f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
                                 mc << "\n";
                                 mc << "\n";
                                 mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";
@@ -7151,24 +7141,12 @@ int main(int, char**)
                                 }
                             }
 
-                            Vec3 dcRuntimeFwd = NormalizeVec3Safe(
-                                Vec3{ -dcCamConverted.forward.x, -dcCamConverted.forward.y, -dcCamConverted.forward.z },
-                                Vec3{ 0.0f, 0.0f, 1.0f });
-                            Vec3 dcRuntimeUpSeed = NormalizeVec3Safe(
-                                Vec3{ -dcCamConverted.up.x, -dcCamConverted.up.y, -dcCamConverted.up.z },
-                                Vec3{ 0.0f, 1.0f, 0.0f });
-                            Vec3 dcRuntimeRight = NormalizeVec3Safe(CrossVec3(dcRuntimeUpSeed, dcRuntimeFwd), dcCamConverted.right);
-                            Vec3 dcRuntimeUp = NormalizeVec3Safe(CrossVec3(dcRuntimeFwd, dcRuntimeRight), Vec3{ 0.0f, 1.0f, 0.0f });
-
                             {
                                 std::ofstream lf(logPath, std::ios::out | std::ios::trunc);
                                 if (lf.is_open())
                                 {
                                     lf << "[DreamcastBuild] start\n";
                                     lf << "[DreamcastCameraConvention] RH +Y-up +Z-forward right=cross(up,forward) up=cross(forward,right)\n";
-                                    lf << "[DreamcastCameraRuntimeBasis] f=(" << dcRuntimeFwd.x << "," << dcRuntimeFwd.y << "," << dcRuntimeFwd.z
-                                       << ") r=(" << dcRuntimeRight.x << "," << dcRuntimeRight.y << "," << dcRuntimeRight.z
-                                       << ") u=(" << dcRuntimeUp.x << "," << dcRuntimeUp.y << "," << dcRuntimeUp.z << ")\n";
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
                                        << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
                                        << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"

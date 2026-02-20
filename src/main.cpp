@@ -5480,6 +5480,11 @@ int main(int, char**)
                                 bs << "if exist \"%MAKEIP_EXE%\" \"%MAKEIP_EXE%\" -f ip.txt IP.BIN\n";
                                 bs << "if not exist cd_root mkdir cd_root\n";
                                 bs << "copy /Y 1ST_READ.BIN cd_root\\1ST_READ.BIN >nul\n";
+                                bs << "if not exist cd_root\\data mkdir cd_root\\data\n";
+                                bs << "if not exist cd_root\\data\\meshes mkdir cd_root\\data\\meshes\n";
+                                bs << "if not exist cd_root\\data\\textures mkdir cd_root\\data\\textures\n";
+                                bs << "for /R ..\\Assets %%F in (*.nebmesh) do copy /Y \"%%F\" cd_root\\data\\meshes\\ >nul\n";
+                                bs << "for /R ..\\Assets %%F in (*.nebtex) do copy /Y \"%%F\" cd_root\\data\\textures\\ >nul\n";
                                 bs << "if exist \"%MKISOFS_EXE%\" if exist IP.BIN \"%MKISOFS_EXE%\" -C 0,11702 -V NEBULA_DC -G IP.BIN -l -o nebula_dreamcast.iso cd_root\n";
                                 bs << "if exist \"%CDI4DC_EXE%\" if exist nebula_dreamcast.iso \"%CDI4DC_EXE%\" nebula_dreamcast.iso nebula_dreamcast.cdi\n";
                                 bs << "popd\n";
@@ -5797,6 +5802,7 @@ int main(int, char**)
                             std::vector<float> runtimeSlotUScale((size_t)runtimeSlotCount, 1.0f);
                             std::vector<float> runtimeSlotVScale((size_t)runtimeSlotCount, 1.0f);
                             std::vector<int> runtimeSlotFilter((size_t)runtimeSlotCount, 1); // 0=nearest, 1=bilinear
+                            std::vector<std::string> runtimeSlotDiskName((size_t)runtimeSlotCount);
                             // KOS strict: no per-slot material UV transform state in generated runtime.
                             std::vector<std::vector<uint16_t>> runtimeSlotTex((size_t)runtimeSlotCount);
                             auto fillCheckerSlot = [&](int si)
@@ -5914,7 +5920,10 @@ int main(int, char**)
                                     {
                                         loadedSlot = loadNebTexNative(texAbs, runtimeSlotW[(size_t)si], runtimeSlotH[(size_t)si], runtimeSlotUScale[(size_t)si], runtimeSlotVScale[(size_t)si], runtimeSlotTex[(size_t)si]);
                                         if (texAbs.extension() == ".nebtex")
+                                        {
                                             runtimeSlotFilter[(size_t)si] = LoadNebTexFilterMode(texAbs);
+                                            runtimeSlotDiskName[(size_t)si] = texAbs.filename().string();
+                                        }
                                     }
                                 }
 
@@ -5936,19 +5945,36 @@ int main(int, char**)
                                 dst = src; // keep linear source order
                             }
 
+                            std::string runtimeMeshDiskName;
+                            if (!meshSrc.mesh.empty())
+                                runtimeMeshDiskName = std::filesystem::path(meshSrc.mesh).filename().string();
+
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
                             if (mc.is_open())
                             {
                                 mc << "#include <kos.h>\n";
                                 mc << "#include <dc/pvr.h>\n";
                                 mc << "#include <math.h>\n";
+                                mc << "#include <stdio.h>\n";
+                                mc << "#include <stdlib.h>\n";
+                                mc << "#include <string.h>\n";
+                                mc << "#include <stdint.h>\n";
                                 mc << "#include \"KosInput.h\"\n";
                                 mc << "\n";
                                 mc << "KOS_INIT_FLAGS(INIT_DEFAULT);\n";
                                 mc << "\n";
                                 mc << "typedef struct { float x,y,z; } V3;\n";
                                 mc << "typedef struct { float x,y,z,u,v; } SV;\n";
+                                mc << "typedef struct { V3* pos; V3* triUv; uint16_t* indices; uint16_t* triMat; int vertCount; int triCount; } RuntimeMesh;\n";
+                                mc << "typedef struct { uint16_t* pixels; int w; int h; float us; float vs; int filter; } RuntimeTex;\n";
                                 mc << "static inline unsigned twid(unsigned x, unsigned y) { unsigned z=0; for (unsigned b=0; b<16; ++b) { z |= ((x>>b)&1u) << (2u*b); z |= ((y>>b)&1u) << (2u*b+1u); } return z; }\n";
+                                mc << "static int rd_u16be(FILE* f, uint16_t* out){ int a=fgetc(f), b=fgetc(f); if(a<0||b<0) return 0; *out=(uint16_t)(((uint16_t)a<<8)|(uint16_t)b); return 1; }\n";
+                                mc << "static int rd_s16be(FILE* f, int16_t* out){ uint16_t t=0; if(!rd_u16be(f,&t)) return 0; *out=(int16_t)t; return 1; }\n";
+                                mc << "static int rd_u32be(FILE* f, uint32_t* out){ int a=fgetc(f), b=fgetc(f), c=fgetc(f), d=fgetc(f); if(a<0||b<0||c<0||d<0) return 0; *out=((uint32_t)a<<24)|((uint32_t)b<<16)|((uint32_t)c<<8)|(uint32_t)d; return 1; }\n";
+                                mc << "static int dc_try_load_nebmesh(const char* path, RuntimeMesh* out){ memset(out,0,sizeof(*out)); FILE* f=fopen(path,\"rb\"); if(!f) return 0; char m[4]; if(fread(m,1,4,f)!=4||m[0]!='N'||m[1]!='E'||m[2]!='B'||m[3]!='M'){ fclose(f); return 0; } uint32_t ver=0,flags=0,vc=0,ic=0,pf=0; if(!rd_u32be(f,&ver)||!rd_u32be(f,&flags)||!rd_u32be(f,&vc)||!rd_u32be(f,&ic)||!rd_u32be(f,&pf)){ fclose(f); return 0; } if(vc==0||ic<3||vc>65535||ic>262144){ fclose(f); return 0; } V3* pos=(V3*)malloc(sizeof(V3)*vc); uint16_t* idx=(uint16_t*)malloc(sizeof(uint16_t)*ic); if(!pos||!idx){ free(pos); free(idx); fclose(f); return 0; } float inv = (pf<31)?(1.0f/(float)(1u<<pf)):(1.0f/256.0f); for(uint32_t i=0;i<vc;++i){ int16_t x=0,y=0,z=0; if(!rd_s16be(f,&x)||!rd_s16be(f,&y)||!rd_s16be(f,&z)){ free(pos); free(idx); fclose(f); return 0; } pos[i].x=x*inv; pos[i].y=y*inv; pos[i].z=z*inv; } int hasUv=(flags&1u)!=0; V3* uv=(V3*)malloc(sizeof(V3)*vc); if(!uv){ free(pos); free(idx); fclose(f); return 0; } for(uint32_t i=0;i<vc;++i){ uv[i].x=0.0f; uv[i].y=0.0f; uv[i].z=0.0f; } if(hasUv){ for(uint32_t i=0;i<vc;++i){ int16_t u=0,v=0; if(!rd_s16be(f,&u)||!rd_s16be(f,&v)){ free(uv); free(pos); free(idx); fclose(f); return 0; } uv[i].x=(float)u/256.0f; uv[i].y=(float)v/256.0f; } } for(uint32_t i=0;i<ic;++i){ uint16_t t=0; if(!rd_u16be(f,&t)){ free(uv); free(pos); free(idx); fclose(f); return 0; } idx[i]=t; } uint32_t tc=ic/3u; uint16_t* triMat=(uint16_t*)malloc(sizeof(uint16_t)*tc); if(!triMat){ free(uv); free(pos); free(idx); fclose(f); return 0; } for(uint32_t t=0;t<tc;++t) triMat[t]=0; if(flags&2u){ for(uint32_t t=0;t<tc;++t){ if(!rd_u16be(f,&triMat[t])) break; } } V3* triUv=(V3*)malloc(sizeof(V3)*ic); if(!triUv){ free(uv); free(pos); free(idx); free(triMat); fclose(f); return 0; } for(uint32_t i=0;i<ic;++i){ uint16_t vi=idx[i]; if(vi<vc) triUv[i]=uv[vi]; else { triUv[i].x=0.0f; triUv[i].y=0.0f; triUv[i].z=0.0f; } } free(uv); fclose(f); out->pos=pos; out->indices=idx; out->triUv=triUv; out->triMat=triMat; out->vertCount=(int)vc; out->triCount=(int)tc; return 1; }\n";
+                                mc << "static void dc_free_mesh(RuntimeMesh* m){ if(!m) return; free(m->pos); free(m->indices); free(m->triUv); free(m->triMat); memset(m,0,sizeof(*m)); }\n";
+                                mc << "static int dc_try_load_nebtex(const char* path, RuntimeTex* out){ memset(out,0,sizeof(*out)); FILE* f=fopen(path,\"rb\"); if(!f) return 0; char m[4]; if(fread(m,1,4,f)!=4||m[0]!='N'||m[1]!='E'||m[2]!='B'||m[3]!='T'){ fclose(f); return 0; } uint16_t w=0,h=0,fmt=0,flg=0; if(!rd_u16be(f,&w)||!rd_u16be(f,&h)||!rd_u16be(f,&fmt)||!rd_u16be(f,&flg)){ fclose(f); return 0; } if(fmt!=1||w==0||h==0){ fclose(f); return 0; } int tw=1, th=1; while(tw<w&&tw<1024) tw<<=1; while(th<h&&th<1024) th<<=1; if(tw<=0||th<=0){ fclose(f); return 0; } uint16_t* pix=(uint16_t*)malloc((size_t)tw*(size_t)th*2u); if(!pix){ fclose(f); return 0; } memset(pix,0,(size_t)tw*(size_t)th*2u); for(uint32_t y=0;y<h;++y){ for(uint32_t x=0;x<w;++x){ uint16_t p=0; if(!rd_u16be(f,&p)){ free(pix); fclose(f); return 0; } uint16_t r5=(p>>10)&31, g5=(p>>5)&31, b5=p&31; uint16_t g6=(uint16_t)((g5<<1)|(g5>>4)); pix[(size_t)y*(size_t)tw+(size_t)x]=(uint16_t)((r5<<11)|(g6<<5)|b5); } } int tail=fgetc(f); int filter=(flg&1u)?1:0; if(tail==0||tail==1) filter=tail; fclose(f); out->pixels=pix; out->w=tw; out->h=th; out->us=(float)w/(float)tw; out->vs=(float)h/(float)th; out->filter=filter; return 1; }\n";
+                                mc << "static void dc_free_tex(RuntimeTex* t){ if(!t) return; free(t->pixels); memset(t,0,sizeof(*t)); }\n";
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "static const float kCamPosInit[3] = {" << fstr(camSrc.x) << "," << fstr(camSrc.y) << "," << fstr(camSrc.z) << "};\n";
@@ -5958,6 +5984,7 @@ int main(int, char**)
                                 mc << "static const float kMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static const float kMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static const float kMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                mc << "static const char* kDiskMeshFile = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "\n";
                                 mc << "static inline float deg2rad(float d){ return d*0.0174532925f; }\n";
                                 mc << "\n";
@@ -6006,8 +6033,8 @@ int main(int, char**)
                                 mc << "  dbgio_printf(\"Nebula Dreamcast Runtime (Scene Export v2)\\n\");\n";
                                 mc << "\n";
                                 mc << "\n";
-                                mc << "  const int kVertCount = " << runtimeVerts.size() << ";\n";
-                                mc << "  const V3 base[] = {\n";
+                                mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";
+                                mc << "  static const V3 baseEmbedded[] = {\n";
                                 for (size_t vi = 0; vi < runtimeVerts.size(); ++vi)
                                 {
                                     const Vec3& v = runtimeVerts[vi];
@@ -6016,8 +6043,8 @@ int main(int, char**)
                                     mc << "\n";
                                 }
                                 mc << "  };\n";
-                                mc << "  const int kTriCount = " << (runtimeIndices.size() / 3) << ";\n";
-                                mc << "  const V3 triUvNormal[] = {\n";
+                                mc << "  static const int kTriCountEmbedded = " << (runtimeIndices.size() / 3) << ";\n";
+                                mc << "  static const V3 triUvEmbedded[] = {\n";
                                 for (size_t ui = 0; ui < runtimeTriUvs.size(); ++ui)
                                 {
                                     const Vec3& uv = runtimeTriUvs[ui];
@@ -6026,23 +6053,38 @@ int main(int, char**)
                                     mc << "\n";
                                 }
                                 mc << "  };\n";
-                                mc << "  const uint16_t triMatNormal[] = {";
+                                mc << "  static const uint16_t triMatEmbedded[] = {";
                                 for (size_t ti = 0; ti < runtimeTriMat.size(); ++ti)
                                 {
                                     mc << runtimeTriMat[ti];
                                     if (ti + 1 < runtimeTriMat.size()) mc << ",";
                                 }
                                 mc << "};\n";
-                                mc << "  const uint16_t trisNormal[] = {";
+                                mc << "  static const uint16_t trisEmbedded[] = {";
                                 for (size_t ii = 0; ii < runtimeIndices.size(); ++ii)
                                 {
                                     mc << runtimeIndices[ii];
                                     if (ii + 1 < runtimeIndices.size()) mc << ",";
                                 }
                                 mc << "};\n";
-                                mc << "  uint16_t trisFlipped[kTriCount*3];\n";
-                                mc << "  V3 triUvFlipped[kTriCount*3];\n";
-                                mc << "  for (int t=0; t<kTriCount; ++t) {\n";
+                                mc << "  RuntimeMesh diskMesh = {0};\n";
+                                mc << "  RuntimeMesh activeMesh = {0};\n";
+                                mc << "  if (kDiskMeshFile[0]) {\n";
+                                mc << "    char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", kDiskMeshFile);\n";
+                                mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
+                                mc << "  }\n";
+                                mc << "  if (diskMesh.vertCount > 0 && diskMesh.triCount > 0) activeMesh = diskMesh;\n";
+                                mc << "  else { activeMesh.pos = (V3*)baseEmbedded; activeMesh.triUv = (V3*)triUvEmbedded; activeMesh.indices = (uint16_t*)trisEmbedded; activeMesh.triMat = (uint16_t*)triMatEmbedded; activeMesh.vertCount = kVertCountEmbedded; activeMesh.triCount = kTriCountEmbedded; }\n";
+                                mc << "  int kVertCount = activeMesh.vertCount;\n";
+                                mc << "  int kTriCount = activeMesh.triCount;\n";
+                                mc << "  V3* base = activeMesh.pos;\n";
+                                mc << "  const uint16_t* trisNormal = activeMesh.indices;\n";
+                                mc << "  const V3* triUvNormal = activeMesh.triUv;\n";
+                                mc << "  const uint16_t* triMatNormal = activeMesh.triMat;\n";
+                                mc << "  uint16_t *trisFlipped = (uint16_t*)malloc((size_t)kTriCount*3u*sizeof(uint16_t));\n";
+                                mc << "  V3 *triUvFlipped = (V3*)malloc((size_t)kTriCount*3u*sizeof(V3));\n";
+                                mc << "  if(!trisFlipped || !triUvFlipped){ free(trisFlipped); free(triUvFlipped); trisFlipped=0; triUvFlipped=0; }\n";
+                                mc << "  if (trisFlipped && triUvFlipped) for (int t=0; t<kTriCount; ++t) {\n";
                                 mc << "    trisFlipped[t*3+0] = trisNormal[t*3+0];\n";
                                 mc << "    trisFlipped[t*3+1] = trisNormal[t*3+2];\n";
                                 mc << "    trisFlipped[t*3+2] = trisNormal[t*3+1];\n";
@@ -6079,6 +6121,15 @@ int main(int, char**)
                                 mc << "  static uint8_t slotFilter[MAX_SLOT] = {";
                                 for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFilter[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
                                 mc << "};\n";
+                                mc << "  static const char* slotDiskNebtex[MAX_SLOT] = {";
+                                for (int si = 0; si < runtimeSlotCount; ++si)
+                                {
+                                    std::string nm = runtimeSlotDiskName[(size_t)si];
+                                    for (char& ch : nm) if (ch == '\\') ch = '/';
+                                    mc << "\"" << nm << "\"";
+                                    if (si + 1 < runtimeSlotCount) mc << ",";
+                                }
+                                mc << "};\n";
                                 for (int si = 0; si < runtimeSlotCount; ++si)
                                 {
                                     mc << "  static uint16_t texbuf_" << si << "[] = {";
@@ -6090,6 +6141,7 @@ int main(int, char**)
                                     }
                                     mc << "};\n";
                                 }
+                                mc << "  RuntimeTex diskTex[MAX_SLOT]; memset(diskTex, 0, sizeof(diskTex));\n";
                                 mc << "  for (int s=0; s<slotCount; ++s) {\n";
                                 mc << "    const uint16_t *buf = 0;\n";
                                 mc << "    switch (s) {\n";
@@ -6098,6 +6150,14 @@ int main(int, char**)
                                     mc << "      case " << si << ": buf = texbuf_" << si << "; break;\n";
                                 }
                                 mc << "      default: buf = texbuf_0; break;\n";
+                                mc << "    }\n";
+                                mc << "    if (slotDiskNebtex[s] && slotDiskNebtex[s][0]) {\n";
+                                mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", slotDiskNebtex[s]);\n";
+                                mc << "      if (dc_try_load_nebtex(tp, &diskTex[s])) {\n";
+                                mc << "        buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
+                                mc << "        slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs; slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1); slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
+                                mc << "        slotFilter[s]=(uint8_t)diskTex[s].filter;\n";
+                                mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    int tw = slotW[s], th = slotH[s];\n";
                                 mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";
@@ -6150,8 +6210,8 @@ int main(int, char**)
                                 mc << "      ok[i] = project_point(v, &sv[i]);\n";
                                 mc << "    }\n";
                                 mc << "\n";
-                                mc << "    const uint16_t *tris = gFlipWinding ? trisFlipped : trisNormal;\n";
-                                mc << "    const V3 *triUv = gFlipWinding ? triUvFlipped : triUvNormal;\n";
+                                mc << "    const uint16_t *tris = (gFlipWinding && trisFlipped) ? trisFlipped : trisNormal;\n";
+                                mc << "    const V3 *triUv = (gFlipWinding && triUvFlipped) ? triUvFlipped : triUvNormal;\n";
                                 mc << "    for (int t=0;t<kTriCount;++t){\n";
                                 mc << "      int a=tris[t*3+0], b=tris[t*3+1], c=tris[t*3+2];\n";
                                 mc << "      if (!(ok[a] && ok[b] && ok[c])) continue;\n";
@@ -9544,6 +9604,8 @@ int main(int, char**)
     glfwTerminate();
     return 0;
 }
+
+
 
 
 

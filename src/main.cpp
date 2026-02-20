@@ -34,7 +34,7 @@
 #include "audio3d.h"
 #include "assets/meta_io.h"
 #include "platform/dreamcast/build_helpers.h"
-#include "scene/scene_io.h"
+#include "scene/SceneIO.h"
 #include "scene/NodeTypes.h"
 #include <GL/gl.h>
 

@@ -1558,10 +1558,6 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                     gSelectedAssetPath = p;
                     gSelectedAssetPathSetTime = ImGui::GetTime();
                 }
-                else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
-                {
-                    BeginInlineAssetRename(p, name);
-                }
 
                 if (isDouble)
                 {
@@ -1595,10 +1591,6 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                 {
                     gSelectedAssetPath = p;
                     gSelectedAssetPathSetTime = ImGui::GetTime();
-                }
-                else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
-                {
-                    BeginInlineAssetRename(p, name);
                 }
 
                 if (isDouble)

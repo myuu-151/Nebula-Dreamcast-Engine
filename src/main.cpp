@@ -10121,6 +10121,8 @@ int main(int, char**)
                 {
                     strncpy_s(scriptBuf, n.script.c_str(), sizeof(scriptBuf) - 1);
                 }
+                if (ImGui::GetActiveID() != ImGui::GetID("##StaticScriptPath") && n.script != scriptBuf)
+                    strncpy_s(scriptBuf, n.script.c_str(), sizeof(scriptBuf) - 1);
                 if (ImGui::InputText("##StaticScriptPath", scriptBuf, sizeof(scriptBuf)))
                 {
                     std::string s = scriptBuf;
@@ -10199,6 +10201,16 @@ int main(int, char**)
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
                 ImGui::SameLine();
+                {
+                    std::string slotPathLive;
+                    if (!n.mesh.empty() && !gProjectDir.empty())
+                    {
+                        std::filesystem::path absMesh = std::filesystem::path(gProjectDir) / n.mesh;
+                        slotPathLive = ToProjectRelativePath(GetNebSlotsPathForMesh(absMesh));
+                    }
+                    if (ImGui::GetActiveID() != ImGui::GetID("##NebslotPath") && slotPathLive != nebslotBuf)
+                        strncpy_s(nebslotBuf, slotPathLive.c_str(), sizeof(nebslotBuf) - 1);
+                }
                 if (ImGui::InputText("##NebslotPath", nebslotBuf, sizeof(nebslotBuf)))
                 {
                 }
@@ -10231,6 +10243,8 @@ int main(int, char**)
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
                 ImGui::SameLine();
+                if (ImGui::GetActiveID() != ImGui::GetID("##MaterialPath0") && n.materialSlots[0] != matBuf[0])
+                    strncpy_s(matBuf[0], n.materialSlots[0].c_str(), sizeof(matBuf[0]) - 1);
                 if (ImGui::InputText("##MaterialPath0", matBuf[0], sizeof(matBuf[0])))
                 {
                     std::string s = matBuf[0];
@@ -10265,6 +10279,8 @@ int main(int, char**)
 
                     std::string id = "##MaterialPath" + std::to_string(si);
                     std::string label = GetStaticMeshSlotLabel(n, si);
+                    if (ImGui::GetActiveID() != ImGui::GetID(id.c_str()) && n.materialSlots[si] != matBuf[si])
+                        strncpy_s(matBuf[si], n.materialSlots[si].c_str(), sizeof(matBuf[si]) - 1);
                     if (ImGui::InputText(id.c_str(), matBuf[si], sizeof(matBuf[si])))
                     {
                         std::string s = matBuf[si];
@@ -10303,6 +10319,8 @@ int main(int, char**)
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
                 ImGui::SameLine();
+                if (ImGui::GetActiveID() != ImGui::GetID("##MeshPath") && n.mesh != meshBuf)
+                    strncpy_s(meshBuf, n.mesh.c_str(), sizeof(meshBuf) - 1);
                 if (ImGui::InputText("##MeshPath", meshBuf, sizeof(meshBuf)))
                 {
                     std::string s = meshBuf;

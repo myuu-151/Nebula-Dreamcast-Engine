@@ -3725,7 +3725,7 @@ int main(int, char**)
     Vec3 playSavedOrbitCenter = { 0.0f, 0.0f, 0.0f };
 
     bool showPreferences = false;
-    bool showViewportDebugTab = true;
+    bool showViewportDebugTab = false;
     float uiScale = 2.0f;
     int themeMode = 0; // 0=Space, 1=Slate, 2=Classic
 
@@ -5496,10 +5496,6 @@ int main(int, char**)
             gRequestDreamcastGenerate = true;
             ImGui::OpenPopup("PackageMenu");
         }
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(baseY + 4.0f);
-        if (ImGui::Button("Debug"))
-            showViewportDebugTab = !showViewportDebugTab;
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);
         ImGui::Checkbox("Wireframe", &gWireframePreview);

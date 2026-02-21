@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <iterator>
 #include <array>
 
@@ -2675,6 +2676,171 @@ static bool ExportNebMesh(const aiScene* scene, const std::filesystem::path& out
     return true;
 }
 
+static void CleanupNebMeshTopology(NebMesh& mesh)
+{
+    if (mesh.positions.empty()) return;
+
+    const float posEps = 1.0f / 512.0f;
+    const float uvEps = 1.0f / 512.0f;
+    const float posEps2 = posEps * posEps;
+
+    auto quant = [](float v, float e) -> int32_t { return (int32_t)std::lround(v / e); };
+    auto pack3 = [](int32_t x, int32_t y, int32_t z) -> uint64_t {
+        uint64_t ux = (uint32_t)x;
+        uint64_t uy = (uint32_t)y;
+        uint64_t uz = (uint32_t)z;
+        uint64_t h = 1469598103934665603ull;
+        h ^= ux + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h ^= uy + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h ^= uz + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        return h;
+    };
+
+    std::unordered_map<uint64_t, std::vector<uint16_t>> buckets;
+    buckets.reserve(mesh.positions.size() * 2 + 1);
+
+    std::vector<Vec3> newPos;
+    std::vector<Vec3> newUv;
+    newPos.reserve(mesh.positions.size());
+    if (mesh.hasUv && mesh.uvs.size() == mesh.positions.size()) newUv.reserve(mesh.uvs.size());
+
+    std::vector<uint16_t> remap(mesh.positions.size(), 0);
+
+    for (size_t i = 0; i < mesh.positions.size(); ++i)
+    {
+        const Vec3& p = mesh.positions[i];
+        const int32_t qx = quant(p.x, posEps);
+        const int32_t qy = quant(p.y, posEps);
+        const int32_t qz = quant(p.z, posEps);
+        const uint64_t key = pack3(qx, qy, qz);
+
+        uint16_t chosen = 0xFFFFu;
+        auto it = buckets.find(key);
+        if (it != buckets.end())
+        {
+            for (uint16_t cand : it->second)
+            {
+                const Vec3& cp = newPos[cand];
+                float dx = cp.x - p.x, dy = cp.y - p.y, dz = cp.z - p.z;
+                if ((dx * dx + dy * dy + dz * dz) > posEps2) continue;
+
+                if (mesh.hasUv && mesh.uvs.size() == mesh.positions.size() && cand < newUv.size())
+                {
+                    const Vec3& u0 = mesh.uvs[i];
+                    const Vec3& u1 = newUv[cand];
+                    if (std::fabs(u0.x - u1.x) > uvEps || std::fabs(u0.y - u1.y) > uvEps)
+                        continue;
+                }
+
+                chosen = cand;
+                break;
+            }
+        }
+
+        if (chosen == 0xFFFFu)
+        {
+            chosen = (uint16_t)newPos.size();
+            newPos.push_back(p);
+            if (mesh.hasUv && mesh.uvs.size() == mesh.positions.size()) newUv.push_back(mesh.uvs[i]);
+            buckets[key].push_back(chosen);
+        }
+
+        remap[i] = chosen;
+    }
+
+    if (!newPos.empty() && newPos.size() < mesh.positions.size())
+    {
+        mesh.positions.swap(newPos);
+        if (mesh.hasUv && mesh.uvs.size() == remap.size()) mesh.uvs.swap(newUv);
+    }
+
+    for (size_t i = 0; i < mesh.indices.size(); ++i)
+    {
+        uint16_t idx = mesh.indices[i];
+        if (idx < remap.size()) mesh.indices[i] = remap[idx];
+    }
+
+    if (mesh.hasFaceRecords)
+    {
+        for (auto& fr : mesh.faceRecords)
+        {
+            const int ar = (fr.arity >= 3 && fr.arity <= 4) ? (int)fr.arity : 3;
+            for (int ci = 0; ci < ar; ++ci)
+            {
+                uint16_t idx = fr.indices[ci];
+                if (idx < remap.size()) fr.indices[ci] = remap[idx];
+            }
+        }
+    }
+
+    // Remove exact duplicate/degenerate triangles after weld (preserve first occurrence).
+    auto triKey = [](uint16_t a, uint16_t b, uint16_t c, uint16_t mat) -> uint64_t {
+        if (a > b) std::swap(a, b);
+        if (b > c) std::swap(b, c);
+        if (a > b) std::swap(a, b);
+        uint64_t h = 1469598103934665603ull;
+        h ^= (uint64_t)a + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h ^= (uint64_t)b + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h ^= (uint64_t)c + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h ^= (uint64_t)mat + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        return h;
+    };
+
+    std::vector<uint16_t> newIdx;
+    std::vector<uint16_t> newMat;
+    newIdx.reserve(mesh.indices.size());
+    if (mesh.hasFaceMaterial) newMat.reserve(mesh.faceMaterial.size());
+
+    std::unordered_set<uint64_t> seenTri;
+    seenTri.reserve(mesh.indices.size() / 3 + 1);
+
+    const size_t triCount = mesh.indices.size() / 3;
+    for (size_t t = 0; t < triCount; ++t)
+    {
+        uint16_t a = mesh.indices[t * 3 + 0];
+        uint16_t b = mesh.indices[t * 3 + 1];
+        uint16_t c = mesh.indices[t * 3 + 2];
+        if (a == b || b == c || c == a) continue;
+
+        uint16_t mat = (mesh.hasFaceMaterial && t < mesh.faceMaterial.size()) ? mesh.faceMaterial[t] : 0;
+        uint64_t key = triKey(a, b, c, mat);
+        if (!seenTri.insert(key).second) continue;
+
+        newIdx.push_back(a); newIdx.push_back(b); newIdx.push_back(c);
+        if (mesh.hasFaceMaterial) newMat.push_back(mat);
+    }
+
+    if (!newIdx.empty() && newIdx.size() < mesh.indices.size())
+    {
+        mesh.indices.swap(newIdx);
+        if (mesh.hasFaceMaterial) mesh.faceMaterial.swap(newMat);
+    }
+
+    if (mesh.hasFaceRecords && !mesh.faceRecords.empty())
+    {
+        std::vector<NebFaceRecord> newRecs;
+        newRecs.reserve(mesh.faceRecords.size());
+        std::unordered_set<uint64_t> seenRecTri;
+        seenRecTri.reserve(mesh.faceRecords.size() + 1);
+
+        for (auto fr : mesh.faceRecords)
+        {
+            int ar = (fr.arity >= 3 && fr.arity <= 4) ? (int)fr.arity : 3;
+            if (ar == 3)
+            {
+                uint16_t a = fr.indices[0], b = fr.indices[1], c = fr.indices[2];
+                if (a == b || b == c || c == a) continue;
+                uint64_t key = triKey(a, b, c, fr.material);
+                if (!seenRecTri.insert(key).second) continue;
+            }
+            newRecs.push_back(fr);
+        }
+
+        if (!newRecs.empty() && newRecs.size() < mesh.faceRecords.size())
+            mesh.faceRecords.swap(newRecs);
+    }
+}
+
 static bool LoadNebMesh(const std::filesystem::path& path, NebMesh& outMesh)
 {
     std::ifstream in(path, std::ios::binary | std::ios::in);
@@ -2799,6 +2965,8 @@ static bool LoadNebMesh(const std::filesystem::path& path, NebMesh& outMesh)
             }
         }
     }
+
+    CleanupNebMeshTopology(outMesh);
 
     outMesh.valid = true;
     return true;

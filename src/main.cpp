@@ -3779,9 +3779,12 @@ static void ImportAssetsToCurrentFolder(const std::vector<std::string>& pickedLi
             else
             {
                 std::string warn;
-                std::filesystem::path meshOut = outPath;
+                std::error_code ec;
+                std::filesystem::path meshesDir = targetDir / "Meshes";
+                std::filesystem::create_directories(meshesDir, ec);
+                std::filesystem::path meshOut = meshesDir / inPath.filename();
                 meshOut.replace_extension(".nebmesh");
-                if (ExportNebMesh(scene, meshOut, warn))
+                if (!ec && ExportNebMesh(scene, meshOut, warn))
                 {
                     importedCount++;
                     int matCount = ImportModelTexturesAndGenerateMaterials(scene, inPath, targetDir, meshOut, warn);

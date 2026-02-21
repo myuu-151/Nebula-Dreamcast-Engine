@@ -3870,6 +3870,14 @@ int main(int, char**)
             view = Mat4LookAt(eye, target, up);
         }
 
+        // Editor parity toggle: mirror runtime + viewport horizontally (right-to-left).
+        // This applies to both editor navigation view and play-camera runtime view.
+        const bool kMirrorViewportRTL = true;
+        if (kMirrorViewportRTL)
+        {
+            proj.m[0] = -proj.m[0];
+        }
+
         // Transform hotkeys (GLFW-level, toggles)
         {
             auto edge = [](bool now, bool& prev) { bool pressed = (now && !prev); prev = now; return pressed; };

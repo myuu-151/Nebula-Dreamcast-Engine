@@ -6456,7 +6456,7 @@ int main(int, char**)
                             std::filesystem::path cdScenesDir = cdDataDir / "scenes";
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
                             std::filesystem::path cdTexturesDir = cdDataDir / "textures";
-                            std::filesystem::path cdMatDir = cdDataDir / "mat";
+                            std::filesystem::path cdMatDir = cdDataDir / "materials";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);

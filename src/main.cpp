@@ -1292,6 +1292,27 @@ static void UpdateAssetReferencesForRename(const std::filesystem::path& oldPath,
         gNode3DNodes,
         gOpenScenes,
         gSelectedAssetPath);
+
+    auto remapPath = [&](std::filesystem::path& p)
+    {
+        if (p.empty()) return;
+        std::string cur = p.generic_string();
+        std::string oldS = oldPath.generic_string();
+        if (cur == oldS || cur.rfind(oldS + "/", 0) == 0)
+        {
+            std::string tail = cur.substr(oldS.size());
+            p = std::filesystem::path(newPath.generic_string() + tail);
+        }
+    };
+
+    remapPath(gAssetsCurrentDir);
+    remapPath(gMaterialInspectorPath);
+    remapPath(gMaterialInspectorPath2);
+    remapPath(gNebTexInspectorPath);
+    remapPath(gNebTexInspectorPath2);
+
+    if (gInlineRenamePath == oldPath)
+        gInlineRenamePath = newPath;
 }
 
 static void BeginInlineAssetRename(const std::filesystem::path& p, const std::string& displayName)

@@ -7128,10 +7128,10 @@ int main(int, char**)
                                 mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
                                 mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";
                                 mc << "        float dist = sqrtf(dot3(off, off));\n";
-                                mc << "        if (NB_KOS_ButtonPressed(NB_BTN_A)) {\n";
+                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_A)) {\n";
                                 mc << "          dist -= kZoomStep;\n";
                                 mc << "        }\n";
-                                mc << "        if (NB_KOS_ButtonPressed(NB_BTN_X)) {\n";
+                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_X)) {\n";
                                 mc << "          dist += kZoomStep;\n";
                                 mc << "        }\n";
                                 mc << "        if (dist < 0.8f) dist = 0.8f;\n";

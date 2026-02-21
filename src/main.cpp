@@ -6570,6 +6570,8 @@ int main(int, char**)
                                 mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                mc << "static int gMirrorX = 1;\n";
+                                mc << "static int gMirrorZ = -1;\n";
                                 mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
                                 mc << "static int gSceneIndex = 0;\n";
@@ -6819,6 +6821,10 @@ int main(int, char**)
                                 mc << "    NB_Game_OnUpdate(0.016f);\n";
                                 mc << "    if (NB_KOS_HasController()) {\n";
                                 mc << "      const float move = 0.08f;\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_UP))    { gMirrorX = 1;  gMirrorZ = 1;  dbgio_printf(\"[Mirror] UP: normal (X=1 Z=1)\\n\"); }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT))  { gMirrorX = -1; gMirrorZ = 1;  dbgio_printf(\"[Mirror] LEFT: mirror X (X=-1 Z=1)\\n\"); }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_RIGHT)) { gMirrorX = 1;  gMirrorZ = -1; dbgio_printf(\"[Mirror] RIGHT: mirror Z (X=1 Z=-1)\\n\"); }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_DOWN))  { gMirrorX = -1; gMirrorZ = -1; dbgio_printf(\"[Mirror] DOWN: mirror XZ (X=-1 Z=-1)\\n\"); }\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT))  gCamPos[0] -= move;\n";
                                 mc << "      if (NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) gCamPos[0] += move;\n";
                                 mc << "      {\n";
@@ -6936,7 +6942,7 @@ int main(int, char**)
                                 mc << "    SV sv[kVertCount]; int ok[kVertCount];\n";
                                 mc << "    for (int i=0;i<kVertCount;++i){\n";
                                 mc << "      V3 v = base[i];\n";
-                                mc << "      v.x *= gMeshScale[0]; v.y *= gMeshScale[1]; v.z *= gMeshScale[2];\n";
+                                mc << "      v.x *= gMeshScale[0] * (float)gMirrorX; v.y *= gMeshScale[1]; v.z *= gMeshScale[2] * (float)gMirrorZ;\n";
                                 mc << "      v = rot_xyz(v, deg2rad(gMeshRot[0]), deg2rad(gMeshRot[1]), deg2rad(gMeshRot[2]));\n";
                                 mc << "      v.x += gMeshPos[0]; v.y += gMeshPos[1]; v.z += gMeshPos[2];\n";
                                 mc << "      ok[i] = project_point(v, &sv[i]);\n";

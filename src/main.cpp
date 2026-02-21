@@ -1812,6 +1812,15 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
         ImGui::PopID();
     }
 
+    if (!gInlineRenamePath.empty() &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        !ImGui::IsAnyItemHovered())
+    {
+        gInlineRenamePath.clear();
+        gInlineRenameFocus = false;
+    }
+
     if (gDoDelete && !gPendingDelete.empty())
     {
         std::filesystem::path original = gPendingDelete;

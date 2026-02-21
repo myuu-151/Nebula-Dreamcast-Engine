@@ -39,6 +39,7 @@ Active development / prototyping, with a working Dreamcast package flow and hard
 - **.nebmesh** - mesh format
 - **.nebtex** - texture format
 - **.nebmat** - material reference file
+- **.nebslots** - StaticMesh material-slot manifest
 
 ## Build / Package (Dreamcast)
 General flow:

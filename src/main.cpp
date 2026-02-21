@@ -3780,7 +3780,7 @@ static void ImportAssetsToCurrentFolder(const std::vector<std::string>& pickedLi
             {
                 std::string warn;
                 std::error_code ec;
-                std::filesystem::path meshesDir = targetDir / "Meshes";
+                std::filesystem::path meshesDir = targetDir / "mesh";
                 std::filesystem::create_directories(meshesDir, ec);
                 std::filesystem::path meshOut = meshesDir / inPath.filename();
                 meshOut.replace_extension(".nebmesh");

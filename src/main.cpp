@@ -3704,10 +3704,10 @@ int main(int, char**)
 
     float orbitYaw = 45.0f;
     float orbitPitch = 25.0f;
-    float viewYaw = -491.8f;
-    float viewPitch = -11.0f;
+    float viewYaw = -136.1f;
+    float viewPitch = -14.2f;
     float distance = 10.0f;
-    Vec3 orbitCenter = { 14.135f, 7.632f, 15.720f };
+    Vec3 orbitCenter = { 14.812f, 7.632f, 14.834f };
     Vec3 camPos = { 0.0f, 0.0f, 0.0f };
     double lastX = 0.0, lastY = 0.0;
     bool dragging = false;

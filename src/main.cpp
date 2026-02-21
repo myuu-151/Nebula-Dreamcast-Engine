@@ -3725,6 +3725,7 @@ int main(int, char**)
     Vec3 playSavedOrbitCenter = { 0.0f, 0.0f, 0.0f };
 
     bool showPreferences = false;
+    bool showViewportDebugTab = true;
     float uiScale = 2.0f;
     int themeMode = 0; // 0=Space, 1=Slate, 2=Classic
 
@@ -5495,6 +5496,10 @@ int main(int, char**)
             gRequestDreamcastGenerate = true;
             ImGui::OpenPopup("PackageMenu");
         }
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(baseY + 4.0f);
+        if (ImGui::Button("Debug"))
+            showViewportDebugTab = !showViewportDebugTab;
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);
         ImGui::Checkbox("Wireframe", &gWireframePreview);
@@ -8673,6 +8678,26 @@ int main(int, char**)
         float vpMaxY = vp->Pos.y + vp->Size.y;
         bool mouseInViewport = (io.MousePos.x >= vpMinX && io.MousePos.x <= vpMaxX &&
                                 io.MousePos.y >= vpMinY && io.MousePos.y <= vpMaxY);
+
+        if (showViewportDebugTab)
+        {
+            ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + 8.0f, vp->Pos.y + topBarH + 8.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.75f);
+            ImGui::Begin("Debug", &showViewportDebugTab,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::Text("Viewport");
+            ImGui::Text("min: %.1f, %.1f", vpMinX, vpMinY);
+            ImGui::Text("max: %.1f, %.1f", vpMaxX, vpMaxY);
+            ImGui::Text("size: %.1f x %.1f", vpMaxX - vpMinX, vpMaxY - vpMinY);
+            ImGui::Separator();
+            ImGui::Text("Editor Camera");
+            ImGui::Text("pos: %.3f, %.3f, %.3f", camPos.x, camPos.y, camPos.z);
+            ImGui::Text("view rot(yaw/pitch): %.2f, %.2f", viewYaw, viewPitch);
+            ImGui::Text("orbit rot(yaw/pitch): %.2f, %.2f", orbitYaw, orbitPitch);
+            ImGui::Text("orbit center: %.3f, %.3f, %.3f", orbitCenter.x, orbitCenter.y, orbitCenter.z);
+            ImGui::End();
+        }
+
         if (ImGui::IsMouseClicked(0) && mouseInViewport)
         {
             glfwFocusWindow(window);

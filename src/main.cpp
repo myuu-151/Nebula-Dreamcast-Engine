@@ -3867,7 +3867,7 @@ int main(int, char**)
                 lastY = my;
 
                 orbitYaw   += (float)dx * orbitSensitivity;
-                orbitPitch += (float)dy * orbitSensitivity;
+                orbitPitch -= (float)dy * orbitSensitivity;
                 if (orbitPitch > 89.0f) orbitPitch = 89.0f;
                 if (orbitPitch < -89.0f) orbitPitch = -89.0f;
 

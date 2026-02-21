@@ -1,45 +1,59 @@
 <p align="center">
-  <img src="docs/nebula-logo.png" alt="Nebula Saturn Engine" width="320" />
+  <img src="docs/nebula-logo.png" alt="Nebula Dreamcast Engine" width="320" />
 </p>
 
-# Nebula Saturn Engine
+# Nebula Dreamcast Engine
 
-**Nebula Saturn Engine** is a 3D game engine + editor targeting **Windows and Sega Saturn**, built on JO Engine.
+**Nebula Dreamcast Engine** is a 3D game engine + editor focused on a practical, shippable workflow for **Windows + Sega Dreamcast**.
+
+It is built for fast iteration: edit in the desktop editor, package for Dreamcast, test quickly on emulator/hardware, repeat.
 
 ## Highlights
-- **Dual-target workflow** (Windows + Saturn)
-- **Editor-first tooling** for scenes and assets
-- **Lightweight codebase**
+- **Dreamcast-first runtime path** with rapid package/rebuild loops
+- **Editor-driven content workflow** (scenes, meshes, textures, materials)
+- **Deterministic asset staging names** for reliable disc lookup
+- **Runtime safety fallbacks** to avoid hard crashes on missing texture refs
+- **Continuous controller orbit/zoom controls** in Dreamcast runtime
 
 ## Current Status
-Early development / active prototyping.
+Active development / prototyping, with a working Dreamcast package flow and hardware-focused iteration.
 
-## Saturn Rendering/Runtime Targets
-- **Dual SH-2 utilization** is a roadmap target (explicit workload split, not single-CPU-only flow).
-- **VDP1 + VDP2 pipeline split** is a roadmap target:
-  - VDP1 for 3D mesh/polygon submission
-  - VDP2 for layered backgrounds/scene planes and display composition
-- Keep Saturn-safe constraints enforced with warnings (texture size/format/slot/VRAM pressure) during rollout.
+## Dreamcast Runtime Notes
+- Scene/mesh/texture staging uses short deterministic names:
+  - Scenes: `Sxxxxx.*`
+  - Meshes: `Mxxxxx.*`
+  - Textures: `Txxxxx.*`
+- Missing scene texture refs can fall back safely at runtime.
+- Missing/unloadable textures use fallback white texture instead of hard exit.
+- Material refs are staged to `data/materials` for packaging parity.
 
 ## Repository Layout
-- `src/` - editor/runtime code
+- `src/` - editor + runtime generator/source code
 - `assets/` - project assets
-- `thirdparty/` - vendored deps (JO Engine, GLFW, ImGui)
+- `thirdparty/` - dependencies/tooling integrations
+- `build_dreamcast/` - generated Dreamcast runtime/package output (project-local)
 
-## Formats
-- **.nebproj** - Project files (**new canonical project extension**)
-- **.nebscene** - Scene files
-- **.nebmesh** - Static mesh (NEBM, indexed, 8.8 fixed, optional UV0)
-- **.nebtex** - Texture (NEBT, RGB555, big-endian)
-- **.nebmat** - Material (text file, `texture=<Assets/...>`)
-- **.nebslots** - StaticMesh material-slot manifest (text file, typically under `Assets/.../nebslot/`, `slotN=<Assets/.../.nebmat>`)
-- **.nebanim** - Vertex animation (NEB0, big-endian, fixed-point, 12 fps; optional delta compression)
+## File Formats
+- **.nebproj** - project file
+- **.nebscene** - scene file
+- **.nebmesh** - mesh format
+- **.nebtex** - texture format
+- **.nebmat** - material reference file
 
-## Build (Windows)
-> TODO: add build steps
+## Build / Package (Dreamcast)
+General flow:
+1. Open project in editor
+2. Export/package Dreamcast build
+3. Test `nebula_dreamcast.cdi` (emulator/hardware)
+4. Iterate
 
-## Build (Saturn)
-> TODO: add build steps
+> Exact environment/toolchain setup may vary by local DreamSDK/KOS install.
+
+## Roadmap Direction
+- Keep editor/runtime parity tight
+- Harden scene/material-slot serialization consistency
+- Continue exporter/import cleanup for geometry stability
+- Preserve pragmatic runtime behavior over feature bloat
 
 ## License
 > TODO: add license

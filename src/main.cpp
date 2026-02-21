@@ -3702,12 +3702,12 @@ int main(int, char**)
     if (!glfwInit())
         return 1;
 
-    float orbitYaw = -141.5f;
-    float orbitPitch = -13.6f;
-    float viewYaw = -141.5f;
-    float viewPitch = -13.6f;
-    float distance = 8.5f;
-    Vec3 orbitCenter = { 15.531f, 7.632f, 14.420f };
+    float orbitYaw = -139.75f;
+    float orbitPitch = -14.3f;
+    float viewYaw = -138.45f;
+    float viewPitch = -12.1f;
+    float distance = 3.2f;
+    Vec3 orbitCenter = { 1.407f, 0.960f, 2.759f };
     Vec3 camPos = { 0.0f, 0.0f, 0.0f };
     double lastX = 0.0, lastY = 0.0;
     bool dragging = false;

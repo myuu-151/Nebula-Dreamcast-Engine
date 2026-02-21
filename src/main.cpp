@@ -7095,7 +7095,6 @@ int main(int, char**)
                                 mc << "  NB_SetMirrorFromIndex(gMirrorLrIndex);\n";
                                 mc << "  int sceneReady = 1;\n";
                                 mc << "  int sceneSwitchReq = 0;\n";
-                                mc << "  int vpDbgFrame = 0;\n";
                                 mc << "  NB_Game_OnStart();\n";
                                 mc << "  {\n";
                                 mc << "    V3 toHead = { gMeshPos[0]-gCamPos[0], (gMeshPos[1] + 1.2f)-gCamPos[1], gMeshPos[2]-gCamPos[2] };\n";
@@ -7230,17 +7229,6 @@ int main(int, char**)
                                 mc << "      v = rot_xyz(v, deg2rad(gMeshRot[0]), deg2rad(gMeshRot[1]), deg2rad(gMeshRot[2]));\n";
                                 mc << "      v.x += gMeshPos[0]; v.y += gMeshPos[1]; v.z += gMeshPos[2];\n";
                                 mc << "      ok[i] = project_point(v, &sv[i]);\n";
-                                mc << "    }\n";
-                                mc << "    if ((vpDbgFrame++ % 45) == 0) {\n";
-                                mc << "      float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f; int vis = 0;\n";
-                                mc << "      for (int i=0;i<kVertCount;++i) if (ok[i]) {\n";
-                                mc << "        if (sv[i].x < minX) minX = sv[i].x; if (sv[i].x > maxX) maxX = sv[i].x;\n";
-                                mc << "        if (sv[i].y < minY) minY = sv[i].y; if (sv[i].y > maxY) maxY = sv[i].y;\n";
-                                mc << "        ++vis;\n";
-                                mc << "      }\n";
-                                mc << "      dbgio_printf(\"[ViewportDbg] view=(%.1f,%.1f) focal=(%.2f,%.2f) vis=%d bbox=(%.1f,%.1f)-(%.1f,%.1f)\\n\",\n";
-                                mc << "        (float)kProjViewW, (float)kProjViewH, kProjFocalX, kProjFocalY, vis,\n";
-                                mc << "        vis?minX:0.0f, vis?minY:0.0f, vis?maxX:0.0f, vis?maxY:0.0f);\n";
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    float mirrorDet = (gMeshScale[0] * (float)gMirrorX) * (gMeshScale[1] * (float)gMirrorY) * (gMeshScale[2] * (float)gMirrorZ);\n";

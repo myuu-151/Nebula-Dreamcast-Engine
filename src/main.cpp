@@ -1135,6 +1135,7 @@ static bool gRenameModalOpen = false;
 static bool gQuitConfirmOpen = false;
 static std::filesystem::path gAssetsCurrentDir;
 static std::filesystem::path gSelectedAssetPath;
+static double gSelectedAssetPathSetTime = 0.0;
 static bool gMaterialInspectorOpen = false;
 static std::filesystem::path gMaterialInspectorPath;
 static bool gNebTexInspectorOpen = false;
@@ -1480,9 +1481,23 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
             bool selected = (gSelectedAssetPath == p);
             if (ImGui::Selectable((name + "/").c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
-                gSelectedAssetPath = p;
-                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                const bool isDouble = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                if (!selected)
                 {
+                    gSelectedAssetPath = p;
+                    gSelectedAssetPathSetTime = ImGui::GetTime();
+                }
+                else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
+                {
+                    gRenamePath = p;
+                    strncpy_s(gRenameBuffer, name.c_str(), sizeof(gRenameBuffer) - 1);
+                    gRenameModalOpen = true;
+                }
+
+                if (isDouble)
+                {
+                    gSelectedAssetPath = p;
+                    gSelectedAssetPathSetTime = ImGui::GetTime();
                     gAssetsCurrentDir = p;
                     ImGui::PopID();
                     break;
@@ -1494,9 +1509,23 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
             bool selected = (gSelectedAssetPath == p);
             if (ImGui::Selectable(name.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
-                gSelectedAssetPath = p;
-                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                const bool isDouble = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                if (!selected)
                 {
+                    gSelectedAssetPath = p;
+                    gSelectedAssetPathSetTime = ImGui::GetTime();
+                }
+                else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
+                {
+                    gRenamePath = p;
+                    strncpy_s(gRenameBuffer, name.c_str(), sizeof(gRenameBuffer) - 1);
+                    gRenameModalOpen = true;
+                }
+
+                if (isDouble)
+                {
+                    gSelectedAssetPath = p;
+                    gSelectedAssetPathSetTime = ImGui::GetTime();
                     if (p.extension() == ".nebscene")
                     {
                         OpenSceneFile(p);

@@ -3706,7 +3706,7 @@ int main(int, char**)
     float orbitPitch = -13.6f;
     float viewYaw = -141.5f;
     float viewPitch = -13.6f;
-    float distance = 10.0f;
+    float distance = 8.5f;
     Vec3 orbitCenter = { 15.531f, 7.632f, 14.420f };
     Vec3 camPos = { 0.0f, 0.0f, 0.0f };
     double lastX = 0.0, lastY = 0.0;

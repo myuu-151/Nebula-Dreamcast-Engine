@@ -6479,6 +6479,15 @@ int main(int, char**)
                                 std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return (char)std::toupper(c); });
                                 return out;
                             };
+                            auto stageShortDiskNameFromAbsKey = [](const std::string& absKey, const char* prefix, int ordinal)->std::string
+                            {
+                                std::string ext = std::filesystem::path(absKey).extension().string();
+                                if (ext.empty()) ext = ".BIN";
+                                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::toupper(c); });
+                                char stem[16];
+                                snprintf(stem, sizeof(stem), "%s%05d", (prefix && *prefix) ? prefix : "A", std::max(0, ordinal));
+                                return std::string(stem) + ext;
+                            };
 
                             std::vector<std::filesystem::path> sourceScenes;
                             {
@@ -6589,9 +6598,10 @@ int main(int, char**)
                             std::string stagingNameCollisionMessage;
                             {
                                 std::unordered_map<std::string, std::string> meshAbsByOutName;
+                                int meshOrdinal = 1;
                                 for (const auto& key : sortedMeshAbs)
                                 {
-                                    std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                    std::string outName = stageShortDiskNameFromAbsKey(key, "M", meshOrdinal++);
                                     auto hit = meshAbsByOutName.find(outName);
                                     if (hit != meshAbsByOutName.end() && hit->second != key)
                                     {
@@ -6610,9 +6620,10 @@ int main(int, char**)
                                 if (!stagingNameCollision)
                                 {
                                     std::unordered_map<std::string, std::string> texAbsByOutName;
+                                    int texOrdinal = 1;
                                     for (const auto& key : sortedTexAbs)
                                     {
-                                        std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                        std::string outName = stageShortDiskNameFromAbsKey(key, "T", texOrdinal++);
                                         auto hit = texAbsByOutName.find(outName);
                                         if (hit != texAbsByOutName.end() && hit->second != key)
                                         {
@@ -6632,10 +6643,11 @@ int main(int, char**)
                                 if (!stagingNameCollision)
                                 {
                                     std::unordered_map<std::string, std::string> sceneAbsByOutName;
+                                    int sceneOrdinal = 1;
                                     for (const auto& ls : loadedScenes)
                                     {
                                         std::string key = normalizeAbsKey(ls.sourcePath);
-                                        std::string outName = stageUpperDiskNameFromAbsKey(key);
+                                        std::string outName = stageShortDiskNameFromAbsKey(key, "S", sceneOrdinal++);
                                         auto hit = sceneAbsByOutName.find(outName);
                                         if (hit != sceneAbsByOutName.end() && hit->second != key)
                                         {

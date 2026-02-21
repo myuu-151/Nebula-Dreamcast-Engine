@@ -6581,7 +6581,7 @@ int main(int, char**)
                                 mc << "static int gMirrorX = -1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = -1;\n";
-                                mc << "static int gMirrorLrIndex = 3;\n";
+                                mc << "static int gMirrorLrIndex = 5;\n";
                                 mc << "static void NB_SetMirrorFromIndex(int idx){\n";
                                 mc << "  idx &= 7;\n";
                                 mc << "  gMirrorX = (idx & 1) ? -1 : 1;\n";

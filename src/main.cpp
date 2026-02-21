@@ -6456,13 +6456,16 @@ int main(int, char**)
                             std::filesystem::path cdScenesDir = cdDataDir / "scenes";
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
                             std::filesystem::path cdTexturesDir = cdDataDir / "textures";
+                            std::filesystem::path cdMatDir = cdDataDir / "mat";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);
                             std::filesystem::remove_all(cdTexturesDir, stageEc);
+                            std::filesystem::remove_all(cdMatDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
+                            std::filesystem::create_directories(cdMatDir);
 
                             auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
                             {
@@ -6535,6 +6538,7 @@ int main(int, char**)
 
                             std::set<std::string> sortedMeshAbs;
                             std::set<std::string> sortedTexAbs;
+                            std::set<std::string> sortedMatAbs;
                             std::unordered_map<std::string, std::string> meshLogicalByAbs;
                             std::unordered_map<std::string, std::string> texLogicalByAbs;
                             for (const auto& ls : loadedScenes)
@@ -6566,6 +6570,11 @@ int main(int, char**)
                                         std::filesystem::path texAbs;
                                         if (matAbs.extension() == ".nebmat")
                                         {
+                                            if (std::filesystem::exists(matAbs))
+                                            {
+                                                std::string mkey = normalizeAbsKey(matAbs);
+                                                sortedMatAbs.insert(mkey);
+                                            }
                                             std::string texRel;
                                             if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty())
                                                 texAbs = std::filesystem::path(gProjectDir) / texRel;
@@ -6638,6 +6647,27 @@ int main(int, char**)
                                         if (ec) continue;
                                         stagedTexByAbs[key] = outName;
                                         texRefMapEntries.push_back({ texLogicalByAbs[key], outName });
+                                    }
+                                }
+                                if (!stagingNameCollision)
+                                {
+                                    std::unordered_map<std::string, std::string> matAbsByOutName;
+                                    int matOrdinal = 1;
+                                    for (const auto& key : sortedMatAbs)
+                                    {
+                                        std::string outName = stageShortDiskNameFromAbsKey(key, "MAT", matOrdinal++);
+                                        auto hit = matAbsByOutName.find(outName);
+                                        if (hit != matAbsByOutName.end() && hit->second != key)
+                                        {
+                                            stagingNameCollision = true;
+                                            stagingNameCollisionMessage = std::string("[DreamcastBuild] ERROR: material staging filename collision: ") + outName +
+                                                " <= " + hit->second + " | " + key;
+                                            break;
+                                        }
+                                        matAbsByOutName[outName] = key;
+                                        std::error_code ec;
+                                        std::filesystem::copy_file(std::filesystem::path(key), cdMatDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                        if (ec) continue;
                                     }
                                 }
                                 if (!stagingNameCollision)

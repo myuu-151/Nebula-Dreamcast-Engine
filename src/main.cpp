@@ -6949,8 +6949,10 @@ int main(int, char**)
                                 mc << "      ok[i] = project_point(v, &sv[i]);\n";
                                 mc << "    }\n";
                                 mc << "\n";
-                                mc << "    const uint16_t *tris = trisNormal;\n";
-                                mc << "    const V3 *triUv = triUvNormal;\n";
+                                mc << "    float mirrorDet = (gMeshScale[0] * (float)gMirrorX) * (gMeshScale[1] * (float)gMirrorY) * (gMeshScale[2] * (float)gMirrorZ);\n";
+                                mc << "    const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
+                                mc << "    const uint16_t *tris = (mirroredWinding && trisFlipped) ? trisFlipped : trisNormal;\n";
+                                mc << "    const V3 *triUv = (mirroredWinding && triUvFlipped) ? triUvFlipped : triUvNormal;\n";
                                 mc << "    for (int t=0;t<kTriCount;++t){\n";
                                 mc << "      int a=tris[t*3+0], b=tris[t*3+1], c=tris[t*3+2];\n";
                                 mc << "      if (!(ok[a] && ok[b] && ok[c])) continue;\n";

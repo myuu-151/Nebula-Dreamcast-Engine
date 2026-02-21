@@ -6570,8 +6570,8 @@ int main(int, char**)
                                 mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
-                                mc << "static int gMirrorX = 1;\n";
-                                mc << "static int gMirrorZ = -1;\n";
+                                mc << "static int gMirrorX = -1;\n";
+                                mc << "static int gMirrorZ = 1;\n";
                                 mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
                                 mc << "static int gSceneIndex = 0;\n";

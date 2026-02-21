@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/star.png" alt="Nebula Dreamcast Engine" width="220" />
+  <img src="docs/nebula-logo.png" alt="Nebula Dreamcast Engine" width="320" />
 </p>
 
 # Nebula Dreamcast Engine

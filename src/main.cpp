@@ -2816,6 +2816,54 @@ static void CleanupNebMeshTopology(NebMesh& mesh)
         if (mesh.hasFaceMaterial) mesh.faceMaterial.swap(newMat);
     }
 
+    // Stabilize triangle stream ordering to reduce frame-to-frame draw conflicts.
+    {
+        const size_t triN = mesh.indices.size() / 3;
+        if (triN > 1)
+        {
+            std::vector<size_t> order(triN);
+            for (size_t i = 0; i < triN; ++i) order[i] = i;
+
+            auto triSortKey = [&](size_t t) {
+                uint16_t a = mesh.indices[t * 3 + 0];
+                uint16_t b = mesh.indices[t * 3 + 1];
+                uint16_t c = mesh.indices[t * 3 + 2];
+                uint16_t m = (mesh.hasFaceMaterial && t < mesh.faceMaterial.size()) ? mesh.faceMaterial[t] : 0;
+                uint16_t lo = std::min<uint16_t>(a, std::min<uint16_t>(b, c));
+                uint16_t hi = std::max<uint16_t>(a, std::max<uint16_t>(b, c));
+                uint16_t mid = (uint16_t)(a + b + c - lo - hi);
+                return std::array<uint16_t, 4>{ m, lo, mid, hi };
+            };
+
+            std::stable_sort(order.begin(), order.end(), [&](size_t l, size_t r) {
+                auto kl = triSortKey(l);
+                auto kr = triSortKey(r);
+                return kl < kr;
+            });
+
+            std::vector<uint16_t> sortedIdx;
+            std::vector<uint16_t> sortedMat;
+            sortedIdx.reserve(mesh.indices.size());
+            if (mesh.hasFaceMaterial) sortedMat.reserve(mesh.faceMaterial.size());
+
+            for (size_t oi = 0; oi < triN; ++oi)
+            {
+                size_t t = order[oi];
+                sortedIdx.push_back(mesh.indices[t * 3 + 0]);
+                sortedIdx.push_back(mesh.indices[t * 3 + 1]);
+                sortedIdx.push_back(mesh.indices[t * 3 + 2]);
+                if (mesh.hasFaceMaterial)
+                {
+                    uint16_t m = (t < mesh.faceMaterial.size()) ? mesh.faceMaterial[t] : 0;
+                    sortedMat.push_back(m);
+                }
+            }
+
+            mesh.indices.swap(sortedIdx);
+            if (mesh.hasFaceMaterial) mesh.faceMaterial.swap(sortedMat);
+        }
+    }
+
     if (mesh.hasFaceRecords && !mesh.faceRecords.empty())
     {
         std::vector<NebFaceRecord> newRecs;

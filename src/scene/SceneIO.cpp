@@ -1,6 +1,7 @@
 #include "SceneIO.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -43,6 +44,45 @@ namespace NebulaScene
             return true;
         }
         return false;
+    }
+
+    static bool RewriteRefTextFileInPlace(const std::filesystem::path& filePath, const std::string& oldRel, const std::string& newRel, bool isDir)
+    {
+        std::ifstream in(filePath);
+        if (!in.is_open()) return false;
+
+        std::vector<std::string> lines;
+        std::string line;
+        bool changed = false;
+        while (std::getline(in, line))
+        {
+            std::string out = line;
+            size_t eq = line.find('=');
+            if (eq != std::string::npos)
+            {
+                std::string key = line.substr(0, eq);
+                std::string val = line.substr(eq + 1);
+                std::string newVal = val;
+                if (RewritePathRefForRename(newVal, oldRel, newRel, isDir))
+                {
+                    out = key + "=" + newVal;
+                    changed = true;
+                }
+            }
+            lines.push_back(out);
+        }
+        in.close();
+
+        if (!changed) return false;
+
+        std::ofstream out(filePath, std::ios::out | std::ios::trunc);
+        if (!out.is_open()) return false;
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            out << lines[i];
+            if (i + 1 < lines.size()) out << "\n";
+        }
+        return true;
     }
 
     void UpdateAssetReferencesForRename(
@@ -112,6 +152,51 @@ namespace NebulaScene
             {
                 std::string tail = selS.substr(oldS.size());
                 selectedAssetPath = std::filesystem::path(newPath.generic_string() + tail);
+            }
+        }
+
+        // Persist rename rewrite across on-disk asset metadata/scenes in the project Assets tree.
+        std::error_code fec;
+        std::filesystem::path assetsRoot = std::filesystem::path(projectDir) / "Assets";
+        if (std::filesystem::exists(assetsRoot, fec) && !fec)
+        {
+            for (auto it = std::filesystem::recursive_directory_iterator(assetsRoot, fec);
+                 !fec && it != std::filesystem::recursive_directory_iterator();
+                 it.increment(fec))
+            {
+                if (fec) break;
+                if (!it->is_regular_file()) continue;
+                const auto& fp = it->path();
+                auto ext = fp.extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+
+                if (ext == ".nebscene")
+                {
+                    SceneData diskScene;
+                    if (!LoadSceneFromPath(fp, diskScene)) continue;
+                    bool diskChanged = false;
+                    for (auto& n : diskScene.nodes)
+                        diskChanged |= RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+                    for (auto& n : diskScene.staticMeshes)
+                    {
+                        diskChanged |= RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+                        diskChanged |= RewritePathRefForRename(n.material, oldRel, newRel, isDir);
+                        diskChanged |= RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+                        for (auto& ms : n.materialSlots)
+                            diskChanged |= RewritePathRefForRename(ms, oldRel, newRel, isDir);
+                    }
+                    for (auto& n : diskScene.node3d)
+                    {
+                        diskChanged |= RewritePathRefForRename(n.script, oldRel, newRel, isDir);
+                        diskChanged |= RewritePathRefForRename(n.primitiveMesh, oldRel, newRel, isDir);
+                    }
+                    if (diskChanged)
+                        SaveSceneToPath(fp, diskScene.nodes, diskScene.staticMeshes, diskScene.cameras, diskScene.node3d);
+                }
+                else if (ext == ".nebmat" || ext == ".nebslots")
+                {
+                    RewriteRefTextFileInPlace(fp, oldRel, newRel, isDir);
+                }
             }
         }
     }

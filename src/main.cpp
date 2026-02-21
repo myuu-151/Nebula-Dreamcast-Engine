@@ -6843,8 +6843,8 @@ int main(int, char**)
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT))  { NB_SetMirrorFromIndex(1); dbgio_printf(\"[Mirror] LEFT: mirror X (X=-1 Y=1 Z=1)\\n\"); }\n";
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_RIGHT)) { NB_SetMirrorFromIndex(4); dbgio_printf(\"[Mirror] RIGHT: mirror Z (X=1 Y=1 Z=-1)\\n\"); }\n";
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_DPAD_DOWN))  { NB_SetMirrorFromIndex(5); dbgio_printf(\"[Mirror] DOWN: mirror XZ (X=-1 Y=1 Z=-1)\\n\"); }\n";
-                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_L)) { NB_SetMirrorFromIndex(gMirrorLrIndex - 1); }\n";
-                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_R)) { NB_SetMirrorFromIndex(gMirrorLrIndex + 1); }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_X)) { NB_SetMirrorFromIndex(gMirrorLrIndex - 1); }\n";
+                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_Y)) { NB_SetMirrorFromIndex(gMirrorLrIndex + 1); }\n";
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_Z)) {\n";
                                 mc << "        sceneSwitchReq = 1;\n";
                                 mc << "        dbgio_printf(\"[NEBULA][DC] Scene switch requested: next\\n\");\n";

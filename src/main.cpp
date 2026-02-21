@@ -1129,6 +1129,9 @@ static bool SaveNebTexFilterMode(const std::filesystem::path& nebtexPath, int fi
 
 static std::filesystem::path gRenamePath;
 static char gRenameBuffer[256] = {};
+static std::filesystem::path gInlineRenamePath;
+static char gInlineRenameBuffer[256] = {};
+static bool gInlineRenameFocus = false;
 static std::filesystem::path gPendingDelete;
 static bool gDoDelete = false;
 static bool gRenameModalOpen = false;
@@ -1289,6 +1292,41 @@ static void UpdateAssetReferencesForRename(const std::filesystem::path& oldPath,
         gNode3DNodes,
         gOpenScenes,
         gSelectedAssetPath);
+}
+
+static void BeginInlineAssetRename(const std::filesystem::path& p, const std::string& displayName)
+{
+    gInlineRenamePath = p;
+    strncpy_s(gInlineRenameBuffer, displayName.c_str(), sizeof(gInlineRenameBuffer) - 1);
+    gInlineRenameFocus = true;
+}
+
+static void CommitInlineAssetRename()
+{
+    if (gInlineRenamePath.empty()) return;
+    std::filesystem::path oldPath = gInlineRenamePath;
+    std::string newName = gInlineRenameBuffer;
+    gInlineRenamePath.clear();
+    gInlineRenameFocus = false;
+
+    if (newName.empty()) return;
+    std::filesystem::path newPath = RenameAssetPath(oldPath, newName);
+    if (!newPath.empty() && newPath != oldPath)
+    {
+        PushUndo({"Rename Asset",
+            [oldPath, newPath]() { if (std::filesystem::exists(newPath)) std::filesystem::rename(newPath, oldPath); },
+            [oldPath, newPath]() { if (std::filesystem::exists(oldPath)) std::filesystem::rename(oldPath, newPath); }
+        });
+        UpdateAssetReferencesForRename(oldPath, newPath);
+        gSelectedAssetPath = newPath;
+        gSelectedAssetPathSetTime = ImGui::GetTime();
+        gViewportToast = "Renamed " + oldPath.stem().string();
+    }
+    else
+    {
+        gViewportToast = "Rename failed";
+    }
+    gViewportToastUntil = glfwGetTime() + 2.0;
 }
 
 static std::string EncodeSceneToken(const std::string& s)
@@ -1479,7 +1517,19 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
         if (entry.is_directory())
         {
             bool selected = (gSelectedAssetPath == p);
-            if (ImGui::Selectable((name + "/").c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+            if (gInlineRenamePath == p)
+            {
+                if (gInlineRenameFocus)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    gInlineRenameFocus = false;
+                }
+                ImGuiInputTextFlags rf = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue;
+                bool submit = ImGui::InputText("##inline_rename", gInlineRenameBuffer, sizeof(gInlineRenameBuffer), rf);
+                if (submit || ImGui::IsItemDeactivatedAfterEdit()) CommitInlineAssetRename();
+                if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape)) { gInlineRenamePath.clear(); gInlineRenameFocus = false; }
+            }
+            else if (ImGui::Selectable((name + "/").c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
                 const bool isDouble = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
                 if (!selected)
@@ -1489,9 +1539,7 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                 }
                 else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
                 {
-                    gRenamePath = p;
-                    strncpy_s(gRenameBuffer, name.c_str(), sizeof(gRenameBuffer) - 1);
-                    gRenameModalOpen = true;
+                    BeginInlineAssetRename(p, name);
                 }
 
                 if (isDouble)
@@ -1507,7 +1555,19 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
         else if (entry.is_regular_file())
         {
             bool selected = (gSelectedAssetPath == p);
-            if (ImGui::Selectable(name.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+            if (gInlineRenamePath == p)
+            {
+                if (gInlineRenameFocus)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    gInlineRenameFocus = false;
+                }
+                ImGuiInputTextFlags rf = ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue;
+                bool submit = ImGui::InputText("##inline_rename", gInlineRenameBuffer, sizeof(gInlineRenameBuffer), rf);
+                if (submit || ImGui::IsItemDeactivatedAfterEdit()) CommitInlineAssetRename();
+                if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape)) { gInlineRenamePath.clear(); gInlineRenameFocus = false; }
+            }
+            else if (ImGui::Selectable(name.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
                 const bool isDouble = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
                 if (!selected)
@@ -1517,9 +1577,7 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                 }
                 else if (!isDouble && (ImGui::GetTime() - gSelectedAssetPathSetTime) >= 0.35)
                 {
-                    gRenamePath = p;
-                    strncpy_s(gRenameBuffer, name.c_str(), sizeof(gRenameBuffer) - 1);
-                    gRenameModalOpen = true;
+                    BeginInlineAssetRename(p, name);
                 }
 
                 if (isDouble)
@@ -1634,9 +1692,7 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
             }
             if (ImGui::MenuItem("Rename"))
             {
-                gRenamePath = p;
-                strncpy_s(gRenameBuffer, name.c_str(), sizeof(gRenameBuffer) - 1);
-                gRenameModalOpen = true;
+                BeginInlineAssetRename(p, name);
             }
             if (ImGui::MenuItem("Duplicate"))
             {

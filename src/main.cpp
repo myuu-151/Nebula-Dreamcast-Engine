@@ -3702,8 +3702,8 @@ int main(int, char**)
     if (!glfwInit())
         return 1;
 
-    float orbitYaw = 45.0f;
-    float orbitPitch = 25.0f;
+    float orbitYaw = -141.5f;
+    float orbitPitch = -13.6f;
     float viewYaw = -141.5f;
     float viewPitch = -13.6f;
     float distance = 10.0f;

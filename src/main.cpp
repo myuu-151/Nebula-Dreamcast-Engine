@@ -7142,8 +7142,8 @@ int main(int, char**)
                                 mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "\n";
-                                mc << "      if (NB_KOS_ButtonPressed(NB_BTN_B) || NB_KOS_ButtonPressed(NB_BTN_Y) || NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT) || NB_KOS_ButtonPressed(NB_BTN_DPAD_RIGHT)) {\n";
-                                mc << "        float ang = (NB_KOS_ButtonPressed(NB_BTN_B) || NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT)) ? kOrbitStep : -kOrbitStep;\n";
+                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_B) || NB_KOS_ButtonDown(NB_BTN_Y) || NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT) || NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) {\n";
+                                mc << "        float ang = (NB_KOS_ButtonDown(NB_BTN_B) || NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT)) ? kOrbitStep : -kOrbitStep;\n";
                                 mc << "        float c = cosf(ang), s = sinf(ang);\n";
                                 mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
                                 mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";

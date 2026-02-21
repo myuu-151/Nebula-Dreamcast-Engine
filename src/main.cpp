@@ -7109,6 +7109,7 @@ int main(int, char**)
                                 mc << "    if (NB_KOS_HasController()) {\n";
                                 mc << "      const float kZoomStep = 0.20f;\n";
                                 mc << "      const float kOrbitStep = 0.06f;\n";
+                                mc << "      const float kOrbitTargetYOffset = 1.2f;\n";
                                 mc << "\n";
                                 mc << "      V3 f = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
                                 mc << "      V3 u = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
@@ -7117,7 +7118,7 @@ int main(int, char**)
                                 mc << "      if (fabsf(dot3(r,r)) < 1e-6f) r = norm3((V3){1,0,0});\n";
                                 mc << "\n";
                                 mc << "      {\n";
-                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1], gMeshPos[2] };\n";
+                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
                                 mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";
                                 mc << "        float dist = sqrtf(dot3(off, off));\n";
                                 mc << "        if (NB_KOS_ButtonPressed(NB_BTN_A)) {\n";
@@ -7137,7 +7138,7 @@ int main(int, char**)
                                 mc << "      if (NB_KOS_ButtonPressed(NB_BTN_B) || NB_KOS_ButtonPressed(NB_BTN_Y) || NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT) || NB_KOS_ButtonPressed(NB_BTN_DPAD_RIGHT)) {\n";
                                 mc << "        float ang = (NB_KOS_ButtonPressed(NB_BTN_B) || NB_KOS_ButtonPressed(NB_BTN_DPAD_LEFT)) ? kOrbitStep : -kOrbitStep;\n";
                                 mc << "        float c = cosf(ang), s = sinf(ang);\n";
-                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1], gMeshPos[2] };\n";
+                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
                                 mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";
                                 mc << "        V3 noff = { off.x * c - off.z * s, off.y, off.x * s + off.z * c };\n";
                                 mc << "        gCamPos[0] = tgt.x + noff.x; gCamPos[1] = tgt.y + noff.y; gCamPos[2] = tgt.z + noff.z;\n";

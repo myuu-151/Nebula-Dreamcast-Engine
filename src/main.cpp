@@ -5358,12 +5358,20 @@ int main(int, char**)
             glRotatef(szRot, 0.0f, 0.0f, 1.0f);
             glScalef(wsx, wsy, wsz);
 
+            auto setWireColorForMat = [&](int faceMat)
+            {
+                if (selected) { glColor3f(1.0f, 1.0f, 1.0f); return; }
+                float r = 0.45f + 0.40f * fabsf(sinf((float)(faceMat * 1.7f + 0.3f)));
+                float g = 0.45f + 0.40f * fabsf(sinf((float)(faceMat * 2.3f + 1.1f)));
+                float b = 0.45f + 0.40f * fabsf(sinf((float)(faceMat * 1.1f + 2.2f)));
+                glColor3f(r, g, b);
+            };
+
             if (gWireframePreview && mesh->hasFaceTopology && !mesh->faceVertexCounts.empty())
             {
                 // Quad/polygon wireframe path: draw polygon boundary edges from source face topology
                 // so quads do not show triangulation diagonals.
                 glDisable(GL_TEXTURE_2D);
-                glColor3f(1.0f, 1.0f, 1.0f);
                 glBegin(GL_LINES);
                 int triCursor = 0;
                 const int triCount = (int)(mesh->indices.size() / 3);
@@ -5373,6 +5381,11 @@ int main(int, char**)
                     if (fv < 3) continue;
                     int faceTriCount = std::max(1, fv - 2);
                     if (triCursor + faceTriCount > triCount) break;
+
+                    int faceMat = 0;
+                    if (mesh->hasFaceMaterial && triCursor >= 0 && triCursor < (int)mesh->faceMaterial.size())
+                        faceMat = (int)mesh->faceMaterial[triCursor];
+                    setWireColorForMat(faceMat);
 
                     std::vector<uint16_t> poly;
                     poly.reserve((size_t)fv);
@@ -5402,7 +5415,7 @@ int main(int, char**)
             }
             else
             {
-                glColor3f(1.0f, 1.0f, 1.0f);
+                if (gWireframePreview) glDisable(GL_TEXTURE_2D);
                 glBegin(GL_TRIANGLES);
                 // Force first triangle to bind from its own face material slot.
                 GLuint boundTex = 0xFFFFFFFFu;
@@ -5419,6 +5432,8 @@ int main(int, char**)
                     if (mesh->hasFaceMaterial && triIndex >= 0 && triIndex < (int)mesh->faceMaterial.size())
                         faceMat = (int)mesh->faceMaterial[triIndex];
                     MatState triState = getMatState(faceMat);
+                    if (gWireframePreview) setWireColorForMat(faceMat);
+                    else glColor3f(1.0f, 1.0f, 1.0f);
                     if (triState.tex != boundTex)
                     {
                         glEnd();
@@ -5598,13 +5613,6 @@ int main(int, char**)
                     orbitCenter = playSavedOrbitCenter;
                 }
             }
-        }
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(baseY + 4.0f);
-        if (ImGui::Button("Generate"))
-        {
-            gRequestDreamcastGenerate = true;
-            ImGui::OpenPopup("PackageMenu");
         }
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);

@@ -6882,7 +6882,8 @@ int main(int, char**)
                                 mc << "  if (cp.z <= kProjNear) return 0;\n";
                                 mc << "  out->x = (kProjViewW * 0.5f) - (cp.x / cp.z) * kProjFocalX;\n";
                                 mc << "  out->y = (kProjViewH * 0.5f) - (cp.y / cp.z) * kProjFocalY;\n";
-                                mc << "  out->z = kProjNear + cp.z * 0.01f;\n";
+                                mc << "  /* Perspective-like depth for PVR: near should produce larger z when using GREATER compare. */\n";
+                                mc << "  out->z = 1.0f / (cp.z + 1.0f);\n";
                                 mc << "  return 1;\n";
                                 mc << "}\n";
                                 mc << "\n";
@@ -7038,6 +7039,9 @@ int main(int, char**)
                                 mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
                                 mc << "    pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, f);\n";
+                                mc << "    cxt.gen.culling = PVR_CULLING_NONE;\n";
+                                mc << "    cxt.depth.comparison = PVR_DEPTHCMP_GREATER;\n";
+                                mc << "    cxt.depth.write = PVR_DEPTHWRITE_ENABLE;\n";
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  NB_KOS_InitInput();\n";
@@ -7135,6 +7139,9 @@ int main(int, char**)
                                 mc << "            uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
                                 mc << "            pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
                                 mc << "            pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, slotW[s], slotH[s], tx, f);\n";
+                                mc << "            cxt.gen.culling = PVR_CULLING_NONE;\n";
+                                mc << "            cxt.depth.comparison = PVR_DEPTHCMP_GREATER;\n";
+                                mc << "            cxt.depth.write = PVR_DEPTHWRITE_ENABLE;\n";
                                 mc << "            pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "          }\n";
                                 mc << "          sceneReady = texOk;\n";

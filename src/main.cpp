@@ -63,6 +63,47 @@ static std::filesystem::path GetExecutableDirectory()
     return p.parent_path();
 }
 
+static std::filesystem::path ResolveEditorAssetPath(const std::filesystem::path& relPath)
+{
+    std::vector<std::filesystem::path> roots;
+    auto addRootChain = [&](std::filesystem::path base)
+    {
+        std::error_code ec;
+        for (int i = 0; i < 7 && !base.empty(); ++i)
+        {
+            if (std::filesystem::exists(base, ec) && !ec)
+                roots.push_back(base);
+            std::filesystem::path parent = base.parent_path();
+            if (parent == base) break;
+            base = parent;
+        }
+    };
+
+    addRootChain(std::filesystem::current_path());
+    addRootChain(GetExecutableDirectory());
+
+    std::vector<std::filesystem::path> relCandidates;
+    relCandidates.push_back(relPath);
+
+    auto relGeneric = relPath.generic_string();
+    if (relGeneric.rfind("assets/", 0) == 0)
+        relCandidates.push_back(std::filesystem::path("Assets") / relPath.lexically_relative("assets"));
+    else if (relGeneric.rfind("Assets/", 0) == 0)
+        relCandidates.push_back(std::filesystem::path("assets") / relPath.lexically_relative("Assets"));
+
+    std::error_code ec;
+    for (const auto& root : roots)
+    {
+        for (const auto& rel : relCandidates)
+        {
+            std::filesystem::path p = root / rel;
+            if (std::filesystem::exists(p, ec) && !ec)
+                return p;
+        }
+    }
+    return {};
+}
+
 // Camera basis helpers moved to src/camera/Camera3D.
 
 static std::string gProjectDir;
@@ -3858,7 +3899,9 @@ int main(int, char**)
     {
         UINT iw = 0, ih = 0;
         std::vector<unsigned char> icoBGRA;
-        if (LoadImageWIC(L"C:/Users/NoSig/Documents/SaturnDev/NebulaEngine/assets/nebula_logo.ico", iw, ih, icoBGRA))
+        std::filesystem::path iconPath = ResolveEditorAssetPath("assets/nebula_logo.ico");
+        std::wstring iconW = iconPath.wstring();
+        if (!iconW.empty() && LoadImageWIC(iconW.c_str(), iw, ih, icoBGRA))
         {
             std::vector<unsigned char> icoRGBA(icoBGRA.size());
             for (size_t i = 0; i + 3 < icoBGRA.size(); i += 4)
@@ -3907,9 +3950,21 @@ int main(int, char**)
 
     ImGui::GetIO().FontGlobalScale = uiScale;
 
-    GLuint nebulaTex = LoadTextureWIC(L"C:/Users/NoSig/Documents/SaturnDev/Nebula/assets/nebula.png");
+    std::filesystem::path nebulaTexPath = ResolveEditorAssetPath("assets/nebula.png");
+    std::filesystem::path uiIconPath = ResolveEditorAssetPath("assets/nebula_logo.ico");
+    GLuint nebulaTex = 0;
+    if (!nebulaTexPath.empty())
+    {
+        std::wstring w = nebulaTexPath.wstring();
+        nebulaTex = LoadTextureWIC(w.c_str());
+    }
     GLuint flareTex = 0;
-    GLuint uiIconTex = LoadTextureWIC(L"C:/Users/NoSig/Documents/SaturnDev/NebulaEngine/assets/nebula_logo.ico");
+    GLuint uiIconTex = 0;
+    if (!uiIconPath.empty())
+    {
+        std::wstring w = uiIconPath.wstring();
+        uiIconTex = LoadTextureWIC(w.c_str());
+    }
 
     while (!glfwWindowShouldClose(window))
     {

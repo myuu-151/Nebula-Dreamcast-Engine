@@ -7255,8 +7255,10 @@ int main(int, char**)
                                 mc << "      pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
-                                mc << "    uint32 layoutFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
+                                mc << "    int isPow2W = (tw > 0) && ((tw & (tw - 1)) == 0);\n";
+                                mc << "    int isPow2H = (th > 0) && ((th & (th - 1)) == 0);\n";
+                                mc << "    uint32 layoutFmt = (isPow2W && isPow2H) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
+                                mc << "    uint32 strideFmt = (layoutFmt == PVR_TXRFMT_TWIDDLED) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
                                 mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
                                 mc << "    pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
                                 mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, f);\n";
@@ -7411,8 +7413,10 @@ int main(int, char**)
                                 mc << "            slotTx[s] = tx;\n";
                                 mc << "            pvr_txr_load_ex((void*)buf, tx, slotW[s], slotH[s], PVR_TXRLOAD_16BPP);\n";
                                 mc << "            pvr_poly_cxt_t cxt;\n";
-                                mc << "            uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
-                                mc << "            uint32 layoutFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
+                                mc << "            int isPow2W = (slotW[s] > 0) && ((slotW[s] & (slotW[s] - 1)) == 0);\n";
+                                mc << "            int isPow2H = (slotH[s] > 0) && ((slotH[s] & (slotH[s] - 1)) == 0);\n";
+                                mc << "            uint32 layoutFmt = (isPow2W && isPow2H) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
+                                mc << "            uint32 strideFmt = (layoutFmt == PVR_TXRFMT_TWIDDLED) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
                                 mc << "            uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
                                 mc << "            pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
                                 mc << "            pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, slotW[s], slotH[s], tx, f);\n";

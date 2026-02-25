@@ -7252,7 +7252,7 @@ int main(int, char**)
                                 mc << "    if (!tx) tx = slotTx[0];\n";
                                 mc << "    else {\n";
                                 mc << "      slotTx[s] = tx;\n";
-                                mc << "      pvr_txr_load((void*)buf, tx, (size_t)tw*(size_t)th*2);\n";
+                                mc << "      pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
                                 mc << "    }\n";
                                 mc << "    pvr_poly_cxt_t cxt;\n";
                                 mc << "    uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
@@ -7409,7 +7409,7 @@ int main(int, char**)
                                 mc << "            pvr_ptr_t tx = pvr_mem_malloc(slotW[s]*slotH[s]*2);\n";
                                 mc << "            if (!tx) { texOk = 0; dbgio_printf(\"[NEBULA][DC] VRAM alloc failed on slot %d\\n\", s); break; }\n";
                                 mc << "            slotTx[s] = tx;\n";
-                                mc << "            pvr_txr_load((void*)buf, tx, (size_t)slotW[s]*(size_t)slotH[s]*2);\n";
+                                mc << "            pvr_txr_load_ex((void*)buf, tx, slotW[s], slotH[s], PVR_TXRLOAD_16BPP);\n";
                                 mc << "            pvr_poly_cxt_t cxt;\n";
                                 mc << "            uint32 strideFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
                                 mc << "            uint32 layoutFmt = (slotFmt[s] == 0) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";

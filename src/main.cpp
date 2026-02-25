@@ -5638,6 +5638,10 @@ int main(int, char**)
             ImGui::OpenPopup("EditMenu");
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);
+        if (ImGui::Button("Tools"))
+            ImGui::OpenPopup("ToolsMenu");
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(baseY + 4.0f);
         if (ImGui::Button("Package"))
             ImGui::OpenPopup("PackageMenu");
         ImGui::SameLine();
@@ -5973,6 +5977,12 @@ int main(int, char**)
             ImGui::MenuItem("Cut", "Ctrl+X");
             ImGui::MenuItem("Copy", "Ctrl+C");
             ImGui::MenuItem("Paste", "Ctrl+V");
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopup("ToolsMenu"))
+        {
+            ImGui::MenuItem("VMU Tool", nullptr, false, false);
             ImGui::EndPopup();
         }
 

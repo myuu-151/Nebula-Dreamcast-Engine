@@ -7244,7 +7244,7 @@ int main(int, char**)
                                 mc << "      } else {\n";
                                 mc << "        buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
                                 mc << "        slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs; slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1); slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
-                                mc << "        slotFilter[s]=(uint8_t)diskTex[s].filter;\n";
+                                mc << "        /* keep generated per-slot filter setting; do not override from diskTex metadata */\n";
                                 mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "    int tw = slotW[s], th = slotH[s];\n";
@@ -7403,7 +7403,7 @@ int main(int, char**)
                                 mc << "                slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs;\n";
                                 mc << "                slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1);\n";
                                 mc << "                slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
-                                mc << "                slotFilter[s]=(uint8_t)diskTex[s].filter;\n";
+                                mc << "                /* keep generated per-slot filter setting; do not override from diskTex metadata */\n";
                                 mc << "              }\n";
                                 mc << "            }\n";
                                 mc << "            pvr_ptr_t tx = pvr_mem_malloc(slotW[s]*slotH[s]*2);\n";

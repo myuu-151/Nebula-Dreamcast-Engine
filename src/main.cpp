@@ -11985,10 +11985,10 @@ RenderImGuiOnly:
                 }
                 else if (!gVmuDrawMode)
                 {
-                    // No active layer at this frame: clear preview grid.
+                    // No active layer at this frame: clear preview grid only.
+                    // Keep linked/loaded asset pointers so linking still works after preview clear.
                     gVmuHasImage = true;
                     gVmuMono.fill(0);
-                    gVmuAssetPath.clear();
                 }
 
                 ImGui::SameLine(0.0f, splitGap);

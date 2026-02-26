@@ -11558,6 +11558,15 @@ RenderImGuiOnly:
                     loaded = true;
                 }
 
+                if (!loaded && !gVmuAssetPath.empty())
+                {
+                    // Fallback: current loaded PNG can be used as a link source even before assigning to a layer.
+                    gVmuLinkedPngPath = gVmuAssetPath;
+                    std::string err;
+                    if (LoadVmuPngToMono(gVmuLinkedPngPath, err)) gViewportToast = "VMU Tool: loaded current PNG";
+                    else gViewportToast = err;
+                    loaded = true;
+                }
                 if (!loaded)
                 {
                     gViewportToast = "VMU Tool: no linked PNG/VMUAnim";
@@ -11726,7 +11735,11 @@ RenderImGuiOnly:
                                     else
                                     {
                                         std::string err;
-                                        if (LoadVmuPngToMono(p.string(), err)) gViewportToast = "VMU Tool: loaded " + p.filename().string();
+                                        if (LoadVmuPngToMono(p.string(), err))
+                                        {
+                                            gVmuLinkedPngPath = p.string(); // treat selected PNG as current linked source
+                                            gViewportToast = "VMU Tool: loaded " + p.filename().string();
+                                        }
                                         else gViewportToast = err;
                                     }
                                     gViewportToastUntil = glfwGetTime() + 2.0;

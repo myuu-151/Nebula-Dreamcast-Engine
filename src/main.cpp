@@ -11983,10 +11983,10 @@ RenderImGuiOnly:
                         LoadVmuPngToMono(activeLayerAsset, err);
                     }
                 }
-                else if (!gVmuDrawMode)
+                else if (!gVmuDrawMode && gVmuCurrentLoadedType == 2)
                 {
-                    // No active layer at this frame: clear preview grid only.
-                    // Keep linked/loaded asset pointers so linking still works after preview clear.
+                    // No active VMUAnim layer at this frame: clear preview grid only for VMUAnim mode.
+                    // PNG mode should keep showing the selected PNG.
                     gVmuHasImage = true;
                     gVmuMono.fill(0);
                 }

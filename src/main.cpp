@@ -179,6 +179,28 @@ static bool gNodeRenameOpen = false;
 
 static std::string gViewportToast;
 static double gViewportToastUntil = 0.0;
+static bool gShowVmuTool = false;
+static bool gVmuHasImage = false;
+static bool gVmuLoadOnBoot = false;
+static std::string gVmuAssetPath;
+struct VmuAnimLayer { std::string name; bool visible = true; int frameStart = 0; int frameEnd = 0; std::string linkedAsset; };
+static std::vector<VmuAnimLayer> gVmuAnimLayers = { {"Layer 1", true, 0, 0} };
+static int gVmuAnimLayerSel = 0;
+static int gVmuAnimTotalFrames = 24;
+static int gVmuAnimPlayhead = 0;
+static bool gVmuAnimPlaying = false;
+static bool gVmuAnimLoop = false;
+static int gVmuAnimSpeedMode = 1; // 0=slow, 1=normal, 2=fast
+static double gVmuAnimAccum = 0.0;
+static bool gVmuDrawMode = false;
+static int gVmuCurrentLoadedType = 0; // 0=none,1=png,2=vmuanim
+static std::string gVmuLinkedPngPath;
+static std::string gVmuLinkedAnimPath;
+static bool gVmuStrokeActive = false;
+static int gVmuLastDrawX = -1;
+static int gVmuLastDrawY = -1;
+static std::vector<std::array<uint8_t, 48 * 32>> gVmuUndoStack;
+static std::array<uint8_t, 48 * 32> gVmuMono = {};
 
 static bool gHideUnselectedWireframes = false;
 
@@ -1987,6 +2009,111 @@ static GLuint LoadTextureWIC(const wchar_t* path)
     return tex;
 }
 
+static bool SaveVmuMonoPng(const std::filesystem::path& outPath, const std::array<uint8_t, 48 * 32>& mono)
+{
+#if defined(_WIN32)
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* encoder = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    IPropertyBag2* props = nullptr;
+
+    auto Cleanup = [&]() {
+        if (props) props->Release();
+        if (frame) frame->Release();
+        if (encoder) encoder->Release();
+        if (stream) stream->Release();
+        if (factory) factory->Release();
+        if (SUCCEEDED(hr)) CoUninitialize();
+    };
+
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(factory->CreateStream(&stream)))
+    {
+        Cleanup();
+        return false;
+    }
+
+    std::wstring wpath = outPath.wstring();
+    if (FAILED(stream->InitializeFromFilename(wpath.c_str(), GENERIC_WRITE)))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(encoder->Initialize(stream, WICBitmapEncoderNoCache)))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(encoder->CreateNewFrame(&frame, &props)))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(frame->Initialize(props)))
+    {
+        Cleanup();
+        return false;
+    }
+
+    UINT w = 48, h = 32;
+    if (FAILED(frame->SetSize(w, h)))
+    {
+        Cleanup();
+        return false;
+    }
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+    if (FAILED(frame->SetPixelFormat(&fmt)))
+    {
+        Cleanup();
+        return false;
+    }
+
+    std::vector<uint8_t> bgra((size_t)w * (size_t)h * 4u, 255u);
+    for (UINT y = 0; y < h; ++y)
+    {
+        for (UINT x = 0; x < w; ++x)
+        {
+            const size_t pi = ((size_t)y * (size_t)w + (size_t)x);
+            const uint8_t on = mono[pi] ? 0u : 255u;
+            const size_t i = pi * 4u;
+            bgra[i + 0] = on;
+            bgra[i + 1] = on;
+            bgra[i + 2] = on;
+            bgra[i + 3] = 255u;
+        }
+    }
+
+    if (FAILED(frame->WritePixels(h, w * 4u, (UINT)bgra.size(), bgra.data())))
+    {
+        Cleanup();
+        return false;
+    }
+    if (FAILED(frame->Commit()) || FAILED(encoder->Commit()))
+    {
+        Cleanup();
+        return false;
+    }
+
+    Cleanup();
+    return true;
+#else
+    (void)outPath;
+    (void)mono;
+    return false;
+#endif
+}
+
 static bool ExportNebTexturePNG(const std::filesystem::path& pngPath, const std::filesystem::path& outPath, std::string& warning)
 {
     UINT w = 0, h = 0;
@@ -2229,6 +2356,221 @@ static std::string PickFbxFileDialog(const char* title)
 #else
     return "";
 #endif
+}
+
+static std::string PickPngFileDialog(const char* title)
+{
+#if defined(_WIN32)
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IFileDialog* pfd = nullptr;
+    std::string result;
+
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd))))
+    {
+        DWORD options = 0;
+        pfd->GetOptions(&options);
+        pfd->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        if (title) pfd->SetTitle(std::wstring(title, title + strlen(title)).c_str());
+
+        COMDLG_FILTERSPEC filters[] = {
+            { L"PNG Files", L"*.png" },
+            { L"All Files", L"*.*" }
+        };
+        pfd->SetFileTypes(2, filters);
+        pfd->SetDefaultExtension(L"png");
+
+        if (SUCCEEDED(pfd->Show(nullptr)))
+        {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(pfd->GetResult(&item)) && item)
+            {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+                {
+                    int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+                    if (len > 0)
+                    {
+                        std::string utf8(len - 1, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8.data(), len, nullptr, nullptr);
+                        result = utf8;
+                    }
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        pfd->Release();
+    }
+
+    if (SUCCEEDED(hr)) CoUninitialize();
+    return result;
+#else
+    return "";
+#endif
+}
+
+static bool LoadVmuPngToMono(const std::string& path, std::string& outErr)
+{
+    UINT iw = 0, ih = 0;
+    std::vector<unsigned char> bgra;
+    std::wstring w = std::filesystem::path(path).wstring();
+    if (!LoadImageWIC(w.c_str(), iw, ih, bgra))
+    {
+        outErr = "VMU Tool: failed to load PNG";
+        return false;
+    }
+    if (iw != 48 || ih != 32)
+    {
+        outErr = "VMU Tool: PNG must be exactly 48x32";
+        return false;
+    }
+
+    for (UINT y = 0; y < 32; ++y)
+    {
+        for (UINT x = 0; x < 48; ++x)
+        {
+            size_t i = ((size_t)y * (size_t)iw + (size_t)x) * 4u;
+            unsigned char b = bgra[i + 0];
+            unsigned char g = bgra[i + 1];
+            unsigned char r = bgra[i + 2];
+            unsigned char a = bgra[i + 3];
+            unsigned char lum = (unsigned char)((30u * r + 59u * g + 11u * b) / 100u);
+            gVmuMono[(size_t)y * 48u + (size_t)x] = (a > 127 && lum < 128) ? 1 : 0;
+        }
+    }
+
+    gVmuHasImage = true;
+    gVmuAssetPath = path;
+    gVmuCurrentLoadedType = 1;
+    return true;
+}
+
+static std::string PickVmuFrameDataDialog(const char* title)
+{
+#if defined(_WIN32)
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IFileDialog* pfd = nullptr;
+    std::string result;
+
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd))))
+    {
+        DWORD options = 0;
+        pfd->GetOptions(&options);
+        pfd->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        if (title) pfd->SetTitle(std::wstring(title, title + strlen(title)).c_str());
+
+        COMDLG_FILTERSPEC filters[] = {
+            { L"VMU Frame Data", L"*.vmuanim" },
+            { L"All Files", L"*.*" }
+        };
+        pfd->SetFileTypes(2, filters);
+        pfd->SetDefaultExtension(L"vmuanim");
+
+        if (SUCCEEDED(pfd->Show(nullptr)))
+        {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(pfd->GetResult(&item)) && item)
+            {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+                {
+                    int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+                    if (len > 0)
+                    {
+                        std::string utf8(len - 1, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, path, -1, utf8.data(), len, nullptr, nullptr);
+                        result = utf8;
+                    }
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        pfd->Release();
+    }
+
+    if (SUCCEEDED(hr)) CoUninitialize();
+    return result;
+#else
+    return "";
+#endif
+}
+
+static bool SaveVmuFrameData(const std::filesystem::path& outPath)
+{
+    std::ofstream out(outPath, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+    out << "VMUANIM 1\n";
+    out << "TOTAL_FRAMES\t" << gVmuAnimTotalFrames << "\n";
+    out << "PLAYHEAD\t" << gVmuAnimPlayhead << "\n";
+    out << "LOOP\t" << (gVmuAnimLoop ? 1 : 0) << "\n";
+    out << "SPEED_MODE\t" << gVmuAnimSpeedMode << "\n";
+    out << "LAYER_COUNT\t" << gVmuAnimLayers.size() << "\n";
+    for (const auto& l : gVmuAnimLayers)
+    {
+        std::string nm = l.name;
+        for (char& c : nm) if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+        out << "LAYER\t" << nm << "\t" << (l.visible ? 1 : 0) << "\t" << l.frameStart << "\t" << l.frameEnd << "\t" << l.linkedAsset << "\n";
+    }
+    return true;
+}
+
+static bool LoadVmuFrameData(const std::filesystem::path& inPath)
+{
+    std::ifstream in(inPath);
+    if (!in.is_open()) return false;
+
+    std::vector<VmuAnimLayer> loadedLayers;
+    int loadedFrames = 24;
+    int loadedPlayhead = 0;
+    int loadedLoop = 0;
+    int loadedSpeedMode = 1;
+    std::string line;
+    bool headerOk = false;
+
+    while (std::getline(in, line))
+    {
+        if (line.rfind("VMUANIM ", 0) == 0) { headerOk = true; continue; }
+        if (line.rfind("TOTAL_FRAMES\t", 0) == 0) { loadedFrames = atoi(line.c_str() + 13); continue; }
+        if (line.rfind("PLAYHEAD\t", 0) == 0) { loadedPlayhead = atoi(line.c_str() + 9); continue; }
+        if (line.rfind("LOOP\t", 0) == 0) { loadedLoop = atoi(line.c_str() + 5); continue; }
+        if (line.rfind("SPEED_MODE\t", 0) == 0) { loadedSpeedMode = atoi(line.c_str() + 11); continue; }
+        if (line.rfind("LAYER\t", 0) == 0)
+        {
+            std::vector<std::string> parts;
+            size_t start = 0;
+            while (start <= line.size())
+            {
+                size_t p = line.find('\t', start);
+                if (p == std::string::npos) { parts.push_back(line.substr(start)); break; }
+                parts.push_back(line.substr(start, p - start));
+                start = p + 1;
+            }
+            if (parts.size() >= 6)
+            {
+                VmuAnimLayer l;
+                l.name = parts[1];
+                l.visible = (atoi(parts[2].c_str()) != 0);
+                l.frameStart = atoi(parts[3].c_str());
+                l.frameEnd = atoi(parts[4].c_str());
+                l.linkedAsset = parts[5];
+                loadedLayers.push_back(l);
+            }
+        }
+    }
+
+    if (!headerOk) return false;
+    if (loadedFrames < 1) loadedFrames = 1;
+    if (loadedLayers.empty()) loadedLayers.push_back({ "Layer 1", true, 0, 0, "" });
+
+    gVmuAnimTotalFrames = loadedFrames;
+    gVmuAnimPlayhead = std::max(0, std::min(loadedPlayhead, gVmuAnimTotalFrames - 1));
+    gVmuAnimLoop = (loadedLoop != 0);
+    gVmuAnimSpeedMode = std::max(0, std::min(loadedSpeedMode, 2));
+    gVmuAnimLayers = loadedLayers;
+    gVmuAnimLayerSel = 0;
+    gVmuCurrentLoadedType = 2;
+    return true;
 }
 
 static std::vector<std::string> PickImportAssetDialog(const char* title)
@@ -4141,6 +4483,13 @@ int main(int, char**)
         glDepthMask(GL_TRUE);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
+        if (gShowVmuTool)
+        {
+            glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+            goto RenderImGuiOnly;
+        }
+
         // Background layer (sky sphere) - rendered after view matrix
 
         // Camera
@@ -5604,6 +5953,7 @@ int main(int, char**)
         }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
+RenderImGuiOnly:
         // ImGui
         ImGui_ImplOpenGL2_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -5638,7 +5988,7 @@ int main(int, char**)
             ImGui::OpenPopup("EditMenu");
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);
-        if (ImGui::Button("Tools"))
+        if (ImGui::Button("VMU"))
             ImGui::OpenPopup("ToolsMenu");
         ImGui::SameLine();
         ImGui::SetCursorPosY(baseY + 4.0f);
@@ -5699,8 +6049,15 @@ int main(int, char**)
         ImGui::SameLine();
         if (ImGui::Button("X", ImVec2(btnW, btnH)))
         {
-            if (HasUnsavedProjectChanges()) gQuitConfirmOpen = true;
-            else glfwSetWindowShouldClose(window, GLFW_TRUE);
+            if (gShowVmuTool)
+            {
+                gShowVmuTool = false;
+            }
+            else
+            {
+                if (HasUnsavedProjectChanges()) gQuitConfirmOpen = true;
+                else glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
         }
         ImGui::PopStyleColor(3);
 
@@ -5982,7 +6339,10 @@ int main(int, char**)
 
         if (ImGui::BeginPopup("ToolsMenu"))
         {
-            ImGui::MenuItem("VMU Tool", nullptr, false, false);
+            if (ImGui::MenuItem("VMU Tool"))
+            {
+                gShowVmuTool = true;
+            }
             ImGui::EndPopup();
         }
 
@@ -6971,8 +7331,127 @@ int main(int, char**)
                             std::ofstream mc(runtimeCPath, std::ios::out | std::ios::trunc);
                             if (mc.is_open())
                             {
+                                std::array<uint8_t, 48 * 32 / 8> vmuBootPacked{};
+                                std::array<uint8_t, 48 * 32> vmuSourceMono = gVmuMono;
+                                bool vmuSourceReady = gVmuHasImage;
+                                if (gVmuLoadOnBoot)
+                                {
+                                    // Runtime source selection from persistent links: PNG link first, then linked FrameData layer range.
+                                    std::string vmuErr;
+                                    if (!gVmuLinkedPngPath.empty())
+                                    {
+                                        if (LoadVmuPngToMono(gVmuLinkedPngPath, vmuErr))
+                                        {
+                                            vmuSourceMono = gVmuMono;
+                                            vmuSourceReady = gVmuHasImage;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (!gVmuLinkedAnimPath.empty())
+                                        {
+                                            LoadVmuFrameData(gVmuLinkedAnimPath);
+                                        }
+                                        std::string activeLayerAsset;
+                                        for (int li = 0; li < (int)gVmuAnimLayers.size(); ++li)
+                                        {
+                                            const VmuAnimLayer& l = gVmuAnimLayers[(size_t)li];
+                                            if (!l.visible || l.linkedAsset.empty()) continue;
+                                            if (gVmuAnimPlayhead < l.frameStart || gVmuAnimPlayhead > l.frameEnd) continue;
+                                            activeLayerAsset = l.linkedAsset;
+                                        }
+                                        if (!activeLayerAsset.empty() && LoadVmuPngToMono(activeLayerAsset, vmuErr))
+                                        {
+                                            vmuSourceMono = gVmuMono;
+                                            vmuSourceReady = gVmuHasImage;
+                                        }
+                                    }
+                                }
+
+                                // Build baked VMU animation frames from linked layer ranges for Dreamcast runtime.
+                                std::vector<std::array<uint8_t, 48 * 32 / 8>> vmuAnimPacked;
+                                int vmuAnimEnabled = 0;
+                                int vmuAnimFrameCount = std::max(1, gVmuAnimTotalFrames);
+                                int vmuAnimLoopEnabled = gVmuAnimLoop ? 1 : 0;
+                                int vmuAnimSpeedCode = std::max(0, std::min(gVmuAnimSpeedMode, 2));
+                                {
+                                    auto savedMono = gVmuMono;
+                                    bool savedHas = gVmuHasImage;
+                                    std::string savedPath = gVmuAssetPath;
+
+                                    bool hasAnyLinkedLayer = false;
+                                    for (const auto& l : gVmuAnimLayers)
+                                        if (!l.linkedAsset.empty() && l.visible) { hasAnyLinkedLayer = true; break; }
+
+                                    if (gVmuLoadOnBoot && hasAnyLinkedLayer)
+                                    {
+                                        vmuAnimEnabled = 1;
+                                        vmuAnimPacked.resize((size_t)vmuAnimFrameCount);
+                                        for (int f = 0; f < vmuAnimFrameCount; ++f)
+                                        {
+                                            std::array<uint8_t, 48 * 32 / 8> out{};
+                                            std::string activeAsset;
+                                            for (int li = 0; li < (int)gVmuAnimLayers.size(); ++li)
+                                            {
+                                                const VmuAnimLayer& l = gVmuAnimLayers[(size_t)li];
+                                                if (!l.visible || l.linkedAsset.empty()) continue;
+                                                if (f < l.frameStart || f > l.frameEnd) continue;
+                                                activeAsset = l.linkedAsset;
+                                            }
+
+                                            if (!activeAsset.empty())
+                                            {
+                                                std::string err;
+                                                if (LoadVmuPngToMono(activeAsset, err))
+                                                {
+                                                    for (int py = 0; py < 32; ++py)
+                                                    {
+                                                        for (int px = 0; px < 48; ++px)
+                                                        {
+                                                            if (gVmuMono[(size_t)py * 48u + (size_t)px])
+                                                            {
+                                                                const int dstY = 31 - py;
+                                                                const int dstX = 47 - px;
+                                                                const int bi = dstY * 6 + (dstX >> 3);
+                                                                const int bit = 7 - (dstX & 7);
+                                                                out[(size_t)bi] |= (uint8_t)(1u << bit);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            vmuAnimPacked[(size_t)f] = out;
+                                        }
+                                    }
+
+                                    gVmuMono = savedMono;
+                                    gVmuHasImage = savedHas;
+                                    gVmuAssetPath = savedPath;
+                                }
+
+                                const int vmuBootEnabled = (gVmuLoadOnBoot && vmuSourceReady) ? 1 : 0;
+                                if (vmuBootEnabled)
+                                {
+                                    for (int py = 0; py < 32; ++py)
+                                    {
+                                        for (int px = 0; px < 48; ++px)
+                                        {
+                                            if (vmuSourceMono[(size_t)py * 48u + (size_t)px])
+                                            {
+                                                const int dstY = 31 - py; // VMU LCD memory is vertically inverted vs editor preview.
+                                                const int dstX = 47 - px; // VMU LCD horizontal orientation fix.
+                                                const int bi = dstY * 6 + (dstX >> 3);
+                                                const int bit = 7 - (dstX & 7);
+                                                vmuBootPacked[(size_t)bi] |= (uint8_t)(1u << bit);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 mc << "#include <kos.h>\n";
                                 mc << "#include <dc/pvr.h>\n";
+                                mc << "#include <dc/maple.h>\n";
+                                mc << "#include <dc/maple/vmu.h>\n";
                                 mc << "#include <math.h>\n";
                                 mc << "#include <stdio.h>\n";
                                 mc << "#include <stdlib.h>\n";
@@ -7024,6 +7503,65 @@ int main(int, char**)
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = -1;\n";
                                 mc << "static int gMirrorLrIndex = 5;\n";
+                                mc << "static const int kVmuLoadOnBoot = " << vmuBootEnabled << ";\n";
+                                mc << "static const uint8_t kVmuBootPng[192] = {";
+                                for (size_t vb = 0; vb < vmuBootPacked.size(); ++vb)
+                                {
+                                    mc << (int)vmuBootPacked[vb];
+                                    if (vb + 1 < vmuBootPacked.size()) mc << ",";
+                                }
+                                mc << "};\n";
+                                mc << "static const int kVmuAnimEnabled = " << vmuAnimEnabled << ";\n";
+                                mc << "static const int kVmuAnimLoop = " << vmuAnimLoopEnabled << ";\n";
+                                mc << "static const int kVmuAnimSpeedCode = " << vmuAnimSpeedCode << ";\n";
+                                mc << "static const int kVmuAnimFrameCount = " << vmuAnimFrameCount << ";\n";
+                                mc << "static const uint8_t kVmuAnimFrames[] = {";
+                                if (!vmuAnimPacked.empty())
+                                {
+                                    for (size_t fi = 0; fi < vmuAnimPacked.size(); ++fi)
+                                    {
+                                        for (size_t bi = 0; bi < vmuAnimPacked[fi].size(); ++bi)
+                                        {
+                                            mc << (int)vmuAnimPacked[fi][bi];
+                                            if (!(fi + 1 == vmuAnimPacked.size() && bi + 1 == vmuAnimPacked[fi].size())) mc << ",";
+                                        }
+                                    }
+                                }
+                                mc << "};\n";
+                                mc << "static void NB_TryLoadVmuBootImage(void){\n";
+                                mc << "  static uintptr_t sLastVmu = 0;\n";
+                                mc << "  if(!kVmuLoadOnBoot) return;\n";
+                                mc << "  maple_device_t* vmu = 0;\n";
+                                mc << "  for(int i=0;i<8;++i){ maple_device_t* d = maple_enum_type(i, MAPLE_FUNC_LCD); if(d){ vmu = d; break; } }\n";
+                                mc << "  uintptr_t cur = (uintptr_t)vmu;\n";
+                                mc << "  if(cur == sLastVmu) return;\n";
+                                mc << "  sLastVmu = cur;\n";
+                                mc << "  if(!vmu){ dbgio_printf(\"[VMU] VMU LCD disconnected\\n\"); return; }\n";
+                                mc << "  const uint8_t* src = kVmuBootPng;\n";
+                                mc << "  if(kVmuAnimEnabled && kVmuAnimFrameCount > 0) src = &kVmuAnimFrames[0];\n";
+                                mc << "  int rc = vmu_draw_lcd(vmu, (void*)src);\n";
+                                mc << "  dbgio_printf(\"[VMU] load-on-boot draw rc=%d\\n\", rc);\n";
+                                mc << "}\n";
+                                mc << "static void NB_UpdateVmuAnim(float dt){\n";
+                                mc << "  static maple_device_t* sVmu = 0;\n";
+                                mc << "  static float sAccum = 0.0f;\n";
+                                mc << "  static int sFrame = 0;\n";
+                                mc << "  static int sDoneOneShot = 0;\n";
+                                mc << "  if(!kVmuLoadOnBoot || !kVmuAnimEnabled || kVmuAnimFrameCount <= 0) return;\n";
+                                mc << "  if(!kVmuAnimLoop && sDoneOneShot) return;\n";
+                                mc << "  if(!sVmu){ for(int i=0;i<8;++i){ maple_device_t* d=maple_enum_type(i, MAPLE_FUNC_LCD); if(d){ sVmu=d; break; } } }\n";
+                                mc << "  if(!sVmu) return;\n";
+                                mc << "  float fps = 8.0f; if(kVmuAnimSpeedCode==0) fps = 4.0f; else if(kVmuAnimSpeedCode==2) fps = 16.0f;\n";
+                                mc << "  float step = 1.0f / fps;\n";
+                                mc << "  sAccum += dt;\n";
+                                mc << "  while(sAccum >= step){\n";
+                                mc << "    sAccum -= step;\n";
+                                mc << "    const uint8_t* frame = &kVmuAnimFrames[(size_t)sFrame * 192u];\n";
+                                mc << "    vmu_draw_lcd(sVmu, (void*)frame);\n";
+                                mc << "    sFrame++;\n";
+                                mc << "    if(sFrame >= kVmuAnimFrameCount){ sFrame = 0; if(!kVmuAnimLoop){ sDoneOneShot = 1; break; } }\n";
+                                mc << "  }\n";
+                                mc << "}\n";
                                 mc << "static void NB_SetMirrorFromIndex(int idx){\n";
                                 mc << "  idx &= 7;\n";
                                 mc << "  gMirrorX = (idx & 1) ? -1 : 1;\n";
@@ -7278,6 +7816,7 @@ int main(int, char**)
                                 mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
                                 mc << "  }\n";
                                 mc << "  NB_KOS_InitInput();\n";
+                                mc << "  NB_TryLoadVmuBootImage();\n";
                                 mc << "  NB_SetMirrorFromIndex(gMirrorLrIndex);\n";
                                 mc << "  int sceneReady = 1;\n";
                                 mc << "  int sceneSwitchReq = 0;\n";
@@ -7297,6 +7836,8 @@ int main(int, char**)
                                 mc << "\n";
                                 mc << "  for (;;) {\n";
                                 mc << "    NB_KOS_PollInput();\n";
+                                mc << "    NB_TryLoadVmuBootImage();\n";
+                                mc << "    NB_UpdateVmuAnim(0.016f);\n";
                                 mc << "    NB_Game_OnUpdate(0.016f);\n";
                                 mc << "    if (NB_KOS_HasController()) {\n";
                                 mc << "      const float kZoomStep = 0.20f;\n";
@@ -10907,6 +11448,654 @@ int main(int, char**)
             }
             ImGui::PopStyleColor(3);
             ImGui::End();
+        }
+
+        if (gShowVmuTool)
+        {
+            const float topBarHLocal = 28.0f * ImGui::GetIO().FontGlobalScale;
+            ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + topBarHLocal));
+            ImGui::SetNextWindowSize(ImVec2(vp->Size.x, vp->Size.y - topBarHLocal));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.10f, 0.14f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.75f, 0.75f, 0.75f, 1));
+            ImGui::Begin("##VmuToolSlate", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
+
+            // Top border strip with left-side Save button.
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.94f, 0.94f, 1.0f));
+            ImGui::BeginChild("##VmuToolTopStrip", ImVec2(0.0f, 34.0f * ImGui::GetIO().FontGlobalScale), true,
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            if (ImGui::Button("Save"))
+            {
+                if (!gVmuHasImage)
+                {
+                    gViewportToast = "VMU Tool: no image to save";
+                }
+                else
+                {
+                    std::filesystem::path dstDir = std::filesystem::path(gProjectDir.empty() ? std::filesystem::current_path() : std::filesystem::path(gProjectDir)) / "Assets" / "VMU";
+                    std::error_code ec;
+                    std::filesystem::create_directories(dstDir, ec);
+
+                    int idx = 1;
+                    std::filesystem::path outPath;
+                    do
+                    {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "px%04d.png", idx++);
+                        outPath = dstDir / buf;
+                    } while (std::filesystem::exists(outPath, ec));
+
+                    if (SaveVmuMonoPng(outPath, gVmuMono))
+                    {
+                        gVmuAssetPath = outPath.string();
+                        gViewportToast = "VMU Tool: saved " + outPath.filename().string();
+                    }
+                    else
+                    {
+                        gViewportToast = "VMU Tool: save failed";
+                    }
+                }
+                gViewportToastUntil = glfwGetTime() + 1.8;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(gVmuLoadOnBoot ? "Load on boot: ON" : "Load on boot"))
+            {
+                if (!gVmuHasImage)
+                {
+                    gViewportToast = "VMU Tool: open a 48x32 PNG first";
+                }
+                else
+                {
+                    gVmuLoadOnBoot = !gVmuLoadOnBoot;
+                    gViewportToast = gVmuLoadOnBoot ? "VMU Tool: load-on-boot enabled" : "VMU Tool: load-on-boot disabled";
+                }
+                gViewportToastUntil = glfwGetTime() + 1.8;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Asset Linked"))
+            {
+                bool loaded = false;
+
+                // Prefer VMUAnim when one is currently loaded/linked.
+                if (!gVmuLinkedAnimPath.empty() && (gVmuCurrentLoadedType == 2 || gVmuAnimPlaying))
+                {
+                    if (LoadVmuFrameData(gVmuLinkedAnimPath))
+                    {
+                        gViewportToast = "VMU Tool: loaded linked VMUAnim";
+                    }
+                    else
+                    {
+                        gViewportToast = "VMU Tool: linked VMUAnim missing/invalid";
+                    }
+                    loaded = true;
+                }
+
+                if (!loaded && gVmuAnimLayerSel >= 0 && gVmuAnimLayerSel < (int)gVmuAnimLayers.size())
+                {
+                    const VmuAnimLayer& l = gVmuAnimLayers[(size_t)gVmuAnimLayerSel];
+                    if (!l.linkedAsset.empty())
+                    {
+                        gVmuLinkedPngPath = l.linkedAsset;
+                        std::string err;
+                        if (LoadVmuPngToMono(gVmuLinkedPngPath, err))
+                        {
+                            gViewportToast = "VMU Tool: loaded linked PNG";
+                            loaded = true;
+                        }
+                        else
+                        {
+                            gViewportToast = err;
+                            loaded = true;
+                        }
+                    }
+                }
+
+                if (!loaded && !gVmuLinkedAnimPath.empty())
+                {
+                    if (LoadVmuFrameData(gVmuLinkedAnimPath)) gViewportToast = "VMU Tool: loaded linked VMUAnim";
+                    else gViewportToast = "VMU Tool: linked VMUAnim missing/invalid";
+                    loaded = true;
+                }
+
+                if (!loaded)
+                {
+                    gViewportToast = "VMU Tool: no linked PNG/VMUAnim";
+                }
+                gViewportToastUntil = glfwGetTime() + 1.8;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(gVmuDrawMode ? "Draw: ON" : "Draw"))
+            {
+                gVmuDrawMode = !gVmuDrawMode;
+                if (gVmuDrawMode && !gVmuHasImage)
+                {
+                    gVmuHasImage = true;
+                    gVmuMono.fill(0);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save FrameData"))
+            {
+                std::filesystem::path dstDir = std::filesystem::path(gProjectDir.empty() ? std::filesystem::current_path() : std::filesystem::path(gProjectDir)) / "Assets" / "VMU";
+                std::error_code ec;
+                std::filesystem::create_directories(dstDir, ec);
+                int idx = 1;
+                std::filesystem::path outPath;
+                do
+                {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "framedata%04d.vmuanim", idx++);
+                    outPath = dstDir / buf;
+                } while (std::filesystem::exists(outPath, ec));
+
+                if (SaveVmuFrameData(outPath)) gViewportToast = "VMU Tool: saved " + outPath.filename().string();
+                else gViewportToast = "VMU Tool: save framedata failed";
+                gViewportToastUntil = glfwGetTime() + 1.8;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load FrameData"))
+            {
+                std::string picked = PickVmuFrameDataDialog("Load VMU Frame Data");
+                if (!picked.empty())
+                {
+                    if (LoadVmuFrameData(picked))
+                    {
+                        gVmuLinkedAnimPath = picked;
+                        gViewportToast = "VMU Tool: frame data loaded";
+                    }
+                    else gViewportToast = "VMU Tool: load framedata failed";
+                    gViewportToastUntil = glfwGetTime() + 1.8;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close"))
+            {
+                gVmuAnimLayers = { {"Layer 1", true, 0, 0, ""} };
+                gVmuAnimLayerSel = 0;
+                gVmuAnimTotalFrames = 24;
+                gVmuAnimPlayhead = 0;
+                gVmuHasImage = true;
+                gVmuMono.fill(0);
+                gVmuAssetPath.clear();
+                gVmuLinkedPngPath.clear();
+                gVmuLinkedAnimPath.clear();
+                gVmuCurrentLoadedType = 0;
+                gViewportToast = "VMU Tool: frame/layers cleared";
+                gViewportToastUntil = glfwGetTime() + 1.5;
+            }
+            float closeW = ImGui::GetFrameHeight();
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - closeW - ImGui::GetStyle().FramePadding.x * 2.0f - 6.0f);
+            if (ImGui::Button("X", ImVec2(closeW, 0.0f)))
+            {
+                gShowVmuTool = false;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+
+            if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false) && !gVmuUndoStack.empty())
+            {
+                gVmuMono = gVmuUndoStack.back();
+                gVmuUndoStack.pop_back();
+                gVmuHasImage = true;
+                gViewportToast = "VMU Tool: undo";
+                gViewportToastUntil = glfwGetTime() + 1.0;
+            }
+
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            if (avail.x > 10.0f && avail.y > 10.0f)
+            {
+                const float leftW = avail.x * 0.45f;
+                const float splitGap = 10.0f;
+                const float rightW = avail.x - leftW - splitGap;
+
+                // Left: upper-half asset browser area.
+                ImGui::BeginChild("##VmuLeftPane", ImVec2(leftW, avail.y), false);
+                ImGui::BeginChild("##VmuAssetBrowser", ImVec2(0.0f, avail.y * 0.5f), true);
+                if (ImGui::BeginTabBar("##VmuAssetTabs"))
+                {
+                    if (ImGui::BeginTabItem("Asset Browser"))
+                    {
+                        if (ImGui::Button("Image..."))
+                        {
+                            std::string picked = PickPngFileDialog("Import VMU PNG (48x32)");
+                            if (!picked.empty())
+                            {
+                                std::string err;
+                                if (LoadVmuPngToMono(picked, err))
+                                {
+                                    std::filesystem::path dstDir = std::filesystem::path(gProjectDir.empty() ? std::filesystem::current_path() : std::filesystem::path(gProjectDir)) / "Assets" / "VMU";
+                                    std::error_code ec;
+                                    std::filesystem::create_directories(dstDir, ec);
+                                    std::filesystem::path srcPath(picked);
+                                    std::filesystem::path outPath = dstDir / srcPath.filename();
+                                    if (std::filesystem::exists(outPath, ec))
+                                    {
+                                        std::string stem = outPath.stem().string();
+                                        std::string ext = outPath.extension().string();
+                                        int n = 1;
+                                        while (std::filesystem::exists(outPath, ec))
+                                        {
+                                            outPath = dstDir / (stem + "_" + std::to_string(n++) + ext);
+                                        }
+                                    }
+                                    std::filesystem::copy_file(srcPath, outPath, std::filesystem::copy_options::overwrite_existing, ec);
+                                    if (!ec)
+                                    {
+                                        gVmuAssetPath = outPath.string();
+                                        gViewportToast = "VMU Tool: image imported to Assets/VMU";
+                                    }
+                                    else
+                                    {
+                                        gViewportToast = "VMU Tool: import failed";
+                                    }
+                                }
+                                else
+                                {
+                                    gViewportToast = err;
+                                }
+                                gViewportToastUntil = glfwGetTime() + 2.0;
+                            }
+                        }
+                        ImGui::Separator();
+
+                        std::filesystem::path assetDir = std::filesystem::path(gProjectDir.empty() ? std::filesystem::current_path() : std::filesystem::path(gProjectDir)) / "Assets" / "VMU";
+                        std::error_code ec;
+                        if (std::filesystem::exists(assetDir, ec))
+                        {
+                            for (const auto& e : std::filesystem::directory_iterator(assetDir, ec))
+                            {
+                                if (ec || !e.is_regular_file()) continue;
+                                std::filesystem::path p = e.path();
+                                std::string ext = p.extension().string();
+                                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                                if (ext != ".png" && ext != ".vmuanim") continue;
+                                bool selected = (!gVmuAssetPath.empty() && std::filesystem::path(gVmuAssetPath) == p);
+                                if (ImGui::Selectable(p.filename().string().c_str(), selected))
+                                {
+                                    if (ext == ".vmuanim")
+                                    {
+                                        if (LoadVmuFrameData(p))
+                                        {
+                                            gVmuLinkedAnimPath = p.string();
+                                            gViewportToast = "VMU Tool: frame data loaded";
+                                        }
+                                        else gViewportToast = "VMU Tool: load framedata failed";
+                                    }
+                                    else
+                                    {
+                                        std::string err;
+                                        if (LoadVmuPngToMono(p.string(), err)) gViewportToast = "VMU Tool: loaded " + p.filename().string();
+                                        else gViewportToast = err;
+                                    }
+                                    gViewportToastUntil = glfwGetTime() + 2.0;
+                                }
+                                if (ImGui::BeginPopupContextItem((std::string("##vmuAssetCtx_") + p.filename().string()).c_str()))
+                                {
+                                    if (ImGui::MenuItem("Delete"))
+                                    {
+                                        std::error_code dec;
+                                        bool removed = std::filesystem::remove(p, dec);
+                                        if (removed)
+                                        {
+                                            if (!gVmuAssetPath.empty() && std::filesystem::path(gVmuAssetPath) == p)
+                                                gVmuAssetPath.clear();
+                                            gViewportToast = "VMU Tool: deleted " + p.filename().string();
+                                        }
+                                        else
+                                        {
+                                            gViewportToast = "VMU Tool: delete failed";
+                                        }
+                                        gViewportToastUntil = glfwGetTime() + 1.8;
+                                    }
+                                    ImGui::EndPopup();
+                                }
+                            }
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
+                }
+                ImGui::EndChild();
+
+                ImGui::BeginChild("##VmuLayerPanel", ImVec2(0.0f, 0.0f), true);
+
+                if (ImGui::BeginTabBar("##VmuTimelineTabs"))
+                {
+                    ImGui::TabItemButton("TIMELINE", ImGuiTabItemFlags_Leading);
+                    ImGui::TabItemButton("MOTION EDITOR");
+                    ImGui::EndTabBar();
+                }
+
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::InputInt("Frames", &gVmuAnimTotalFrames);
+                if (gVmuAnimTotalFrames < 1) gVmuAnimTotalFrames = 1;
+                if (gVmuAnimPlayhead < 0) gVmuAnimPlayhead = 0;
+                if (gVmuAnimPlayhead >= gVmuAnimTotalFrames) gVmuAnimPlayhead = gVmuAnimTotalFrames - 1;
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderInt("Playhead", &gVmuAnimPlayhead, 0, gVmuAnimTotalFrames - 1);
+                ImGui::SameLine();
+                if (ImGui::Button("+ Layer"))
+                {
+                    VmuAnimLayer l;
+                    l.name = "Layer " + std::to_string((int)gVmuAnimLayers.size() + 1);
+                    l.visible = true;
+                    l.frameStart = 0;
+                    l.frameEnd = gVmuAnimTotalFrames - 1;
+                    gVmuAnimLayers.push_back(l);
+                    gVmuAnimLayerSel = (int)gVmuAnimLayers.size() - 1;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("- Layer") && !gVmuAnimLayers.empty())
+                {
+                    if (gVmuAnimLayerSel < 0) gVmuAnimLayerSel = 0;
+                    if (gVmuAnimLayerSel >= (int)gVmuAnimLayers.size()) gVmuAnimLayerSel = (int)gVmuAnimLayers.size() - 1;
+                    gVmuAnimLayers.erase(gVmuAnimLayers.begin() + gVmuAnimLayerSel);
+                    if (gVmuAnimLayers.empty()) gVmuAnimLayerSel = -1;
+                    else if (gVmuAnimLayerSel >= (int)gVmuAnimLayers.size()) gVmuAnimLayerSel = (int)gVmuAnimLayers.size() - 1;
+                }
+
+                // Right-side playback controls.
+                float speedBtnW = 86.0f;
+                float loopBtnW = 64.0f;
+                float playBtnW = 56.0f;
+                float rightX = ImGui::GetWindowContentRegionMax().x - (playBtnW + loopBtnW + speedBtnW + 18.0f);
+                if (rightX > ImGui::GetCursorPosX())
+                {
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(rightX);
+                }
+                if (ImGui::Button(gVmuAnimPlaying ? "Stop" : "Play", ImVec2(playBtnW, 0.0f)))
+                {
+                    gVmuAnimPlaying = !gVmuAnimPlaying;
+                    gVmuAnimAccum = 0.0;
+                    if (gVmuAnimPlaying) gVmuAnimPlayhead = 0;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(gVmuAnimLoop ? "Loop ON" : "Loop OFF", ImVec2(loopBtnW, 0.0f)))
+                {
+                    gVmuAnimLoop = !gVmuAnimLoop;
+                    gViewportToast = gVmuAnimLoop ? "VMU Tool: loop ON" : "VMU Tool: loop OFF";
+                    gViewportToastUntil = glfwGetTime() + 1.2;
+                }
+                ImGui::SameLine();
+                const char* speedLabel = (gVmuAnimSpeedMode == 0) ? "Speed x0.5" : (gVmuAnimSpeedMode == 1) ? "Speed x1" : "Speed x2";
+                if (ImGui::Button(speedLabel, ImVec2(speedBtnW, 0.0f)))
+                {
+                    gVmuAnimSpeedMode = (gVmuAnimSpeedMode + 1) % 3;
+                }
+
+                if (gVmuAnimPlaying)
+                {
+                    const double baseFps = 8.0;
+                    const double mult = (gVmuAnimSpeedMode == 0) ? 0.5 : (gVmuAnimSpeedMode == 1) ? 1.0 : 2.0;
+                    const double frameStep = 1.0 / (baseFps * mult);
+                    gVmuAnimAccum += ImGui::GetIO().DeltaTime;
+                    while (gVmuAnimAccum >= frameStep)
+                    {
+                        gVmuAnimAccum -= frameStep;
+                        gVmuAnimPlayhead++;
+                        if (gVmuAnimPlayhead >= gVmuAnimTotalFrames)
+                        {
+                            gVmuAnimPlayhead = 0; // snap back to frame 1
+                            if (!gVmuAnimLoop)
+                            {
+                                gVmuAnimPlaying = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                ImGui::Separator();
+                ImVec2 tAvail = ImGui::GetContentRegionAvail();
+                const float leftColsW = 120.0f;
+                const float timelineH = 46.0f;
+                const float rowH = 24.0f;
+
+                ImDrawList* tdl = ImGui::GetWindowDrawList();
+                ImVec2 origin = ImGui::GetCursorScreenPos();
+                float timelineX = origin.x + leftColsW;
+                float timelineW = tAvail.x - leftColsW;
+                if (timelineW < 60.0f) timelineW = 60.0f;
+                float frameW = timelineW / (float)gVmuAnimTotalFrames;
+
+                tdl->AddRectFilled(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(220, 220, 220, 255));
+                tdl->AddRect(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(140, 140, 140, 255));
+                for (int f = 0; f <= gVmuAnimTotalFrames; ++f)
+                {
+                    float x = timelineX + frameW * (float)f;
+                    int major = (f % 5 == 0) ? 1 : 0;
+                    tdl->AddLine(ImVec2(x, origin.y + (major ? 12.0f : 20.0f)), ImVec2(x, origin.y + timelineH), IM_COL32(150, 150, 150, 255));
+                    if (major && f > 0)
+                    {
+                        char buf[16]; snprintf(buf, sizeof(buf), "%d", f);
+                        tdl->AddText(ImVec2(x + 2.0f, origin.y + 1.0f), IM_COL32(40, 40, 40, 255), buf);
+                    }
+                }
+                float phx = timelineX + frameW * (float)gVmuAnimPlayhead;
+                tdl->AddLine(ImVec2(phx, origin.y), ImVec2(phx, origin.y + tAvail.y), IM_COL32(220, 30, 30, 255), 2.0f);
+
+                ImGui::Dummy(ImVec2(tAvail.x, timelineH));
+
+                for (int i = 0; i < (int)gVmuAnimLayers.size(); ++i)
+                {
+                    VmuAnimLayer& l = gVmuAnimLayers[(size_t)i];
+                    ImVec2 rowPos = ImGui::GetCursorScreenPos();
+                    ImGui::InvisibleButton((std::string("##layerRow") + std::to_string(i)).c_str(), ImVec2(tAvail.x, rowH));
+                    bool rowSel = (gVmuAnimLayerSel == i);
+                    if (ImGui::IsItemClicked())
+                    {
+                        gVmuAnimLayerSel = i;
+                        if (!l.linkedAsset.empty())
+                        {
+                            std::string err;
+                            if (!LoadVmuPngToMono(l.linkedAsset, err))
+                            {
+                                gViewportToast = err;
+                                gViewportToastUntil = glfwGetTime() + 1.5;
+                            }
+                        }
+                        else
+                        {
+                            gVmuHasImage = true;
+                            gVmuMono.fill(0);
+                        }
+                    }
+
+                    tdl->AddRectFilled(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), rowSel ? IM_COL32(170, 205, 240, 180) : IM_COL32(235, 235, 235, 255));
+                    tdl->AddRect(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), IM_COL32(170, 170, 170, 255));
+                    tdl->AddText(ImVec2(rowPos.x + 6.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.visible ? "V" : " ");
+                    ImGui::SetCursorScreenPos(ImVec2(rowPos.x + 18.0f, rowPos.y + 2.0f));
+                    ImGui::PushID(i);
+                    if (ImGui::SmallButton("->"))
+                    {
+                        if (gVmuCurrentLoadedType == 2 && !gVmuLinkedAnimPath.empty())
+                        {
+                            // VMUAnim link is project-persistent (global animation source for runtime/editor playback).
+                            gViewportToast = "VMU Tool: linked VMUAnim";
+                        }
+                        else if (!gVmuAssetPath.empty())
+                        {
+                            l.linkedAsset = gVmuAssetPath;
+                            gVmuLinkedPngPath = gVmuAssetPath;
+                            gViewportToast = "VMU Tool: linked PNG to layer";
+                        }
+                        else
+                        {
+                            gViewportToast = "VMU Tool: load a PNG or VMUAnim first";
+                        }
+                        gViewportToastUntil = glfwGetTime() + 1.5;
+                    }
+                    ImGui::PopID();
+                    tdl->AddText(ImVec2(rowPos.x + 48.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.name.c_str());
+
+                    int fs = std::max(0, std::min(gVmuAnimTotalFrames - 1, l.frameStart));
+                    int fe = std::max(fs, std::min(gVmuAnimTotalFrames - 1, l.frameEnd));
+                    float x0 = timelineX + frameW * (float)fs;
+                    float x1 = timelineX + frameW * (float)(fe + 1);
+                    tdl->AddRectFilled(ImVec2(x0, rowPos.y + 3.0f), ImVec2(x1, rowPos.y + rowH - 3.0f), IM_COL32(80, 220, 80, 255));
+                    tdl->AddRect(ImVec2(x0, rowPos.y + 3.0f), ImVec2(x1, rowPos.y + rowH - 3.0f), IM_COL32(20, 120, 20, 255));
+                    if (!l.linkedAsset.empty())
+                    {
+                        tdl->AddRectFilled(ImVec2(x0 + 2.0f, rowPos.y + 6.0f), ImVec2(x0 + 6.0f, rowPos.y + rowH - 6.0f), IM_COL32(30, 30, 30, 255));
+                    }
+                }
+
+                if (gVmuAnimLayerSel >= 0 && gVmuAnimLayerSel < (int)gVmuAnimLayers.size())
+                {
+                    VmuAnimLayer& l = gVmuAnimLayers[(size_t)gVmuAnimLayerSel];
+                    ImGui::Separator();
+                    char nameBuf[64] = {};
+                    strncpy(nameBuf, l.name.c_str(), sizeof(nameBuf) - 1);
+                    if (ImGui::InputText("Layer Name", nameBuf, sizeof(nameBuf))) l.name = nameBuf;
+                    ImGui::Checkbox("Visible", &l.visible);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::InputInt("Start", &l.frameStart);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::InputInt("End", &l.frameEnd);
+                    if (l.frameStart < 0) l.frameStart = 0;
+                    if (l.frameEnd < l.frameStart) l.frameEnd = l.frameStart;
+                    if (l.frameEnd >= gVmuAnimTotalFrames) l.frameEnd = gVmuAnimTotalFrames - 1;
+                }
+
+                ImGui::EndChild();
+                ImGui::EndChild();
+
+                // Auto-switch preview based on active layer range at current playhead.
+                std::string activeLayerAsset;
+                for (int li = 0; li < (int)gVmuAnimLayers.size(); ++li)
+                {
+                    const VmuAnimLayer& l = gVmuAnimLayers[(size_t)li];
+                    if (!l.visible || l.linkedAsset.empty()) continue;
+                    if (gVmuAnimPlayhead < l.frameStart || gVmuAnimPlayhead > l.frameEnd) continue;
+                    activeLayerAsset = l.linkedAsset;
+                }
+                if (!activeLayerAsset.empty())
+                {
+                    if (activeLayerAsset != gVmuAssetPath)
+                    {
+                        std::string err;
+                        LoadVmuPngToMono(activeLayerAsset, err);
+                    }
+                }
+                else if (!gVmuDrawMode)
+                {
+                    // No active layer at this frame: clear preview grid.
+                    gVmuHasImage = true;
+                    gVmuMono.fill(0);
+                    gVmuAssetPath.clear();
+                }
+
+                ImGui::SameLine(0.0f, splitGap);
+
+                // Right: 48x32 preview grid.
+                ImGui::BeginChild("##VmuGridPane", ImVec2(rightW, avail.y), false);
+                ImVec2 ravail = ImGui::GetContentRegionAvail();
+                const float cols = 48.0f;
+                const float rows = 32.0f;
+                float cell = (ravail.x / cols < ravail.y / rows) ? (ravail.x / cols) : (ravail.y / rows);
+                if (cell < 2.0f) cell = 2.0f;
+
+                ImVec2 start = ImGui::GetCursorScreenPos();
+                float gridW = cols * cell;
+                float gridH = rows * cell;
+                start.x += (ravail.x - gridW);
+                start.y += (ravail.y - gridH) * 0.5f;
+
+                if (gVmuDrawMode)
+                {
+                    ImVec2 m = ImGui::GetIO().MousePos;
+                    bool inGrid = (m.x >= start.x && m.y >= start.y && m.x < start.x + gridW && m.y < start.y + gridH);
+                    bool mouseHeld = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right);
+                    if (inGrid && mouseHeld && !gVmuStrokeActive)
+                    {
+                        gVmuUndoStack.push_back(gVmuMono);
+                        if (gVmuUndoStack.size() > 64) gVmuUndoStack.erase(gVmuUndoStack.begin());
+                        gVmuStrokeActive = true;
+                    }
+                    if (!mouseHeld)
+                    {
+                        gVmuStrokeActive = false;
+                        gVmuLastDrawX = -1;
+                        gVmuLastDrawY = -1;
+                    }
+                    if (inGrid && mouseHeld)
+                    {
+                        int px = (int)((m.x - start.x) / cell);
+                        int py = (int)((m.y - start.y) / cell);
+                        if (px >= 0 && px < 48 && py >= 0 && py < 32)
+                        {
+                            gVmuHasImage = true;
+                            const uint8_t pen = ImGui::IsMouseDown(ImGuiMouseButton_Right) ? 0 : 1;
+                            if (gVmuLastDrawX >= 0 && gVmuLastDrawY >= 0)
+                            {
+                                int x0 = gVmuLastDrawX, y0 = gVmuLastDrawY;
+                                int x1 = px, y1 = py;
+                                int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+                                int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+                                int err = dx + dy;
+                                while (true)
+                                {
+                                    if (x0 >= 0 && x0 < 48 && y0 >= 0 && y0 < 32)
+                                        gVmuMono[(size_t)y0 * 48u + (size_t)x0] = pen;
+                                    if (x0 == x1 && y0 == y1) break;
+                                    int e2 = err * 2;
+                                    if (e2 >= dy) { err += dy; x0 += sx; }
+                                    if (e2 <= dx) { err += dx; y0 += sy; }
+                                }
+                            }
+                            else
+                            {
+                                gVmuMono[(size_t)py * 48u + (size_t)px] = pen;
+                            }
+                            gVmuLastDrawX = px;
+                            gVmuLastDrawY = py;
+                        }
+                    }
+                }
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImU32 bgCol = IM_COL32(255, 255, 255, 255);
+                ImU32 borderCol = IM_COL32(70, 70, 70, 255);
+                ImU32 lineCol = IM_COL32(185, 185, 185, 255);
+                ImU32 pixCol = IM_COL32(20, 20, 20, 255);
+                dl->AddRectFilled(start, ImVec2(start.x + gridW, start.y + gridH), bgCol);
+                if (gVmuHasImage)
+                {
+                    for (int py = 0; py < 32; ++py)
+                    {
+                        for (int px = 0; px < 48; ++px)
+                        {
+                            if (gVmuMono[(size_t)py * 48u + (size_t)px])
+                            {
+                                float x0 = start.x + px * cell;
+                                float y0 = start.y + py * cell;
+                                dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + cell, y0 + cell), pixCol);
+                            }
+                        }
+                    }
+                }
+                dl->AddRect(start, ImVec2(start.x + gridW, start.y + gridH), borderCol, 0.0f, 0, 2.0f);
+                for (int x = 1; x < 48; ++x)
+                {
+                    float px = start.x + x * cell;
+                    dl->AddLine(ImVec2(px, start.y), ImVec2(px, start.y + gridH), lineCol, 1.0f);
+                }
+                for (int y = 1; y < 32; ++y)
+                {
+                    float py = start.y + y * cell;
+                    dl->AddLine(ImVec2(start.x, py), ImVec2(start.x + gridW, py), lineCol, 1.0f);
+                }
+                ImGui::EndChild();
+            }
+
+            ImGui::End();
+            ImGui::PopStyleColor(2);
         }
 
         // Save toast

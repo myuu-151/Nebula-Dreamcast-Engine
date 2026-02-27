@@ -180,6 +180,10 @@ static bool gNodeRenameOpen = false;
 static std::string gViewportToast;
 static double gViewportToastUntil = 0.0;
 static bool gShowVmuTool = false;
+static std::unordered_set<std::string> gCollapsedAudioRoots;
+static std::unordered_set<std::string> gCollapsedStaticRoots;
+static std::unordered_set<std::string> gCollapsedCameraRoots;
+static std::unordered_set<std::string> gCollapsedNode3DRoots;
 static bool gVmuHasImage = false;
 static bool gVmuLoadOnBoot = false;
 static std::string gVmuAssetPath;
@@ -214,6 +218,19 @@ static std::unordered_map<std::string, std::filesystem::file_time_type> gScriptH
 static std::string gScriptHotReloadTrackedProjectDir;
 static double gScriptHotReloadNextPollAt = 0.0;
 static unsigned long long gScriptHotReloadGeneration = 0;
+
+static HMODULE gEditorScriptModule = nullptr;
+static std::string gEditorScriptPath;
+static bool gEditorScriptActive = false;
+static bool gEditorScriptStarted = false;
+static double gEditorScriptNextTickLog = 0.0;
+static bool useScriptController = true;
+using EditorScriptStartFn = void(*)(void);
+using EditorScriptUpdateFn = void(*)(float);
+using EditorScriptSceneSwitchFn = void(*)(const char*);
+static EditorScriptStartFn gEditorScriptOnStart = nullptr;
+static EditorScriptUpdateFn gEditorScriptOnUpdate = nullptr;
+static EditorScriptSceneSwitchFn gEditorScriptOnSceneSwitch = nullptr;
 
 // Optional editor runtime hook. v1 only signals "scripts changed"; no compile/rebind yet.
 using ScriptHotReloadCallback = void(*)(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger);
@@ -283,6 +300,17 @@ static int FindStaticMeshByName(const std::string& name)
 static int FindNode3DByName(const std::string& name)
 {
     return NebulaNodes::FindNode3DByName(gNode3DNodes, name);
+}
+
+static int FindCamera3DByName(const std::string& name)
+{
+    if (name.empty()) return -1;
+    for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
+    {
+        if (gCamera3DNodes[i].name == name)
+            return i;
+    }
+    return -1;
 }
 
 static bool TryGetParentByNodeName(const std::string& name, std::string& outParent)
@@ -448,6 +476,289 @@ static void PollScriptHotReloadV1(double now)
     }
 }
 
+static std::filesystem::path ResolveGameplayScriptPath()
+{
+    if (gProjectDir.empty())
+        return {};
+
+    printf("[ScriptRuntime] ProjectDir=%s\n", gProjectDir.c_str());
+
+    auto resolvePath = [](const std::string& rel) -> std::filesystem::path
+    {
+        if (rel.empty()) return {};
+        std::filesystem::path p(rel);
+        if (p.is_absolute())
+            return p;
+        return std::filesystem::path(gProjectDir) / p;
+    };
+
+    if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
+    {
+        std::filesystem::path p = resolvePath(gNode3DNodes[gSelectedNode3D].script);
+        if (!p.empty() && std::filesystem::exists(p))
+            return p;
+    }
+
+    for (const auto& n : gNode3DNodes)
+    {
+        std::filesystem::path p = resolvePath(n.script);
+        if (!p.empty() && std::filesystem::exists(p))
+            return p;
+    }
+
+    std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
+    if (std::filesystem::exists(fallback))
+    {
+        printf("[ScriptRuntime] ResolvedScript=%s\n", fallback.string().c_str());
+        return fallback;
+    }
+
+    return {};
+}
+
+static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
+{
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open())
+        return false;
+
+    out << "#include <Windows.h>\n";
+    out << "static FARPROC nb_get(const char* name){ HMODULE exe = GetModuleHandleA(NULL); return exe ? GetProcAddress(exe, name) : NULL; }\n";
+    out << "void NB_RT_GetNode3DPosition(const char* name, float outPos[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DPosition\"); if(fn) fn(name,outPos); }\n";
+    out << "void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DPosition\"); if(fn) fn(name,x,y,z); }\n";
+    out << "void NB_RT_GetNode3DRotation(const char* name, float outRot[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DRotation\"); if(fn) fn(name,outRot); }\n";
+    out << "void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DRotation\"); if(fn) fn(name,x,y,z); }\n";
+    out << "void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetCameraWorldForward\"); if(fn) fn(name,outFwd); }\n";
+    out << "void NB_RT_GetCameraOrbit(const char* name, float outOrbit[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetCameraOrbit\"); if(fn) fn(name,outOrbit); }\n";
+    out << "void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetCameraOrbit\"); if(fn) fn(name,x,y,z); }\n";
+    out << "void NB_RT_GetCameraRotation(const char* name, float outRot[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetCameraRotation\"); if(fn) fn(name,outRot); }\n";
+    out << "void NB_RT_SetCameraRotation(const char* name, float x, float y, float z){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetCameraRotation\"); if(fn) fn(name,x,y,z); }\n";
+    out << "int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsCameraUnderNode3D\"); return fn ? fn(cameraName,nodeName) : 0; }\n";
+    return true;
+}
+
+static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesystem::path& outDllPath, std::string& outError)
+{
+    if (scriptPath.empty())
+    {
+        outError = "no script path";
+        return false;
+    }
+
+    std::filesystem::path outDir = std::filesystem::path(gProjectDir) / "Intermediate" / "EditorScript";
+    std::filesystem::path buildLogPath = outDir / "nb_script_build.log";
+    std::error_code ec;
+    std::filesystem::create_directories(outDir, ec);
+    if (ec)
+    {
+        outError = "failed to create Intermediate/EditorScript";
+        return false;
+    }
+
+    printf("[ScriptRuntime] OutDir=%s\n", outDir.string().c_str());
+    printf("[ScriptRuntime] BuildLog=%s\n", buildLogPath.string().c_str());
+
+    std::filesystem::path bridgePath = outDir / "nb_editor_bridge.c";
+    if (!WriteEditorScriptBridgeFile(bridgePath))
+    {
+        outError = "failed to write editor bridge file";
+        return false;
+    }
+
+    outDllPath = outDir / "nb_script.dll";
+    std::filesystem::remove(outDllPath, ec);
+    std::filesystem::remove(buildLogPath, ec);
+    std::filesystem::remove(outDir / "nb_script.exp", ec);
+    std::filesystem::remove(outDir / "nb_script.lib", ec);
+    std::filesystem::remove(outDir / "nb_script.pdb", ec);
+
+    auto SanitizeCmdPath = [](const std::filesystem::path& p) -> std::string
+    {
+        std::string s = p.generic_string(); // use forward slashes for cmd robustness
+        s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+        s.erase(std::remove(s.begin(), s.end(), '\n'), s.end());
+        return s;
+    };
+
+    std::string dllPathStr = SanitizeCmdPath(outDllPath);
+    std::string scriptPathStr = SanitizeCmdPath(scriptPath);
+    std::string bridgePathStr = SanitizeCmdPath(bridgePath);
+    std::string buildLogPathStr = SanitizeCmdPath(buildLogPath);
+
+    std::string clPrefix = "cl";
+    int hasCl = system("cmd /c \"where cl >nul 2>nul\"");
+    if (hasCl != 0)
+    {
+        const std::filesystem::path vcvarsCandidates[] = {
+            "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/17/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/17/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/17/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/17/BuildTools/VC/Auxiliary/Build/vcvarsall.bat"
+        };
+
+        std::filesystem::path vcvarsPath;
+        for (const auto& cand : vcvarsCandidates)
+        {
+            if (std::filesystem::exists(cand))
+            {
+                vcvarsPath = cand;
+                break;
+            }
+        }
+
+        if (vcvarsPath.empty())
+        {
+            outError = "cl.exe not found in PATH and vcvarsall.bat not found";
+            return false;
+        }
+
+        std::string vcvarsStr = SanitizeCmdPath(vcvarsPath);
+        clPrefix = "call \"" + vcvarsStr + "\" x64 && cl";
+        printf("[ScriptRuntime] Using vcvarsall fallback: %s\n", vcvarsStr.c_str());
+    }
+
+    std::string cmd;
+    cmd += "cmd /c \"";
+    cmd += clPrefix;
+    cmd += " /nologo /LD /TC /O2 /Fe:\"";
+    cmd += dllPathStr;
+    cmd += "\" \"";
+    cmd += scriptPathStr;
+    cmd += "\" \"";
+    cmd += bridgePathStr;
+    cmd += "\" /link user32.lib > \"";
+    cmd += buildLogPathStr;
+    cmd += "\" 2>&1\"";
+
+    printf("[ScriptRuntime] CompileCmd=%s\n", cmd.c_str());
+
+    int rc = system(cmd.c_str());
+    if (rc != 0 || !std::filesystem::exists(outDllPath))
+    {
+        outError = std::string("compile failed (see ") + buildLogPath.string() + ")";
+        return false;
+    }
+
+    return true;
+}
+
+static void UnloadEditorScriptRuntime()
+{
+    if (gEditorScriptModule)
+    {
+        FreeLibrary(gEditorScriptModule);
+        gEditorScriptModule = nullptr;
+    }
+    gEditorScriptOnStart = nullptr;
+    gEditorScriptOnUpdate = nullptr;
+    gEditorScriptOnSceneSwitch = nullptr;
+    gEditorScriptActive = false;
+    gEditorScriptStarted = false;
+    gEditorScriptPath.clear();
+}
+
+static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
+{
+    UnloadEditorScriptRuntime();
+
+    std::filesystem::path dllPath;
+    std::string err;
+    if (!CompileEditorScriptDLL(scriptPath, dllPath, err))
+    {
+        printf("[ScriptRuntime] compile failed: %s\n", err.c_str());
+        gViewportToast = std::string("Script runtime failed: ") + err;
+        gViewportToastUntil = glfwGetTime() + 2.5;
+        return false;
+    }
+
+    gEditorScriptModule = LoadLibraryA(dllPath.string().c_str());
+    if (!gEditorScriptModule)
+    {
+        printf("[ScriptRuntime] LoadLibrary failed for %s\n", dllPath.string().c_str());
+        gViewportToast = "Script runtime failed: LoadLibrary";
+        gViewportToastUntil = glfwGetTime() + 2.5;
+        return false;
+    }
+
+    gEditorScriptOnStart = (EditorScriptStartFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnStart");
+    gEditorScriptOnUpdate = (EditorScriptUpdateFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnUpdate");
+    gEditorScriptOnSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnSceneSwitch");
+
+    printf("[ScriptRuntime] loaded %s\n", scriptPath.string().c_str());
+    printf("[ScriptRuntime] DLL=%s\n", dllPath.string().c_str());
+    printf("[ScriptRuntime] symbols: start=%s update=%s scene=%s\n",
+        gEditorScriptOnStart ? "yes" : "no",
+        gEditorScriptOnUpdate ? "yes" : "no",
+        gEditorScriptOnSceneSwitch ? "yes" : "no");
+
+    gEditorScriptActive = true;
+    gEditorScriptPath = scriptPath.string();
+    gViewportToast = std::string("Script runtime active: ") + scriptPath.filename().string();
+    gViewportToastUntil = glfwGetTime() + 2.5;
+    return true;
+}
+
+static void BeginPlayScriptRuntime()
+{
+    std::filesystem::path scriptPath = ResolveGameplayScriptPath();
+    if (scriptPath.empty())
+    {
+        printf("[ScriptRuntime] no gameplay script resolved\n");
+        gViewportToast = "Script runtime failed: no script";
+        gViewportToastUntil = glfwGetTime() + 2.5;
+        return;
+    }
+
+    if (!LoadEditorScriptRuntime(scriptPath))
+        return;
+
+    gEditorScriptNextTickLog = 0.0;
+
+    if (gEditorScriptOnStart && useScriptController)
+    {
+        gEditorScriptOnStart();
+        gEditorScriptStarted = true;
+        printf("[ScriptRuntime] OnStart called\n");
+    }
+    else
+    {
+        gEditorScriptStarted = false;
+        printf("[ScriptRuntime] OnStart missing or skipped\n");
+    }
+}
+
+static void EndPlayScriptRuntime()
+{
+    UnloadEditorScriptRuntime();
+}
+
+static void TickPlayScriptRuntime(float dt, double now)
+{
+    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnUpdate || !useScriptController)
+        return;
+
+    gEditorScriptOnUpdate(dt);
+    if (now >= gEditorScriptNextTickLog)
+    {
+        gEditorScriptNextTickLog = now + 1.0;
+        printf("[ScriptRuntime] OnUpdate tick\n");
+    }
+}
+
+static void NotifyScriptSceneSwitch()
+{
+    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnSceneSwitch || !useScriptController)
+        return;
+    if (gActiveScene < 0 || gActiveScene >= (int)gOpenScenes.size())
+        return;
+    gEditorScriptOnSceneSwitch(gOpenScenes[gActiveScene].name.c_str());
+    printf("[ScriptRuntime] OnSceneSwitch: %s\n", gOpenScenes[gActiveScene].name.c_str());
+}
+
 static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
 {
     NebulaNodes::GetStaticMeshWorldTRS(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, orx, ory, orz, osx, osy, osz);
@@ -456,6 +767,108 @@ static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, floa
 static void GetNode3DWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
 {
     NebulaNodes::GetNode3DWorldTRS(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, orx, ory, orz, osx, osy, osz);
+}
+
+static void GetCamera3DWorldTR(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz)
+{
+    if (idx < 0 || idx >= (int)gCamera3DNodes.size())
+    {
+        ox = oy = oz = 0.0f;
+        orx = ory = orz = 0.0f;
+        return;
+    }
+
+    auto rotateOffsetEuler = [](float& x, float& y, float& z, float rxDeg, float ryDeg, float rzDeg)
+    {
+        const float rx = rxDeg * 3.14159f / 180.0f;
+        const float ry = ryDeg * 3.14159f / 180.0f;
+        const float rz = rzDeg * 3.14159f / 180.0f;
+
+        const float sx = sinf(rx), cx = cosf(rx);
+        const float sy = sinf(ry), cy = cosf(ry);
+        const float sz = sinf(rz), cz = cosf(rz);
+
+        float ty = y * cx - z * sx;
+        float tz = y * sx + z * cx;
+        y = ty; z = tz;
+
+        float tx = x * cy + z * sy;
+        tz = -x * sy + z * cy;
+        x = tx; z = tz;
+
+        tx = x * cz - y * sz;
+        ty = x * sz + y * cz;
+        x = tx; y = ty;
+    };
+
+    const auto& c = gCamera3DNodes[idx];
+    // Base camera local offset. Orbit offset is conditional on having a parent pivot.
+    ox = c.x; oy = c.y; oz = c.z;
+    if (!c.parent.empty())
+    {
+        ox += c.orbitX;
+        oy += c.orbitY;
+        oz += c.orbitZ;
+    }
+    orx = c.rotX; ory = c.rotY; orz = c.rotZ;
+
+    std::string p = c.parent;
+    int guard = 0;
+    while (!p.empty() && guard++ < 256)
+    {
+        bool found = false;
+        for (const auto& a : gAudio3DNodes)
+        {
+            if (a.name == p)
+            {
+                ox += a.x; oy += a.y; oz += a.z;
+                p = a.parent;
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+        for (const auto& s : gStaticMeshNodes)
+        {
+            if (s.name == p)
+            {
+                // Parent rotation should orbit the camera offset around parent pivot.
+                rotateOffsetEuler(ox, oy, oz, s.rotX, s.rotY, s.rotZ);
+                ox += s.x; oy += s.y; oz += s.z;
+                orx += s.rotX; ory += s.rotY; orz += s.rotZ;
+                p = s.parent;
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+        for (const auto& pc : gCamera3DNodes)
+        {
+            if (pc.name == p)
+            {
+                rotateOffsetEuler(ox, oy, oz, pc.rotX, pc.rotY, pc.rotZ);
+                ox += pc.x; oy += pc.y; oz += pc.z;
+                orx += pc.rotX; ory += pc.rotY; orz += pc.rotZ;
+                p = pc.parent;
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+        for (const auto& n : gNode3DNodes)
+        {
+            if (n.name == p)
+            {
+                rotateOffsetEuler(ox, oy, oz, n.rotX, n.rotY, n.rotZ);
+                ox += n.x; oy += n.y; oz += n.z;
+                orx += n.rotX; ory += n.rotY; orz += n.rotZ;
+                p = n.parent;
+                found = true;
+                break;
+            }
+        }
+        if (!found) break;
+    }
 }
 
 static void BeginTransformSnapshot()
@@ -906,6 +1319,239 @@ static bool LoadNebSlotsManifest(const std::filesystem::path& absMeshPath, std::
 static void AutoAssignMaterialSlotsFromMesh(StaticMesh3DNode& n)
 {
     NebulaNodes::AutoAssignMaterialSlotsFromMesh(n);
+}
+
+static bool TryGetNodeWorldPosByName(const std::string& name, float& ox, float& oy, float& oz)
+{
+    if (name.empty()) return false;
+
+    int si = FindStaticMeshByName(name);
+    if (si >= 0)
+    {
+        float rx, ry, rz, sx, sy, sz;
+        GetStaticMeshWorldTRS(si, ox, oy, oz, rx, ry, rz, sx, sy, sz);
+        return true;
+    }
+
+    int ni = FindNode3DByName(name);
+    if (ni >= 0)
+    {
+        float rx, ry, rz, sx, sy, sz;
+        GetNode3DWorldTRS(ni, ox, oy, oz, rx, ry, rz, sx, sy, sz);
+        return true;
+    }
+
+    return false;
+}
+
+static bool IsCameraUnderNode3D(const Camera3DNode& cam, const std::string& nodeName)
+{
+    if (nodeName.empty()) return false;
+    if (cam.parent == nodeName) return true;
+
+    std::string cur = cam.name;
+    std::string p;
+    int guard = 0;
+    while (guard++ < 256 && TryGetParentByNodeName(cur, p))
+    {
+        if (p == nodeName) return true;
+        if (p.empty() || p == cur) break;
+        cur = p;
+    }
+    return false;
+}
+
+static void GetLocalAxesFromEuler(float rotX, float rotY, float rotZ, Vec3& right, Vec3& up, Vec3& forward);
+
+#if defined(_WIN32)
+#define NB_RT_EXPORT extern "C" __declspec(dllexport)
+#else
+#define NB_RT_EXPORT extern "C"
+#endif
+
+NB_RT_EXPORT void NB_RT_GetNode3DPosition(const char* name, float outPos[3])
+{
+    if (!outPos)
+        return;
+    outPos[0] = outPos[1] = outPos[2] = 0.0f;
+    if (!name)
+        return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0)
+        return;
+    const auto& n = gNode3DNodes[idx];
+    outPos[0] = n.x;
+    outPos[1] = n.y;
+    outPos[2] = n.z;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z)
+{
+    if (!name)
+        return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0)
+        return;
+    auto& n = gNode3DNodes[idx];
+    n.x = x;
+    n.y = y;
+    n.z = z;
+}
+
+NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
+{
+    if (!outRot)
+        return;
+    outRot[0] = outRot[1] = outRot[2] = 0.0f;
+    if (!name)
+        return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0)
+        return;
+    const auto& n = gNode3DNodes[idx];
+    outRot[0] = n.rotX;
+    outRot[1] = n.rotY;
+    outRot[2] = n.rotZ;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z)
+{
+    if (!name)
+        return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0)
+        return;
+    auto& n = gNode3DNodes[idx];
+    n.rotX = x;
+    n.rotY = y;
+    n.rotZ = z;
+}
+
+NB_RT_EXPORT void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3])
+{
+    if (!outFwd)
+        return;
+    outFwd[0] = 0.0f;
+    outFwd[1] = 0.0f;
+    outFwd[2] = 1.0f;
+    if (!name)
+        return;
+    int idx = FindCamera3DByName(name);
+    if (idx < 0)
+        return;
+    float wx, wy, wz, wrx, wry, wrz;
+    GetCamera3DWorldTR(idx, wx, wy, wz, wrx, wry, wrz);
+    Vec3 right{}, up{}, forward{};
+    GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+    outFwd[0] = forward.x;
+    outFwd[1] = forward.y;
+    outFwd[2] = forward.z;
+}
+
+NB_RT_EXPORT void NB_RT_GetCameraOrbit(const char* name, float outOrbit[3])
+{
+    if (!outOrbit)
+        return;
+    outOrbit[0] = outOrbit[1] = outOrbit[2] = 0.0f;
+    if (!name)
+        return;
+    int idx = FindCamera3DByName(name);
+    if (idx < 0)
+        return;
+    const auto& c = gCamera3DNodes[idx];
+    outOrbit[0] = c.orbitX;
+    outOrbit[1] = c.orbitY;
+    outOrbit[2] = c.orbitZ;
+}
+
+NB_RT_EXPORT void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z)
+{
+    if (!name)
+        return;
+    int idx = FindCamera3DByName(name);
+    if (idx < 0)
+        return;
+    auto& c = gCamera3DNodes[idx];
+    c.orbitX = x;
+    c.orbitY = y;
+    c.orbitZ = z;
+}
+
+NB_RT_EXPORT void NB_RT_GetCameraRotation(const char* name, float outRot[3])
+{
+    if (!outRot)
+        return;
+    outRot[0] = outRot[1] = outRot[2] = 0.0f;
+    if (!name)
+        return;
+    int idx = FindCamera3DByName(name);
+    if (idx < 0)
+        return;
+    const auto& c = gCamera3DNodes[idx];
+    outRot[0] = c.rotX;
+    outRot[1] = c.rotY;
+    outRot[2] = c.rotZ;
+}
+
+NB_RT_EXPORT void NB_RT_SetCameraRotation(const char* name, float x, float y, float z)
+{
+    if (!name)
+        return;
+    int idx = FindCamera3DByName(name);
+    if (idx < 0)
+        return;
+    auto& c = gCamera3DNodes[idx];
+    c.rotX = x;
+    c.rotY = y;
+    c.rotZ = z;
+}
+
+NB_RT_EXPORT int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName)
+{
+    if (!cameraName || !nodeName)
+        return 0;
+    int camIdx = FindCamera3DByName(cameraName);
+    if (camIdx < 0)
+        return 0;
+    return IsCameraUnderNode3D(gCamera3DNodes[camIdx], nodeName) ? 1 : 0;
+}
+
+static void ReparentStaticMeshKeepWorldPos(int childIdx, const std::string& newParent)
+{
+    if (childIdx < 0 || childIdx >= (int)gStaticMeshNodes.size()) return;
+
+    float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+    GetStaticMeshWorldTRS(childIdx, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+    gStaticMeshNodes[childIdx].parent = newParent;
+
+    if (newParent.empty())
+    {
+        gStaticMeshNodes[childIdx].x = wx;
+        gStaticMeshNodes[childIdx].y = wy;
+        gStaticMeshNodes[childIdx].z = wz;
+        return;
+    }
+
+    float px = 0.0f, py = 0.0f, pz = 0.0f;
+    if (TryGetNodeWorldPosByName(newParent, px, py, pz))
+    {
+        gStaticMeshNodes[childIdx].x = wx - px;
+        gStaticMeshNodes[childIdx].y = wy - py;
+        gStaticMeshNodes[childIdx].z = wz - pz;
+    }
+}
+
+static void ResetStaticMeshTransformsKeepWorld(int idx)
+{
+    if (idx < 0 || idx >= (int)gStaticMeshNodes.size()) return;
+    float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+    GetStaticMeshWorldTRS(idx, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+    auto& s = gStaticMeshNodes[idx];
+    s.parent.clear();
+    s.x = wx; s.y = wy; s.z = wz;
+    s.rotX = wrx; s.rotY = wry; s.rotZ = wrz;
+    s.scaleX = wsx; s.scaleY = wsy; s.scaleZ = wsz;
 }
 
 static std::string ToProjectRelativePath(const std::filesystem::path& p)
@@ -1489,6 +2135,7 @@ static void SetActiveScene(int index)
     gCamera3DNodes = gOpenScenes[gActiveScene].cameras;
     gNode3DNodes = gOpenScenes[gActiveScene].node3d;
     gForceSelectSceneTab = index;
+    NotifyScriptSceneSwitch();
 }
 
 static void OpenSceneFile(const std::filesystem::path& path)
@@ -4325,6 +4972,7 @@ int main(int, char**)
         if (deltaTime > 0.1f) deltaTime = 0.1f; // clamp
 
         PollScriptHotReloadV1(now);
+        TickPlayScriptRuntime(deltaTime, now);
 
         // Mouse orbit (MMB) / rotate in place (RMB)
         double mx, my;
@@ -4472,6 +5120,240 @@ int main(int, char**)
             }
         }
 
+        // Fallback controls if script runtime is unavailable (e.g. cl.exe missing).
+        if (gPlayMode && navKeyAllowed && (!gEditorScriptActive || !useScriptController))
+        {
+
+            const float moveStep = 5.0f * deltaTime;
+            const float lookYawStep = 120.0f * deltaTime;
+            const float lookPitchStep = 90.0f * deltaTime;
+            const float turnSpeed = 360.0f * deltaTime;
+            static double sFallbackLogTime = 0.0;
+            static double sFreezeLogTime = 0.0;
+
+            float inX = 0.0f, inY = 0.0f;
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) inX -= 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) inX += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) inY += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) inY -= 1.0f;
+            float inLen = sqrtf(inX * inX + inY * inY);
+            if (inLen > 1.0f)
+            {
+                inX /= inLen;
+                inY /= inLen;
+                inLen = 1.0f;
+            }
+            float lookYaw = 0.0f, lookPitch = 0.0f;
+            if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) lookYaw += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) lookYaw -= 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) lookPitch += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) lookPitch -= 1.0f;
+
+            // Hard fallback sync: keep CameraPivot at PlayerRoot position in C++ when script runtime is unavailable.
+            {
+                int playerIdx = FindNode3DByName("PlayerRoot");
+                int pivotIdx = FindNode3DByName("CameraPivot");
+                if (playerIdx >= 0 && pivotIdx >= 0 && playerIdx < (int)gNode3DNodes.size() && pivotIdx < (int)gNode3DNodes.size())
+                {
+                    gNode3DNodes[pivotIdx].x = gNode3DNodes[playerIdx].x;
+                    gNode3DNodes[pivotIdx].y = gNode3DNodes[playerIdx].y;
+                    gNode3DNodes[pivotIdx].z = gNode3DNodes[playerIdx].z;
+                }
+            }
+
+            for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
+            {
+                auto& n3 = gNode3DNodes[ni];
+                if (n3.name != "PlayerRoot") continue;
+
+                const bool lookActive = (fabsf(lookYaw) > 0.0001f || fabsf(lookPitch) > 0.0001f);
+                for (auto& cam : gCamera3DNodes)
+                {
+                    const bool camLinked = IsCameraUnderNode3D(cam, n3.name)
+                        || (n3.name == "PlayerRoot" && cam.parent == "CameraPivot");
+                    if (!camLinked) continue;
+                    if (!lookActive) continue; // hard-freeze camera unless J/L/I/K is pressed
+
+                    bool migratedOrbit = false;
+                    if (fabsf(cam.orbitX) < 0.0001f && fabsf(cam.orbitZ) < 0.0001f)
+                    {
+                        // Seed orbit from local camera offset so J/L has visible effect immediately.
+                        cam.orbitX = cam.x;
+                        cam.orbitZ = cam.z;
+                        cam.x = 0.0f;
+                        cam.z = 0.0f;
+                        migratedOrbit = true;
+                    }
+
+                    if (!migratedOrbit && fabsf(lookYaw) > 0.0001f)
+                    {
+                        const float yawRad = (-lookYaw * lookYawStep) * 3.14159f / 180.0f;
+                        const float sn = sinf(yawRad), cs = cosf(yawRad);
+                        float ox = cam.orbitX, oz = cam.orbitZ;
+                        cam.orbitX = ox * cs - oz * sn;
+                        cam.orbitZ = ox * sn + oz * cs;
+                    }
+                    if (fabsf(lookPitch) > 0.0001f)
+                    {
+                        float ox = cam.orbitX, oy = cam.orbitY, oz = cam.orbitZ;
+                        float horiz = sqrtf(ox * ox + oz * oz);
+                        float radius = sqrtf(horiz * horiz + oy * oy);
+                        if (radius > 0.0001f)
+                        {
+                            float pitch = atan2f(oy, (horiz > 0.0001f ? horiz : 0.0001f));
+                            pitch += (lookPitch * lookPitchStep) * 3.14159f / 180.0f;
+                            const float lim = 1.39626f;
+                            if (pitch > lim) pitch = lim;
+                            if (pitch < -lim) pitch = -lim;
+                            float newHoriz = cosf(pitch) * radius;
+                            cam.orbitY = sinf(pitch) * radius;
+                            if (horiz > 0.0001f)
+                            {
+                                float s = newHoriz / horiz;
+                                cam.orbitX = ox * s;
+                                cam.orbitZ = oz * s;
+                            }
+                            else
+                            {
+                                cam.orbitX = 0.0f;
+                                cam.orbitZ = -newHoriz;
+                            }
+                        }
+                    }
+
+                    // Keep camera looking toward pivot from orbit offset (only during explicit look input).
+                    {
+                        float fx = -cam.orbitX, fy = -cam.orbitY, fz = -cam.orbitZ;
+                        float fl = sqrtf(fx * fx + fy * fy + fz * fz);
+                        if (fl > 0.0001f)
+                        {
+                            fx /= fl; fy /= fl; fz /= fl;
+                            cam.rotY = atan2f(fx, fz) * 180.0f / 3.14159f;
+                            cam.rotX = -atan2f(fy, sqrtf(fx * fx + fz * fz)) * 180.0f / 3.14159f;
+                            cam.rotZ = 0.0f;
+                        }
+                    }
+                }
+
+                // SA1 camera-relative 8-way fallback (mode-locked):
+                // use camera->pivot direction on XZ so W is away from camera, S is toward camera.
+                float camToNodeX = 0.0f, camToNodeZ = 1.0f;
+                bool gotFwd = false;
+                bool gotCamForFreeze = false;
+                float freezeOrbitX = 0.0f, freezeOrbitY = 0.0f, freezeOrbitZ = 0.0f;
+                float freezeRotX = 0.0f, freezeRotY = 0.0f, freezeRotZ = 0.0f;
+                for (const auto& cam : gCamera3DNodes)
+                {
+                    const bool camLinked = IsCameraUnderNode3D(cam, n3.name)
+                        || (n3.name == "PlayerRoot" && cam.parent == "CameraPivot");
+                    if (!camLinked) continue;
+                    int ci = FindCamera3DByName(cam.name);
+                    if (ci < 0) continue;
+
+                    float cwx, cwy, cwz, cwrx, cwry, cwrz;
+                    GetCamera3DWorldTR(ci, cwx, cwy, cwz, cwrx, cwry, cwrz);
+
+                    float nwx, nwy, nwz, nwrx, nwry, nwrz, nwsx, nwsy, nwsz;
+                    GetNode3DWorldTRS(ni, nwx, nwy, nwz, nwrx, nwry, nwrz, nwsx, nwsy, nwsz);
+
+                    camToNodeX = nwx - cwx;
+                    camToNodeZ = nwz - cwz;
+                    gotFwd = true;
+                    gotCamForFreeze = true;
+                    freezeOrbitX = cam.orbitX;
+                    freezeOrbitY = cam.orbitY;
+                    freezeOrbitZ = cam.orbitZ;
+                    freezeRotX = cam.rotX;
+                    freezeRotY = cam.rotY;
+                    freezeRotZ = cam.rotZ;
+                    break;
+                }
+                if (!gotFwd)
+                {
+                    float yawRad = n3.rotY * 3.14159f / 180.0f;
+                    camToNodeX = sinf(yawRad);
+                    camToNodeZ = cosf(yawRad);
+                }
+
+                float fLen = sqrtf(camToNodeX * camToNodeX + camToNodeZ * camToNodeZ);
+                if (fLen < 0.0001f)
+                {
+                    // Stable fallback when camera forward collapses (prevents spin jitter).
+                    float yawRad = n3.rotY * 3.14159f / 180.0f;
+                    camToNodeX = sinf(yawRad);
+                    camToNodeZ = cosf(yawRad);
+                    fLen = 1.0f;
+                }
+                camToNodeX /= fLen;
+                camToNodeZ /= fLen;
+                float camRightX = camToNodeZ;
+                float camRightZ = -camToNodeX;
+
+                // Build desired move heading from stable camera basis + WASD direction.
+                float moveX = camRightX * inX + camToNodeX * inY;
+                float moveZ = camRightZ * inX + camToNodeZ * inY;
+                float moveLen = sqrtf(moveX * moveX + moveZ * moveZ);
+                const float deadzone = 0.05f;
+                float targetYaw = n3.rotY;
+                float dy = 0.0f;
+                if (moveLen > deadzone)
+                {
+                    moveX /= moveLen;
+                    moveZ /= moveLen;
+
+                    n3.x += moveX * moveStep;
+                    n3.z += moveZ * moveStep;
+
+                    targetYaw = atan2f(moveX, moveZ) * 180.0f / 3.14159f;
+                    dy = targetYaw - n3.rotY;
+                    while (dy > 180.0f) dy -= 360.0f;
+                    while (dy < -180.0f) dy += 360.0f;
+                    if (dy > turnSpeed) dy = turnSpeed;
+                    if (dy < -turnSpeed) dy = -turnSpeed;
+                    n3.rotY += dy;
+                }
+
+                // Keep CameraPivot snapped to PlayerRoot after movement, same frame.
+                if (n3.name == "PlayerRoot")
+                {
+                    int pivotIdx = FindNode3DByName("CameraPivot");
+                    if (pivotIdx >= 0 && pivotIdx < (int)gNode3DNodes.size())
+                    {
+                        gNode3DNodes[pivotIdx].x = n3.x;
+                        gNode3DNodes[pivotIdx].y = n3.y;
+                        gNode3DNodes[pivotIdx].z = n3.z;
+                    }
+                }
+
+                if (inLen > 0.0001f)
+                {
+                    double now = glfwGetTime();
+                    if (now - sFallbackLogTime >= 1.0)
+                    {
+                        sFallbackLogTime = now;
+                        printf("[Fallback8Way] node=%s in=(%.2f,%.2f) camToNode=(%.2f,%.2f,%.2f) move=(%.2f,%.2f,%.2f) yaw=%.2f target=%.2f dy=%.2f\n",
+                            n3.name.c_str(),
+                            inX, inY,
+                            camToNodeX, camToNodeZ, fLen,
+                            moveX, moveZ, moveLen,
+                            n3.rotY, targetYaw, dy);
+                    }
+                }
+
+                if (!lookActive && inLen > 0.0001f && gotCamForFreeze)
+                {
+                    double now = glfwGetTime();
+                    if (now - sFreezeLogTime >= 1.0)
+                    {
+                        sFreezeLogTime = now;
+                        printf("[FallbackCamFreeze] lookActive=0 camOrbit=(%.3f,%.3f,%.3f) camRot=(%.3f,%.3f,%.3f)\n",
+                            freezeOrbitX, freezeOrbitY, freezeOrbitZ,
+                            freezeRotX, freezeRotY, freezeRotZ);
+                    }
+                }
+            }
+        }
+
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
@@ -4520,11 +5402,15 @@ int main(int, char**)
         bool hasPlayCam = false;
         if (activeCam && gPlayMode)
         {
+            int activeCamIdx = (int)(activeCam - &gCamera3DNodes[0]);
+            float camX, camY, camZ, camRX, camRY, camRZ;
+            GetCamera3DWorldTR(activeCamIdx, camX, camY, camZ, camRX, camRY, camRZ);
+
             Camera3DV2 playCam = BuildCamera3DV2FromLegacyEuler(
                 activeCam->name,
                 activeCam->parent,
-                activeCam->x, activeCam->y, activeCam->z,
-                activeCam->rotX, activeCam->rotY, activeCam->rotZ,
+                camX, camY, camZ,
+                camRX, camRY, camRZ,
                 activeCam->perspective,
                 activeCam->fovY,
                 activeCam->nearZ,
@@ -4651,6 +5537,7 @@ int main(int, char**)
                 if (gPlayMode)
                 {
                     gPlayMode = false;
+                    EndPlayScriptRuntime();
                     if (playCamSnapshotValid)
                     {
                         orbitYaw = playSavedOrbitYaw;
@@ -4789,29 +5676,24 @@ int main(int, char**)
             {
                 const auto& s = gNode3DNodes[ni];
                 if (!s.collisionSource) continue;
-                if (s.primitiveMesh.empty() || gProjectDir.empty()) continue;
-
-                std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.primitiveMesh;
-                const NebMesh* mesh = GetNebMesh(meshPath);
-                if (!mesh || !mesh->valid || mesh->positions.empty()) continue;
 
                 float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
                 GetNode3DWorldTRS(ni, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
-                float minX = 1e30f, maxX = -1e30f;
-                float minZ = 1e30f, maxZ = -1e30f;
-                float topY = -1e30f;
-                for (const auto& v : mesh->positions)
-                {
-                    float px = wx + v.x * wsx;
-                    float py = wy + v.y * wsy;
-                    float pz = wz + v.z * wsz;
-                    if (px < minX) minX = px;
-                    if (px > maxX) maxX = px;
-                    if (pz < minZ) minZ = pz;
-                    if (pz > maxZ) maxZ = pz;
-                    if (py > topY) topY = py;
-                }
+                // Local bounds center offset, rotated by world orientation, independent from hierarchy transforms.
+                Vec3 right{}, up{}, forward{};
+                GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+                wx += right.x * s.boundPosX + up.x * s.boundPosY + forward.x * s.boundPosZ;
+                wy += right.y * s.boundPosX + up.y * s.boundPosY + forward.y * s.boundPosZ;
+                wz += right.z * s.boundPosX + up.z * s.boundPosY + forward.z * s.boundPosZ;
+
+                const float hx = std::max(0.0f, s.extentX * wsx);
+                const float hy = std::max(0.0f, s.extentY * wsy);
+                const float hz = std::max(0.0f, s.extentZ * wsz);
+
+                float minX = wx - hx, maxX = wx + hx;
+                float minZ = wz - hz, maxZ = wz + hz;
+                float topY = wy + hy;
 
                 if (minX <= maxX && minZ <= maxZ)
                     floorColliders.push_back({ minX, maxX, minZ, maxZ, topY, ni });
@@ -5604,11 +6486,13 @@ int main(int, char**)
             else if (c.main) glColor3f(0.2f, 1.0f, 0.4f);
             else glColor3f(0.1f, 0.8f, 0.3f);
 
+            float cwx, cwy, cwz, cwrx, cwry, cwrz;
+            GetCamera3DWorldTR(i, cwx, cwy, cwz, cwrx, cwry, cwrz);
             glPushMatrix();
-            glTranslatef(c.x, c.y, c.z);
-            glRotatef(c.rotX, 1.0f, 0.0f, 0.0f);
-            glRotatef(c.rotY, 0.0f, 1.0f, 0.0f);
-            glRotatef(c.rotZ, 0.0f, 0.0f, 1.0f);
+            glTranslatef(cwx, cwy, cwz);
+            glRotatef(cwrx, 1.0f, 0.0f, 0.0f);
+            glRotatef(cwry, 0.0f, 1.0f, 0.0f);
+            glRotatef(cwrz, 0.0f, 0.0f, 1.0f);
 
             // original helper marker
             glBegin(GL_LINES);
@@ -5639,7 +6523,13 @@ int main(int, char**)
             glRotatef(wrx, 1.0f, 0.0f, 0.0f);
             glRotatef(wry, 0.0f, 1.0f, 0.0f);
             glRotatef(wrz, 0.0f, 0.0f, 1.0f);
-            glScalef(wsx, wsy, wsz);
+            // Apply local bounds offset (collision-only, does not affect parent/child transforms).
+            glTranslatef(n.boundPosX, n.boundPosY, n.boundPosZ);
+            // Apply local collision extents to Node3D box size, without affecting hierarchy inheritance.
+            const float ex = std::max(0.0f, n.extentX * 2.0f);
+            const float ey = std::max(0.0f, n.extentY * 2.0f);
+            const float ez = std::max(0.0f, n.extentZ * 2.0f);
+            glScalef(wsx * ex, wsy * ey, wsz * ez);
 
             const float q = 0.5f;
             glBegin(GL_QUADS);
@@ -5754,9 +6644,17 @@ int main(int, char**)
             glTranslatef(wx, wy, wz);
             // StaticMesh rotation axis remap:
             // X <- Z (pitch/back-forth), Y <- X (yaw left-right), Z <- Y (roll/spin)
+            // If parented under Node3D, apply parent/world rotation directly (Node3D axis basis)
+            // to avoid child-local mismatch against root node rotation.
             float sxRot = wrz;
             float syRot = wrx;
             float szRot = wry;
+            if (!s.parent.empty() && FindNode3DByName(s.parent) >= 0)
+            {
+                sxRot = wrx;
+                syRot = wry;
+                szRot = wrz;
+            }
             glRotatef(sxRot, 1.0f, 0.0f, 0.0f);
             glRotatef(syRot, 0.0f, 1.0f, 0.0f);
             glRotatef(szRot, 0.0f, 0.0f, 1.0f);
@@ -6008,10 +6906,12 @@ RenderImGuiOnly:
                 playSavedOrbitCenter = orbitCenter;
                 playCamSnapshotValid = true;
                 gPlayMode = true;
+                BeginPlayScriptRuntime();
             }
             else
             {
                 gPlayMode = false;
+                EndPlayScriptRuntime();
                 if (playCamSnapshotValid)
                 {
                     orbitYaw = playSavedOrbitYaw;
@@ -7001,15 +7901,18 @@ RenderImGuiOnly:
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
                             std::filesystem::path cdTexturesDir = cdDataDir / "textures";
                             std::filesystem::path cdMatDir = cdDataDir / "materials";
+                            std::filesystem::path cdVmuDir = cdDataDir / "vmu";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);
                             std::filesystem::remove_all(cdTexturesDir, stageEc);
                             std::filesystem::remove_all(cdMatDir, stageEc);
+                            std::filesystem::remove_all(cdVmuDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
                             std::filesystem::create_directories(cdMatDir);
+                            std::filesystem::create_directories(cdVmuDir);
 
                             auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
                             {
@@ -7448,6 +8351,21 @@ RenderImGuiOnly:
                                     }
                                 }
 
+                                // Disk-only VMU payload staging for runtime reads.
+                                {
+                                    std::filesystem::path vmuBootPath = cdVmuDir / "vmu_boot.bin";
+                                    std::ofstream vb(vmuBootPath, std::ios::binary | std::ios::out | std::ios::trunc);
+                                    if (vb.is_open()) vb.write((const char*)vmuBootPacked.data(), (std::streamsize)vmuBootPacked.size());
+
+                                    std::filesystem::path vmuAnimPath = cdVmuDir / "vmu_anim.bin";
+                                    std::ofstream va(vmuAnimPath, std::ios::binary | std::ios::out | std::ios::trunc);
+                                    if (va.is_open() && !vmuAnimPacked.empty())
+                                    {
+                                        for (const auto& fr : vmuAnimPacked)
+                                            va.write((const char*)fr.data(), (std::streamsize)fr.size());
+                                    }
+                                }
+
                                 mc << "#include <kos.h>\n";
                                 mc << "#include <dc/pvr.h>\n";
                                 mc << "#include <dc/maple.h>\n";
@@ -7499,6 +8417,9 @@ RenderImGuiOnly:
                                 mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                mc << "void NB_RT_GetMeshPosition(float outPos[3]){ if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
+                                mc << "void NB_RT_SetMeshPosition(float x,float y,float z){ gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; }\n";
+                                mc << "void NB_RT_AddMeshPositionDelta(float dx,float dy,float dz){ gMeshPos[0]+=dx; gMeshPos[1]+=dy; gMeshPos[2]+=dz; }\n";
                                 mc << "static int gMirrorX = -1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = -1;\n";
@@ -7537,7 +8458,10 @@ RenderImGuiOnly:
                                 mc << "  if(cur == sLastVmu) return;\n";
                                 mc << "  sLastVmu = cur;\n";
                                 mc << "  if(!vmu){ dbgio_printf(\"[VMU] VMU LCD disconnected\\n\"); return; }\n";
+                                mc << "  uint8_t diskBoot[192];\n";
                                 mc << "  const uint8_t* src = kVmuBootPng;\n";
+                                mc << "  FILE* fb = fopen(\"/cd/data/vmu/vmu_boot.bin\",\"rb\");\n";
+                                mc << "  if(fb){ size_t n=fread(diskBoot,1,sizeof(diskBoot),fb); fclose(fb); if(n==sizeof(diskBoot)) src=diskBoot; }\n";
                                 mc << "  if(kVmuAnimEnabled && kVmuAnimFrameCount > 0) src = &kVmuAnimFrames[0];\n";
                                 mc << "  int rc = vmu_draw_lcd(vmu, (void*)src);\n";
                                 mc << "  dbgio_printf(\"[VMU] load-on-boot draw rc=%d\\n\", rc);\n";
@@ -7547,19 +8471,28 @@ RenderImGuiOnly:
                                 mc << "  static float sAccum = 0.0f;\n";
                                 mc << "  static int sFrame = 0;\n";
                                 mc << "  static int sDoneOneShot = 0;\n";
+                                mc << "  static uint8_t* sAnimDisk = 0;\n";
+                                mc << "  static int sAnimDiskFrames = 0;\n";
+                                mc << "  static int sAnimTriedLoad = 0;\n";
                                 mc << "  if(!kVmuLoadOnBoot || !kVmuAnimEnabled || kVmuAnimFrameCount <= 0) return;\n";
                                 mc << "  if(!kVmuAnimLoop && sDoneOneShot) return;\n";
+                                mc << "  if(!sAnimTriedLoad){\n";
+                                mc << "    sAnimTriedLoad = 1;\n";
+                                mc << "    FILE* fa=fopen(\"/cd/data/vmu/vmu_anim.bin\",\"rb\");\n";
+                                mc << "    if(fa){ fseek(fa,0,SEEK_END); long sz=ftell(fa); fseek(fa,0,SEEK_SET); if(sz>=192){ sAnimDisk=(uint8_t*)malloc((size_t)sz); if(sAnimDisk){ size_t n=fread(sAnimDisk,1,(size_t)sz,fa); if((long)n==sz) sAnimDiskFrames=(int)(sz/192); else { free(sAnimDisk); sAnimDisk=0; } } } fclose(fa); }\n";
+                                mc << "  }\n";
                                 mc << "  if(!sVmu){ for(int i=0;i<8;++i){ maple_device_t* d=maple_enum_type(i, MAPLE_FUNC_LCD); if(d){ sVmu=d; break; } } }\n";
                                 mc << "  if(!sVmu) return;\n";
                                 mc << "  float fps = 8.0f; if(kVmuAnimSpeedCode==0) fps = 4.0f; else if(kVmuAnimSpeedCode==2) fps = 16.0f;\n";
                                 mc << "  float step = 1.0f / fps;\n";
+                                mc << "  int frameCount = (sAnimDiskFrames > 0) ? sAnimDiskFrames : kVmuAnimFrameCount;\n";
                                 mc << "  sAccum += dt;\n";
                                 mc << "  while(sAccum >= step){\n";
                                 mc << "    sAccum -= step;\n";
-                                mc << "    const uint8_t* frame = &kVmuAnimFrames[(size_t)sFrame * 192u];\n";
+                                mc << "    const uint8_t* frame = (sAnimDiskFrames > 0) ? (sAnimDisk + (size_t)sFrame * 192u) : (&kVmuAnimFrames[(size_t)sFrame * 192u]);\n";
                                 mc << "    vmu_draw_lcd(sVmu, (void*)frame);\n";
                                 mc << "    sFrame++;\n";
-                                mc << "    if(sFrame >= kVmuAnimFrameCount){ sFrame = 0; if(!kVmuAnimLoop){ sDoneOneShot = 1; break; } }\n";
+                                mc << "    if(sFrame >= frameCount){ sFrame = 0; if(!kVmuAnimLoop){ sDoneOneShot = 1; break; } }\n";
                                 mc << "  }\n";
                                 mc << "}\n";
                                 mc << "static void NB_SetMirrorFromIndex(int idx){\n";
@@ -9653,10 +10586,44 @@ RenderImGuiOnly:
         }
 
         // List Audio3D nodes
+        auto findAudioByNameLocal = [&](const std::string& nm)->int { for (int ai=0; ai<(int)gAudio3DNodes.size(); ++ai) if (gAudio3DNodes[ai].name == nm) return ai; return -1; };
         for (int i = 0; i < (int)gAudio3DNodes.size(); ++i)
         {
             auto& n = gAudio3DNodes[i];
+
+            // Hide descendants of collapsed Audio3D parents.
+            bool skipAudioNode = false;
+            {
+                std::string p = n.parent;
+                while (!p.empty())
+                {
+                    int pi = findAudioByNameLocal(p);
+                    if (pi < 0) break;
+                    if (gCollapsedAudioRoots.find(p) != gCollapsedAudioRoots.end()) { skipAudioNode = true; break; }
+                    p = gAudio3DNodes[pi].parent;
+                }
+            }
+            if (skipAudioNode) continue;
+
             ImGui::PushID(i);
+            {
+                bool hasAudioChild = false;
+                for (int ci = 0; ci < (int)gAudio3DNodes.size(); ++ci) if (gAudio3DNodes[ci].parent == n.name) { hasAudioChild = true; break; }
+                for (int ci = 0; !hasAudioChild && ci < (int)gStaticMeshNodes.size(); ++ci) if (gStaticMeshNodes[ci].parent == n.name) { hasAudioChild = true; break; }
+                for (int ci = 0; !hasAudioChild && ci < (int)gCamera3DNodes.size(); ++ci) if (gCamera3DNodes[ci].parent == n.name) { hasAudioChild = true; break; }
+                for (int ci = 0; !hasAudioChild && ci < (int)gNode3DNodes.size(); ++ci) if (gNode3DNodes[ci].parent == n.name) { hasAudioChild = true; break; }
+                bool audioExpanded = (gCollapsedAudioRoots.find(n.name) == gCollapsedAudioRoots.end());
+                if (hasAudioChild)
+                {
+                    if (ImGui::SmallButton(audioExpanded ? "v" : ">"))
+                    {
+                        if (audioExpanded) gCollapsedAudioRoots.insert(n.name);
+                        else gCollapsedAudioRoots.erase(n.name);
+                    }
+                    ImGui::SameLine();
+                }
+            }
+
             bool selected = (gSelectedAudio3D == i);
             if (ImGui::Selectable(n.name.c_str(), selected))
             {
@@ -9695,7 +10662,7 @@ RenderImGuiOnly:
                     [&](int child, const std::string& parent){ gAudio3DNodes[child].parent = parent; });
                 tryReparentToAudio("SCENE_STATICMESH",
                     [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gStaticMeshNodes.size()) return false; childName = gStaticMeshNodes[child].name; return true; },
-                    [&](int child, const std::string& parent){ gStaticMeshNodes[child].parent = parent; });
+                    [&](int child, const std::string& parent){ ReparentStaticMeshKeepWorldPos(child, parent); });
                 tryReparentToAudio("SCENE_CAMERA3D",
                     [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gCamera3DNodes.size()) return false; childName = gCamera3DNodes[child].name; return true; },
                     [&](int child, const std::string& parent){ gCamera3DNodes[child].parent = parent; });
@@ -9770,6 +10737,23 @@ RenderImGuiOnly:
                 ImGui::PushID(10000 + i);
                 if (depth > 0) ImGui::Indent(14.0f * depth);
 
+                bool hasStaticChild = false;
+                for (int ci = 0; ci < (int)gStaticMeshNodes.size(); ++ci)
+                    if (gStaticMeshNodes[ci].parent == n.name) { hasStaticChild = true; break; }
+                for (int ci = 0; !hasStaticChild && ci < (int)gAudio3DNodes.size(); ++ci) if (gAudio3DNodes[ci].parent == n.name) { hasStaticChild = true; break; }
+                for (int ci = 0; !hasStaticChild && ci < (int)gCamera3DNodes.size(); ++ci) if (gCamera3DNodes[ci].parent == n.name) { hasStaticChild = true; break; }
+                for (int ci = 0; !hasStaticChild && ci < (int)gNode3DNodes.size(); ++ci) if (gNode3DNodes[ci].parent == n.name) { hasStaticChild = true; break; }
+                bool staticExpanded = (gCollapsedStaticRoots.find(n.name) == gCollapsedStaticRoots.end());
+                if (hasStaticChild)
+                {
+                    if (ImGui::SmallButton(staticExpanded ? "v" : ">"))
+                    {
+                        if (staticExpanded) gCollapsedStaticRoots.insert(n.name);
+                        else gCollapsedStaticRoots.erase(n.name);
+                        staticExpanded = !staticExpanded;
+                    }
+                    ImGui::SameLine();
+                }
                 bool selected = (gSelectedStaticMesh == i);
                 if (ImGui::Selectable(n.name.c_str(), selected))
                 {
@@ -9808,7 +10792,7 @@ RenderImGuiOnly:
                         [&](int child, const std::string& parent){ gAudio3DNodes[child].parent = parent; });
                     tryReparentToStatic("SCENE_STATICMESH",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gStaticMeshNodes.size() || child == i) return false; childName = gStaticMeshNodes[child].name; return true; },
-                        [&](int child, const std::string& parent){ gStaticMeshNodes[child].parent = parent; });
+                        [&](int child, const std::string& parent){ ReparentStaticMeshKeepWorldPos(child, parent); });
                     tryReparentToStatic("SCENE_CAMERA3D",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gCamera3DNodes.size()) return false; childName = gCamera3DNodes[child].name; return true; },
                         [&](int child, const std::string& parent){ gCamera3DNodes[child].parent = parent; });
@@ -9878,8 +10862,11 @@ RenderImGuiOnly:
                     return;
                 }
 
-                for (int ci = 0; ci < (int)gStaticMeshNodes.size(); ++ci)
-                    if (gStaticMeshNodes[ci].parent == n.name) drawStaticNode(ci, depth + 1);
+                if (staticExpanded)
+                {
+                    for (int ci = 0; ci < (int)gStaticMeshNodes.size(); ++ci)
+                        if (gStaticMeshNodes[ci].parent == n.name) drawStaticNode(ci, depth + 1);
+                }
 
                 if (depth > 0) ImGui::Unindent(14.0f * depth);
                 ImGui::PopID();
@@ -9892,10 +10879,44 @@ RenderImGuiOnly:
 
         if (!gCamera3DNodes.empty())
         {
+            auto findCameraByNameLocal = [&](const std::string& nm)->int { for (int ci=0; ci<(int)gCamera3DNodes.size(); ++ci) if (gCamera3DNodes[ci].name == nm) return ci; return -1; };
             for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
             {
                 auto& n = gCamera3DNodes[i];
+
+                // Hide descendants of collapsed Camera3D parents.
+                bool skipCameraNode = false;
+                {
+                    std::string p = n.parent;
+                    while (!p.empty())
+                    {
+                        int pi = findCameraByNameLocal(p);
+                        if (pi < 0) break;
+                        if (gCollapsedCameraRoots.find(p) != gCollapsedCameraRoots.end()) { skipCameraNode = true; break; }
+                        p = gCamera3DNodes[pi].parent;
+                    }
+                }
+                if (skipCameraNode) continue;
+
                 ImGui::PushID(20000 + i);
+                {
+                    bool hasCameraChild = false;
+                    for (int ci = 0; ci < (int)gCamera3DNodes.size(); ++ci) if (gCamera3DNodes[ci].parent == n.name) { hasCameraChild = true; break; }
+                    for (int ci = 0; !hasCameraChild && ci < (int)gAudio3DNodes.size(); ++ci) if (gAudio3DNodes[ci].parent == n.name) { hasCameraChild = true; break; }
+                    for (int ci = 0; !hasCameraChild && ci < (int)gStaticMeshNodes.size(); ++ci) if (gStaticMeshNodes[ci].parent == n.name) { hasCameraChild = true; break; }
+                    for (int ci = 0; !hasCameraChild && ci < (int)gNode3DNodes.size(); ++ci) if (gNode3DNodes[ci].parent == n.name) { hasCameraChild = true; break; }
+                    bool cameraExpanded = (gCollapsedCameraRoots.find(n.name) == gCollapsedCameraRoots.end());
+                    if (hasCameraChild)
+                    {
+                        if (ImGui::SmallButton(cameraExpanded ? "v" : ">"))
+                        {
+                            if (cameraExpanded) gCollapsedCameraRoots.insert(n.name);
+                            else gCollapsedCameraRoots.erase(n.name);
+                        }
+                        ImGui::SameLine();
+                    }
+                }
+
                 bool selected = (gSelectedCamera3D == i);
                 if (ImGui::Selectable(n.name.c_str(), selected))
                 {
@@ -9934,7 +10955,7 @@ RenderImGuiOnly:
                         [&](int child, const std::string& parent){ gAudio3DNodes[child].parent = parent; });
                     tryReparentToCamera("SCENE_STATICMESH",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gStaticMeshNodes.size()) return false; childName = gStaticMeshNodes[child].name; return true; },
-                        [&](int child, const std::string& parent){ gStaticMeshNodes[child].parent = parent; });
+                        [&](int child, const std::string& parent){ ReparentStaticMeshKeepWorldPos(child, parent); });
                     tryReparentToCamera("SCENE_CAMERA3D",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gCamera3DNodes.size() || child == i) return false; childName = gCamera3DNodes[child].name; return true; },
                         [&](int child, const std::string& parent){ gCamera3DNodes[child].parent = parent; });
@@ -10019,6 +11040,23 @@ RenderImGuiOnly:
                 ImGui::PushID(40000 + i);
                 if (depth > 0) ImGui::Indent(14.0f * depth);
 
+                bool hasNode3DChild = false;
+                for (int ci = 0; ci < (int)gNode3DNodes.size(); ++ci)
+                    if (gNode3DNodes[ci].parent == n.name) { hasNode3DChild = true; break; }
+                for (int ci = 0; !hasNode3DChild && ci < (int)gAudio3DNodes.size(); ++ci) if (gAudio3DNodes[ci].parent == n.name) { hasNode3DChild = true; break; }
+                for (int ci = 0; !hasNode3DChild && ci < (int)gStaticMeshNodes.size(); ++ci) if (gStaticMeshNodes[ci].parent == n.name) { hasNode3DChild = true; break; }
+                for (int ci = 0; !hasNode3DChild && ci < (int)gCamera3DNodes.size(); ++ci) if (gCamera3DNodes[ci].parent == n.name) { hasNode3DChild = true; break; }
+                bool node3DExpanded = (gCollapsedNode3DRoots.find(n.name) == gCollapsedNode3DRoots.end());
+                if (hasNode3DChild)
+                {
+                    if (ImGui::SmallButton(node3DExpanded ? "v" : ">"))
+                    {
+                        if (node3DExpanded) gCollapsedNode3DRoots.insert(n.name);
+                        else gCollapsedNode3DRoots.erase(n.name);
+                        node3DExpanded = !node3DExpanded;
+                    }
+                    ImGui::SameLine();
+                }
                 bool selected = (gSelectedNode3D == i);
                 if (ImGui::Selectable(n.name.c_str(), selected))
                 {
@@ -10057,7 +11095,7 @@ RenderImGuiOnly:
                         [&](int child, const std::string& parent){ gAudio3DNodes[child].parent = parent; });
                     tryReparentToNode3D("SCENE_STATICMESH",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gStaticMeshNodes.size()) return false; childName = gStaticMeshNodes[child].name; return true; },
-                        [&](int child, const std::string& parent){ gStaticMeshNodes[child].parent = parent; });
+                        [&](int child, const std::string& parent){ ReparentStaticMeshKeepWorldPos(child, parent); });
                     tryReparentToNode3D("SCENE_CAMERA3D",
                         [&](int child, std::string& childName)->bool { if (child < 0 || child >= (int)gCamera3DNodes.size()) return false; childName = gCamera3DNodes[child].name; return true; },
                         [&](int child, const std::string& parent){ gCamera3DNodes[child].parent = parent; });
@@ -10125,8 +11163,11 @@ RenderImGuiOnly:
                     return;
                 }
 
-                for (int ci = 0; ci < (int)gNode3DNodes.size(); ++ci)
-                    if (gNode3DNodes[ci].parent == n.name) drawNode3D(ci, depth + 1);
+                if (node3DExpanded)
+                {
+                    for (int ci = 0; ci < (int)gNode3DNodes.size(); ++ci)
+                        if (gNode3DNodes[ci].parent == n.name) drawNode3D(ci, depth + 1);
+                }
 
                 if (depth > 0) ImGui::Unindent(14.0f * depth);
                 ImGui::PopID();
@@ -10963,6 +12004,9 @@ RenderImGuiOnly:
                 ImGui::Text("Parent: %s", n.parent.empty() ? "(none)" : n.parent.c_str());
                 ImGui::SameLine();
                 if (!n.parent.empty() && ImGui::Button("Unparent##InspectorStatic")) n.parent.clear();
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Xform (keep world)##InspectorStatic"))
+                    ResetStaticMeshTransformsKeepWorld(inspectStatic);
                 ImGui::Checkbox("Collision Source (Saturn floor)", &n.collisionSource);
 
                 ImGui::DragFloat3("Position", &n.x, 0.1f);
@@ -10996,10 +12040,40 @@ RenderImGuiOnly:
                 }
 
                 ImGui::DragFloat3("Position", &c.x, 0.1f);
+                static char camParentBuf[256] = {};
+                if (inspectorChanged)
+                    strncpy_s(camParentBuf, c.parent.c_str(), sizeof(camParentBuf) - 1);
+                if (!ImGui::IsAnyItemActive() && c.parent != camParentBuf)
+                    strncpy_s(camParentBuf, c.parent.c_str(), sizeof(camParentBuf) - 1);
+                if (ImGui::InputText("Parent##CamParent", camParentBuf, sizeof(camParentBuf)))
+                    c.parent = camParentBuf;
+                ImGui::SameLine();
+                if (!c.parent.empty() && ImGui::Button("Unparent##InspectorCam")) c.parent.clear();
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Xform (keep world pos)##InspectorCam"))
+                {
+                    float cwx, cwy, cwz, cwrx, cwry, cwrz;
+                    GetCamera3DWorldTR(inspectCamera, cwx, cwy, cwz, cwrx, cwry, cwrz);
+                    c.parent.clear();
+                    c.x = cwx;
+                    c.y = cwy;
+                    c.z = cwz;
+                    c.rotX = 0.0f;
+                    c.rotY = 0.0f;
+                    c.rotZ = 0.0f;
+                    c.orbitX = 0.0f;
+                    c.orbitY = 0.0f;
+                    c.orbitZ = 0.0f;
+                }
+
                 ImGui::Text("Rotation"); ImGui::SameLine();
                 ImGui::SetNextItemWidth(72); ImGui::DragFloat("X##CamRotX", &c.rotX, 0.5f);
                 ImGui::SameLine(); ImGui::SetNextItemWidth(72); ImGui::DragFloat("Y##CamRotY", &c.rotY, 0.5f);
                 ImGui::SameLine(); ImGui::SetNextItemWidth(72); ImGui::DragFloat("Z##CamRotZ", &c.rotZ, 0.5f);
+                ImGui::BeginDisabled(c.parent.empty());
+                ImGui::DragFloat3("Orbit", &c.orbitX, 0.05f);
+                ImGui::EndDisabled();
+                if (c.parent.empty()) ImGui::TextDisabled("Orbit enabled when Parent is set (parent acts as pivot)");
                 ImGui::Checkbox("Perspective", &c.perspective);
 
                 if (c.perspective)
@@ -11031,9 +12105,11 @@ RenderImGuiOnly:
 
                 if (ImGui::Button("Set View To Camera"))
                 {
+                    float cwx, cwy, cwz, cwrx, cwry, cwrz;
+                    GetCamera3DWorldTR(inspectCamera, cwx, cwy, cwz, cwrx, cwry, cwrz);
                     Vec3 right{}, upAxis{}, forward{};
-                    GetLocalAxesFromEuler(c.rotX, c.rotY, c.rotZ, right, upAxis, forward);
-                    orbitCenter = { c.x + forward.x * distance, c.y + forward.y * distance, c.z + forward.z * distance };
+                    GetLocalAxesFromEuler(cwrx, cwry, cwrz, right, upAxis, forward);
+                    orbitCenter = { cwx + forward.x * distance, cwy + forward.y * distance, cwz + forward.z * distance };
 
                     // Convert engine Euler-forward convention to viewport yaw/pitch convention.
                     viewYaw = atan2f(forward.z, forward.x) * 180.0f / 3.14159f;
@@ -11084,6 +12160,27 @@ RenderImGuiOnly:
                 {
                     strncpy_s(scriptBuf, n.script.c_str(), sizeof(scriptBuf) - 1);
                 }
+                if (!ImGui::IsAnyItemActive() && n.script != scriptBuf)
+                    strncpy_s(scriptBuf, n.script.c_str(), sizeof(scriptBuf) - 1);
+                if (ImGui::Button(">##Node3DScriptAssign"))
+                {
+                    if (!gSelectedAssetPath.empty() && gSelectedAssetPath.extension() == ".c" && !gProjectDir.empty())
+                    {
+                        std::filesystem::path rel = std::filesystem::relative(gSelectedAssetPath, std::filesystem::path(gProjectDir));
+                        std::string s = rel.generic_string();
+                        if (!s.empty() && s.rfind("Scripts/", 0) != 0 && s.rfind("Scripts\\", 0) != 0)
+                            s = "Scripts/" + s;
+                        n.script = s;
+                        strncpy_s(scriptBuf, n.script.c_str(), sizeof(scriptBuf) - 1);
+                        gViewportToast = "Node3D script assigned";
+                    }
+                    else
+                    {
+                        gViewportToast = "Select a .c script in Assets";
+                    }
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+                ImGui::SameLine();
                 if (ImGui::InputText("##Node3DScriptPath", scriptBuf, sizeof(scriptBuf)))
                 {
                     std::string s = scriptBuf;
@@ -11114,11 +12211,21 @@ RenderImGuiOnly:
                 ImGui::SameLine();
                 if (!n.parent.empty() && ImGui::Button("Unparent##InspectorNode3D")) n.parent.clear();
                 ImGui::DragFloat3("Position", &n.x, 0.1f);
-                ImGui::Text("Rotation"); ImGui::SameLine();
-                ImGui::SetNextItemWidth(72); ImGui::DragFloat("X##Node3DRotX", &n.rotX, 0.5f);
-                ImGui::SameLine(); ImGui::SetNextItemWidth(72); ImGui::DragFloat("Y##Node3DRotY", &n.rotY, 0.5f);
-                ImGui::SameLine(); ImGui::SetNextItemWidth(72); ImGui::DragFloat("Z##Node3DRotZ", &n.rotZ, 0.5f);
+                // Match StaticMesh3D axis mapping exactly to keep parent/child behavior consistent.
+                float rotArrNode[3] = { n.rotY, n.rotZ, n.rotX };
+                bool rotNodeCh = ImGui::DragFloat3("##Node3DRotPacked", rotArrNode, 0.5f);
+                ImGui::SameLine(); ImGui::Text("Rotation");
+                if (rotNodeCh)
+                {
+                    n.rotY = rotArrNode[0];
+                    n.rotZ = rotArrNode[1];
+                    n.rotX = rotArrNode[2];
+                }
                 ImGui::DragFloat3("Scale", &n.scaleX, 0.01f, 0.01f, 100.0f);
+                ImGui::Separator();
+                ImGui::TextUnformatted("Collision Bounds (local)");
+                ImGui::DragFloat3("XYZ Extents", &n.extentX, 0.01f, 0.0f, 1000.0f);
+                ImGui::DragFloat3("Bounds Position", &n.boundPosX, 0.01f);
             }
             else if (gMaterialInspectorOpen && !gMaterialInspectorPath.empty())
             {
@@ -11744,6 +12851,13 @@ RenderImGuiOnly:
                                     }
                                     gViewportToastUntil = glfwGetTime() + 2.0;
                                 }
+                                if (ext == ".png" && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                                {
+                                    std::string dragPath = p.string();
+                                    ImGui::SetDragDropPayload("VMU_PNG_ASSET", dragPath.c_str(), dragPath.size() + 1);
+                                    ImGui::TextUnformatted(p.filename().string().c_str());
+                                    ImGui::EndDragDropSource();
+                                }
                                 if (ImGui::BeginPopupContextItem((std::string("##vmuAssetCtx_") + p.filename().string()).c_str()))
                                 {
                                     if (ImGui::MenuItem("Delete"))
@@ -11812,20 +12926,28 @@ RenderImGuiOnly:
 
                 // Right-side playback controls.
                 float speedBtnW = 86.0f;
-                float loopBtnW = 64.0f;
+                float loopBtnW = 78.0f;
                 float playBtnW = 56.0f;
-                float rightX = ImGui::GetWindowContentRegionMax().x - (playBtnW + loopBtnW + speedBtnW + 18.0f);
-                if (rightX > ImGui::GetCursorPosX())
+                float groupW = playBtnW + loopBtnW + speedBtnW + 12.0f;
+                float groupX = ImGui::GetWindowContentRegionMax().x - groupW - 8.0f;
+                if (groupX > ImGui::GetCursorPosX())
                 {
                     ImGui::SameLine();
-                    ImGui::SetCursorPosX(rightX);
+                    ImGui::SetCursorPosX(groupX);
                 }
+
+                bool togglePlay = false;
+                if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+                    togglePlay = true;
                 if (ImGui::Button(gVmuAnimPlaying ? "Stop" : "Play", ImVec2(playBtnW, 0.0f)))
+                    togglePlay = true;
+                if (togglePlay)
                 {
                     gVmuAnimPlaying = !gVmuAnimPlaying;
                     gVmuAnimAccum = 0.0;
                     if (gVmuAnimPlaying) gVmuAnimPlayhead = 0;
                 }
+
                 ImGui::SameLine();
                 if (ImGui::Button(gVmuAnimLoop ? "Loop ON" : "Loop OFF", ImVec2(loopBtnW, 0.0f)))
                 {
@@ -11833,6 +12955,7 @@ RenderImGuiOnly:
                     gViewportToast = gVmuAnimLoop ? "VMU Tool: loop ON" : "VMU Tool: loop OFF";
                     gViewportToastUntil = glfwGetTime() + 1.2;
                 }
+
                 ImGui::SameLine();
                 const char* speedLabel = (gVmuAnimSpeedMode == 0) ? "Speed x0.5" : (gVmuAnimSpeedMode == 1) ? "Speed x1" : "Speed x2";
                 if (ImGui::Button(speedLabel, ImVec2(speedBtnW, 0.0f)))
@@ -11898,6 +13021,21 @@ RenderImGuiOnly:
                     VmuAnimLayer& l = gVmuAnimLayers[(size_t)i];
                     ImVec2 rowPos = ImGui::GetCursorScreenPos();
                     ImGui::InvisibleButton((std::string("##layerRow") + std::to_string(i)).c_str(), ImVec2(tAvail.x, rowH));
+                    if (ImGui::BeginDragDropTarget())
+                    {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("VMU_PNG_ASSET"))
+                        {
+                            const char* dropped = (const char*)payload->Data;
+                            if (dropped && dropped[0])
+                            {
+                                l.linkedAsset = dropped;
+                                gVmuLinkedPngPath = l.linkedAsset;
+                                gViewportToast = "VMU Tool: linked PNG to layer";
+                                gViewportToastUntil = glfwGetTime() + 1.5;
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
                     bool rowSel = (gVmuAnimLayerSel == i);
                     if (ImGui::IsItemClicked())
                     {
@@ -11918,10 +13056,9 @@ RenderImGuiOnly:
                         }
                     }
 
-                    tdl->AddRectFilled(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), rowSel ? IM_COL32(170, 205, 240, 180) : IM_COL32(235, 235, 235, 255));
+                    tdl->AddRectFilled(ImVec2(rowPos.x + 24.0f, rowPos.y), ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), rowSel ? IM_COL32(170, 205, 240, 180) : IM_COL32(235, 235, 235, 255));
                     tdl->AddRect(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), IM_COL32(170, 170, 170, 255));
-                    tdl->AddText(ImVec2(rowPos.x + 6.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.visible ? "V" : " ");
-                    ImGui::SetCursorScreenPos(ImVec2(rowPos.x + 18.0f, rowPos.y + 2.0f));
+                    ImGui::SetCursorScreenPos(ImVec2(rowPos.x + 2.0f, rowPos.y + 2.0f));
                     ImGui::PushID(i);
                     if (ImGui::SmallButton("->"))
                     {
@@ -11943,7 +13080,7 @@ RenderImGuiOnly:
                         gViewportToastUntil = glfwGetTime() + 1.5;
                     }
                     ImGui::PopID();
-                    tdl->AddText(ImVec2(rowPos.x + 48.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.name.c_str());
+                    tdl->AddText(ImVec2(rowPos.x + 26.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.name.c_str());
 
                     int fs = std::max(0, std::min(gVmuAnimTotalFrames - 1, l.frameStart));
                     int fe = std::max(fs, std::min(gVmuAnimTotalFrames - 1, l.frameEnd));
@@ -12150,15 +13287,6 @@ RenderImGuiOnly:
     glfwTerminate();
     return 0;
 }
-
-
-
-
-
-
-
-
-
 
 
 

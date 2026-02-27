@@ -243,6 +243,7 @@ namespace NebulaScene
             out << "Camera3D " << c.name << " "
                 << c.x << " " << c.y << " " << c.z << " "
                 << c.rotX << " " << c.rotY << " " << c.rotZ << " "
+                << c.orbitX << " " << c.orbitY << " " << c.orbitZ << " "
                 << (c.perspective ? 1 : 0) << " "
                 << c.fovY << " " << c.nearZ << " " << c.farZ << " "
                 << c.orthoWidth << " " << c.priority << " "
@@ -259,7 +260,9 @@ namespace NebulaScene
                 << EncodeSceneToken(n.primitiveMesh) << " "
                 << EncodeSceneToken(n.script) << " "
                 << (n.collisionSource ? 1 : 0) << " "
-                << (n.physicsEnabled ? 1 : 0) << "\n";
+                << (n.physicsEnabled ? 1 : 0) << " "
+                << n.extentX << " " << n.extentY << " " << n.extentZ << " "
+                << n.boundPosX << " " << n.boundPosY << " " << n.boundPosZ << "\n";
         }
         return out.str();
     }
@@ -367,7 +370,23 @@ namespace NebulaScene
                 c.rotY = F(5);
                 c.rotZ = F(6);
 
-                if (toks.size() >= 14)
+                // New format includes orbit offsets at [7..9].
+                if (toks.size() >= 18)
+                {
+                    c.orbitX = F(7);
+                    c.orbitY = F(8);
+                    c.orbitZ = F(9);
+                    c.perspective = (F(10) != 0.0f);
+                    c.fovY = F(11);
+                    c.nearZ = F(12);
+                    c.farZ = F(13);
+                    c.orthoWidth = F(14);
+                    c.priority = F(15);
+                    c.main = (F(16) != 0.0f);
+                    c.parent = toks[17];
+                    DecodeSceneToken(c.parent);
+                }
+                else if (toks.size() >= 14)
                 {
                     c.perspective = (F(7) != 0.0f);
                     c.fovY = F(8);
@@ -431,6 +450,18 @@ namespace NebulaScene
                     n.collisionSource = (atoi(toks[13].c_str()) != 0);
                 if (toks.size() >= 15)
                     n.physicsEnabled = (atoi(toks[14].c_str()) != 0);
+                if (toks.size() >= 18)
+                {
+                    n.extentX = (float)atof(toks[15].c_str());
+                    n.extentY = (float)atof(toks[16].c_str());
+                    n.extentZ = (float)atof(toks[17].c_str());
+                }
+                if (toks.size() >= 21)
+                {
+                    n.boundPosX = (float)atof(toks[18].c_str());
+                    n.boundPosY = (float)atof(toks[19].c_str());
+                    n.boundPosZ = (float)atof(toks[20].c_str());
+                }
                 outScene.node3d.push_back(n);
             }
         }

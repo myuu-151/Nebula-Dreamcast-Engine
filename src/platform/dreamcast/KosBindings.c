@@ -396,3 +396,82 @@ void NB_DC_GetSceneTransform(float outPos[3], float outRot[3], float outScale[3]
         outScale[2] = gSceneState.scale[2];
     }
 }
+
+void __attribute__((weak)) NB_RT_GetNode3DPosition(const char* name, float outPos[3]) {
+    (void)name;
+    if (outPos) {
+        outPos[0] = 0.0f;
+        outPos[1] = 0.0f;
+        outPos[2] = 0.0f;
+    }
+}
+
+void __attribute__((weak)) NB_RT_SetNode3DPosition(const char* name, float x, float y, float z) {
+    (void)name;
+    (void)x;
+    (void)y;
+    (void)z;
+}
+
+void __attribute__((weak)) NB_RT_GetNode3DRotation(const char* name, float outRot[3]) {
+    (void)name;
+    if (outRot) {
+        outRot[0] = 0.0f;
+        outRot[1] = 0.0f;
+        outRot[2] = 0.0f;
+    }
+}
+
+void __attribute__((weak)) NB_RT_SetNode3DRotation(const char* name, float x, float y, float z) {
+    (void)name;
+    (void)x;
+    (void)y;
+    (void)z;
+}
+
+void __attribute__((weak)) NB_RT_GetCameraOrbit(const char* name, float outOrbit[3]) {
+    (void)name;
+    if (outOrbit) {
+        outOrbit[0] = 0.0f;
+        outOrbit[1] = 0.0f;
+        outOrbit[2] = 0.0f;
+    }
+}
+
+void __attribute__((weak)) NB_RT_SetCameraOrbit(const char* name, float x, float y, float z) {
+    (void)name;
+    (void)x;
+    (void)y;
+    (void)z;
+}
+
+void __attribute__((weak)) NB_RT_GetCameraRotation(const char* name, float outRot[3]) {
+    (void)name;
+    if (outRot) {
+        outRot[0] = 0.0f;
+        outRot[1] = 0.0f;
+        outRot[2] = 0.0f;
+    }
+}
+
+void __attribute__((weak)) NB_RT_SetCameraRotation(const char* name, float x, float y, float z) {
+    (void)name;
+    (void)x;
+    (void)y;
+    (void)z;
+}
+
+void __attribute__((weak)) NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]) {
+    (void)name;
+    if (outFwd) {
+        outFwd[0] = 0.0f;
+        outFwd[1] = 0.0f;
+        outFwd[2] = 1.0f;
+    }
+}
+
+int __attribute__((weak)) NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName) {
+    (void)cameraName;
+    (void)nodeName;
+    return 0;
+}

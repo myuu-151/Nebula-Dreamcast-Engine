@@ -1,0 +1,53 @@
+// WASD_Node3D_Nav.c
+// Minimal safe script: move PlayerRoot forward with W, keep CameraPivot following PlayerRoot.
+
+#include <math.h>
+
+#if defined(_WIN32) && !defined(__DREAMCAST__)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+// Scene names
+static const char* PLAYER_NODE = "PlayerRoot";
+static const char* CAMERA_PIVOT_NODE = "CameraPivot";
+
+// Tunables
+static const float MOVE_SPEED = 5.0f;
+
+// Bridge API
+void NB_RT_GetNode3DPosition(const char* name, float outPos[3]);
+void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z);
+void NB_RT_GetNode3DRotation(const char* name, float outRot[3]);
+
+void NB_Game_OnStart(void)
+{
+}
+
+void NB_Game_OnUpdate(float dt)
+{
+    if (dt <= 0.0f) dt = 1.0f / 60.0f;
+
+    float pos[3] = {0,0,0};
+    NB_RT_GetNode3DPosition(PLAYER_NODE, pos);
+
+#if defined(_WIN32) && !defined(__DREAMCAST__)
+    if (GetAsyncKeyState('W') & 0x8000)
+    {
+        float rot[3] = {0,0,0};
+        NB_RT_GetNode3DRotation(PLAYER_NODE, rot);
+        float yaw = rot[1] * 0.0174532925f;
+        pos[0] += sinf(yaw) * MOVE_SPEED * dt;
+        pos[2] += cosf(yaw) * MOVE_SPEED * dt;
+        NB_RT_SetNode3DPosition(PLAYER_NODE, pos[0], pos[1], pos[2]);
+    }
+#endif
+
+    // Always follow player position (including while moving forward)
+    NB_RT_SetNode3DPosition(CAMERA_PIVOT_NODE, pos[0], pos[1], pos[2]);
+}
+
+void NB_Game_OnSceneSwitch(const char* sceneName)
+{
+    (void)sceneName;
+}

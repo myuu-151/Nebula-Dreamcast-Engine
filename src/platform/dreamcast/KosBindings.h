@@ -52,3 +52,19 @@ const char* NB_DC_GetSceneName(void);
 const char* NB_DC_GetSceneMeshPath(void);
 const char* NB_DC_GetSceneTexturePath(int slotIndex);
 void NB_DC_GetSceneTransform(float outPos[3], float outRot[3], float outScale[3]);
+
+// Runtime transform bridge (implemented by generated Dreamcast runtime main.c)
+void NB_RT_GetMeshPosition(float outPos[3]);
+void NB_RT_SetMeshPosition(float x, float y, float z);
+void NB_RT_AddMeshPositionDelta(float dx, float dy, float dz);
+
+void NB_RT_GetNode3DPosition(const char* name, float outPos[3]);
+void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z);
+void NB_RT_GetNode3DRotation(const char* name, float outRot[3]);
+void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z);
+void NB_RT_GetCameraOrbit(const char* name, float outOrbit[3]);
+void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z);
+void NB_RT_GetCameraRotation(const char* name, float outRot[3]);
+void NB_RT_SetCameraRotation(const char* name, float x, float y, float z);
+void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]);
+int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName);

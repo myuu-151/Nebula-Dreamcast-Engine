@@ -40,6 +40,10 @@ struct Camera3DNode
     float rotX = 0.0f;
     float rotY = 0.0f;
     float rotZ = 0.0f;
+    // Local orbit offset around inherited/root pivot (position offset, not transform parenting)
+    float orbitX = 0.0f;
+    float orbitY = 0.0f;
+    float orbitZ = 0.0f;
     bool perspective = true;
     float fovY = 70.0f;
     float nearZ = 0.25f;
@@ -66,6 +70,14 @@ struct Node3DNode
     float scaleZ = 1.0f;
     bool collisionSource = false;
     bool physicsEnabled = false;
+    // Collision-only bounds extents (does not affect transform hierarchy)
+    float extentX = 0.5f;
+    float extentY = 0.5f;
+    float extentZ = 0.5f;
+    // Collision-only local bounds offset (does not affect transform hierarchy)
+    float boundPosX = 0.0f;
+    float boundPosY = 0.0f;
+    float boundPosZ = 0.0f;
     float velY = 0.0f;
 };
 

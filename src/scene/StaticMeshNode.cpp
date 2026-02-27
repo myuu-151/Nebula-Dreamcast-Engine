@@ -46,6 +46,7 @@ namespace NebulaNodes
         if (idx < 0 || idx >= (int)staticMeshNodes.size()) { ox=oy=oz=orx=ory=orz=0.0f; osx=osy=osz=1.0f; return; }
         const auto& n = staticMeshNodes[idx];
         ox = n.x; oy = n.y; oz = n.z;
+        // Always keep child local rotation, then add inherited parent rotation on top.
         orx = n.rotX; ory = n.rotY; orz = n.rotZ;
         osx = n.scaleX; osy = n.scaleY; osz = n.scaleZ;
         std::string p = n.parent;

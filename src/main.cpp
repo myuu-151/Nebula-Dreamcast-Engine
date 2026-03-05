@@ -1,4 +1,4 @@
-#include "imgui.h"
+﻿#include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl2.h"
 
@@ -224,7 +224,11 @@ static std::string gEditorScriptPath;
 static bool gEditorScriptActive = false;
 static bool gEditorScriptStarted = false;
 static double gEditorScriptNextTickLog = 0.0;
-static bool useScriptController = true;
+// Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
+static bool useScriptController = false;
+// Keep script-owned controls on desktop, but keep C++ fallback enabled on Dreamcast
+// until full runtime script parity is confirmed.
+static bool gEnableCppPlayFallbackControls = true;
 using EditorScriptStartFn = void(*)(void);
 using EditorScriptUpdateFn = void(*)(float);
 using EditorScriptSceneSwitchFn = void(*)(const char*);
@@ -704,6 +708,14 @@ static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
 
 static void BeginPlayScriptRuntime()
 {
+    if (!useScriptController)
+    {
+        gEditorScriptActive = false;
+        gEditorScriptStarted = false;
+        printf("[ScriptRuntime] skipped (engine-owned controls mode)\n");
+        return;
+    }
+
     std::filesystem::path scriptPath = ResolveGameplayScriptPath();
     if (scriptPath.empty())
     {
@@ -3535,7 +3547,7 @@ static Vec3 ApplyImportBasis(const Vec3& v)
 {
     switch (gImportBasisMode)
     {
-    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90� X so imported mesh is upright)
+    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90ï¿½ X so imported mesh is upright)
         return Vec3{ v.z, v.y, -v.x };
     case 2: // Maya-style (+Z forward, Y up)
         return Vec3{ v.y, -v.x, v.z };
@@ -5121,7 +5133,7 @@ int main(int, char**)
         }
 
         // Fallback controls if script runtime is unavailable (e.g. cl.exe missing).
-        if (gPlayMode && navKeyAllowed && (!gEditorScriptActive || !useScriptController))
+        if (gEnableCppPlayFallbackControls && gPlayMode && navKeyAllowed && (!gEditorScriptActive || !useScriptController))
         {
 
             const float moveStep = 5.0f * deltaTime;
@@ -6288,7 +6300,7 @@ int main(int, char**)
                 glVertex3f(nebula[i][0], nebula[i][1], nebula[i][2]);
             }
 
-            // Stars (front) � GL_POINTS buckets (3/6/12px)
+            // Stars (front) ï¿½ GL_POINTS buckets (3/6/12px)
             auto drawPoints = [&](float sizeMin, float sizeMax, float px)
             {
                 glPointSize(px);
@@ -7419,6 +7431,7 @@ RenderImGuiOnly:
                                 gOpenScenes[gActiveScene].nodes = gAudio3DNodes;
                                 gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
                                 gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
+                                gOpenScenes[gActiveScene].node3d = gNode3DNodes;
                             }
 
                             std::string defaultSceneCfg = GetProjectDefaultScene(std::filesystem::path(gProjectDir));
@@ -7457,54 +7470,177 @@ RenderImGuiOnly:
 
                             Camera3DNode camSrc{};
                             bool haveCam = false;
-                            for (const auto& c : exportCameras)
+                            // Match editor selection logic as closely as possible:
+                            // 1) prefer main camera with highest priority
+                            // 2) otherwise highest priority camera
+                            // 3) legacy-name fallback (Camera3D1/Camera3D*)
+                            int bestMainPri = -2147483647;
+                            int bestAnyPri = -2147483647;
+                            int bestMainIdx = -1;
+                            int bestAnyIdx = -1;
+                            int legacyIdx = -1;
+                            for (int i = 0; i < (int)exportCameras.size(); ++i)
                             {
-                                if (c.name == "Camera3D" || c.name.rfind("Camera3D", 0) == 0) { camSrc = c; haveCam = true; break; }
+                                const auto& c = exportCameras[i];
+                                if (c.main && c.priority > bestMainPri) { bestMainPri = c.priority; bestMainIdx = i; }
+                                if (c.priority > bestAnyPri) { bestAnyPri = c.priority; bestAnyIdx = i; }
+                                if (legacyIdx < 0 && (c.name == "Camera3D1" || c.name == "Camera3D" || c.name.rfind("Camera3D", 0) == 0)) legacyIdx = i;
+                            }
+                            int chosenCamIdx = (bestMainIdx >= 0) ? bestMainIdx : ((bestAnyIdx >= 0) ? bestAnyIdx : legacyIdx);
+                            if (chosenCamIdx >= 0)
+                            {
+                                camSrc = exportCameras[chosenCamIdx];
+                                haveCam = true;
                             }
                             if (!haveCam && !exportCameras.empty()) { camSrc = exportCameras[0]; haveCam = true; }
                             if (!haveCam) { camSrc.x = 0.f; camSrc.y = 2.f; camSrc.z = -6.f; camSrc.rotX = 0.f; camSrc.rotY = 0.f; camSrc.rotZ = 0.f; }
+                            printf("[DreamcastBuild] Camera selection: haveCam=%d exportCameras=%d chosenIdx=%d\n", haveCam?1:0, (int)exportCameras.size(), chosenCamIdx);
+                            printf("[DreamcastBuild]   camSrc: name='%s' pos=(%.3f,%.3f,%.3f) rot=(%.3f,%.3f,%.3f) orbit=(%.3f,%.3f,%.3f) fov=%.1f main=%d pri=%d parent='%s'\n",
+                                camSrc.name.c_str(), camSrc.x, camSrc.y, camSrc.z,
+                                camSrc.rotX, camSrc.rotY, camSrc.rotZ,
+                                camSrc.orbitX, camSrc.orbitY, camSrc.orbitZ,
+                                camSrc.fovY, camSrc.main?1:0, camSrc.priority, camSrc.parent.c_str());
 
                             StaticMesh3DNode meshSrc{};
                             bool haveMesh = false;
+                            // Runtime currently renders one primary StaticMesh3D.
+                            // Prefer first non-cube mesh (user-authored content), fallback to first mesh.
                             for (const auto& s : exportStatics)
                             {
-                                if (s.mesh.find("cube_primitive") != std::string::npos) { meshSrc = s; haveMesh = true; break; }
+                                if (s.mesh.find("cube_primitive") == std::string::npos)
+                                {
+                                    meshSrc = s;
+                                    haveMesh = true;
+                                    break;
+                                }
                             }
                             if (!haveMesh && !exportStatics.empty()) { meshSrc = exportStatics[0]; haveMesh = true; }
                             if (!haveMesh) { meshSrc.x = 0.f; meshSrc.y = 0.f; meshSrc.z = 0.f; meshSrc.scaleX = 1.f; meshSrc.scaleY = 1.f; meshSrc.scaleZ = 1.f; }
 
-                            // Optional Dreamcast camera calibration layer; neutral defaults preserve scene-authored values.
-                            constexpr float kDcCamOffsetX = 0.0f, kDcCamOffsetY = 0.0f, kDcCamOffsetZ = 0.0f;
-                            constexpr float kDcTargetOffsetX = 0.0f, kDcTargetOffsetY = 0.0f, kDcTargetOffsetZ = 0.0f;
-                            constexpr float kDcFovScale = 1.0f;
-                                                        Camera3DNode dcCamNode = camSrc;
-                            dcCamNode.x += kDcCamOffsetX;
-                            dcCamNode.y += kDcCamOffsetY;
-                            dcCamNode.z += kDcCamOffsetZ;
-                            dcCamNode.fovY *= kDcFovScale;
+                            // Resolve camera world transform using the same logic as the editor play mode
+                            // (GetCamera3DWorldTR), but operating on export data instead of globals.
+                            auto getCamera3DWorldTR_export = [&](const Camera3DNode& cam,
+                                float& ox, float& oy, float& oz,
+                                float& orx, float& ory, float& orz)
+                            {
+                                auto rotateOffsetEuler = [](float& x, float& y, float& z, float rxDeg, float ryDeg, float rzDeg)
+                                {
+                                    const float rx = rxDeg * 3.14159f / 180.0f;
+                                    const float ry = ryDeg * 3.14159f / 180.0f;
+                                    const float rz = rzDeg * 3.14159f / 180.0f;
+                                    const float sx = sinf(rx), cx = cosf(rx);
+                                    const float sy = sinf(ry), cy = cosf(ry);
+                                    const float sz = sinf(rz), cz = cosf(rz);
+                                    float ty = y * cx - z * sx;
+                                    float tz = y * sx + z * cx;
+                                    y = ty; z = tz;
+                                    float tx = x * cy + z * sy;
+                                    tz = -x * sy + z * cy;
+                                    x = tx; z = tz;
+                                    tx = x * cz - y * sz;
+                                    ty = x * sz + y * cz;
+                                    x = tx; y = ty;
+                                };
+
+                                ox = cam.x; oy = cam.y; oz = cam.z;
+                                if (!cam.parent.empty())
+                                {
+                                    ox += cam.orbitX;
+                                    oy += cam.orbitY;
+                                    oz += cam.orbitZ;
+                                }
+                                orx = cam.rotX; ory = cam.rotY; orz = cam.rotZ;
+
+                                std::string p = cam.parent;
+                                int guard = 0;
+                                while (!p.empty() && guard++ < 256)
+                                {
+                                    bool found = false;
+                                    for (const auto& a : gAudio3DNodes)
+                                    {
+                                        if (a.name == p)
+                                        {
+                                            ox += a.x; oy += a.y; oz += a.z;
+                                            p = a.parent;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (found) continue;
+                                    for (const auto& s : exportStatics)
+                                    {
+                                        if (s.name == p)
+                                        {
+                                            rotateOffsetEuler(ox, oy, oz, s.rotX, s.rotY, s.rotZ);
+                                            ox += s.x; oy += s.y; oz += s.z;
+                                            orx += s.rotX; ory += s.rotY; orz += s.rotZ;
+                                            p = s.parent;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (found) continue;
+                                    for (const auto& pc : exportCameras)
+                                    {
+                                        if (pc.name == p)
+                                        {
+                                            rotateOffsetEuler(ox, oy, oz, pc.rotX, pc.rotY, pc.rotZ);
+                                            ox += pc.x; oy += pc.y; oz += pc.z;
+                                            orx += pc.rotX; ory += pc.rotY; orz += pc.rotZ;
+                                            p = pc.parent;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (found) continue;
+                                    for (const auto& n : gNode3DNodes)
+                                    {
+                                        if (n.name == p)
+                                        {
+                                            rotateOffsetEuler(ox, oy, oz, n.rotX, n.rotY, n.rotZ);
+                                            ox += n.x; oy += n.y; oz += n.z;
+                                            orx += n.rotX; ory += n.rotY; orz += n.rotZ;
+                                            p = n.parent;
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found) break;
+                                }
+                            };
+
+                            float dcWorldX, dcWorldY, dcWorldZ, dcWorldRX, dcWorldRY, dcWorldRZ;
+                            getCamera3DWorldTR_export(camSrc, dcWorldX, dcWorldY, dcWorldZ, dcWorldRX, dcWorldRY, dcWorldRZ);
 
                             Camera3DV2 dcCamV2 = BuildCamera3DV2FromLegacyEuler(
-                                dcCamNode.name,
-                                dcCamNode.parent,
-                                dcCamNode.x, dcCamNode.y, dcCamNode.z,
-                                dcCamNode.rotX, dcCamNode.rotY, dcCamNode.rotZ,
-                                dcCamNode.perspective,
-                                dcCamNode.fovY,
-                                dcCamNode.nearZ,
-                                dcCamNode.farZ,
-                                dcCamNode.orthoWidth,
-                                dcCamNode.priority,
-                                dcCamNode.main);
+                                camSrc.name,
+                                camSrc.parent,
+                                dcWorldX, dcWorldY, dcWorldZ,
+                                dcWorldRX, dcWorldRY, dcWorldRZ,
+                                camSrc.perspective,
+                                camSrc.fovY,
+                                camSrc.nearZ,
+                                camSrc.farZ,
+                                camSrc.orthoWidth,
+                                camSrc.priority,
+                                camSrc.main);
 
-                            NebulaCamera3D::DreamcastExport dcCam = NebulaCamera3D::BuildDreamcastExport(
-                                dcCamV2,
-                                640.0f / 570.0f,
-                                Vec3{ kDcTargetOffsetX, kDcTargetOffsetY, kDcTargetOffsetZ });
+                            NebulaCamera3D::View dcView = NebulaCamera3D::BuildView(dcCamV2);
+                            NebulaCamera3D::Projection dcProj = NebulaCamera3D::BuildProjection(dcCamV2, 640.0f / 570.0f);
 
-                            const float dcViewW = dcCam.viewW;
-                            const float dcViewH = dcCam.viewH;
-                            const float dcFocalX = dcCam.focalX;
-                            const float dcFocalY = dcCam.focalY;
+                            const float dcViewW = 640.0f;
+                            const float dcViewH = 570.0f;
+                            const float dcFocalY = (dcViewH * 0.5f) / std::max(1.0e-4f, std::tanf(dcProj.fovYRad * 0.5f));
+                            const float dcFocalX = dcFocalY * dcProj.aspect;
+
+                            printf("[DreamcastBuild] Camera: eye=(%.3f,%.3f,%.3f) target=(%.3f,%.3f,%.3f) fwd=(%.3f,%.3f,%.3f) up=(%.3f,%.3f,%.3f)\n",
+                                dcView.eye.x, dcView.eye.y, dcView.eye.z,
+                                dcView.target.x, dcView.target.y, dcView.target.z,
+                                dcView.basis.forward.x, dcView.basis.forward.y, dcView.basis.forward.z,
+                                dcView.basis.up.x, dcView.basis.up.y, dcView.basis.up.z);
+                            printf("[DreamcastBuild] Projection: fovY=%.1f aspect=%.3f near=%.3f far=%.1f viewW=%.0f viewH=%.0f focalX=%.1f focalY=%.1f\n",
+                                dcProj.fovYDeg, dcProj.aspect, dcProj.nearZ, dcProj.farZ,
+                                dcViewW, dcViewH, dcFocalX, dcFocalY);
 
                             std::vector<Vec3> runtimeVerts;
                             std::vector<Vec3> runtimeUvs;
@@ -7983,13 +8119,102 @@ RenderImGuiOnly:
                                 loadedScenes.push_back(std::move(ls));
                             }
 
+                            // Overlay in-memory editor scene data so unsaved/dirty mesh changes are included in DC build.
+                            // This keeps staged .NEBSCENE content aligned with what user currently sees in editor.
+                            {
+                                auto normPathKey = [](const std::filesystem::path& p) -> std::string
+                                {
+                                    std::error_code ec;
+                                    auto c = std::filesystem::weakly_canonical(p, ec);
+                                    std::string k = (ec ? p.lexically_normal() : c).generic_string();
+                                    std::transform(k.begin(), k.end(), k.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+                                    return k;
+                                };
+
+                                std::unordered_map<std::string, int> loadedIdxByKey;
+                                for (int i = 0; i < (int)loadedScenes.size(); ++i)
+                                {
+                                    loadedIdxByKey[normPathKey(loadedScenes[i].sourcePath)] = i;
+                                }
+
+                                for (const auto& os : gOpenScenes)
+                                {
+                                    if (os.path.empty()) continue;
+                                    std::string key = normPathKey(os.path);
+                                    auto it = loadedIdxByKey.find(key);
+                                    if (it != loadedIdxByKey.end())
+                                    {
+                                        loadedScenes[it->second].data = os;
+                                        loadedScenes[it->second].sourcePath = os.path;
+                                    }
+                                }
+                            }
+
+                            // Bake parent hierarchy into world transforms for DC export.
+                            // The DC runtime applies transforms flat (no parent chain walking),
+                            // so we must flatten here to match what the editor renders.
+                            for (auto& ls : loadedScenes)
+                            {
+                                auto findStaticByName = [&](const std::string& nm) -> int {
+                                    for (int i = 0; i < (int)ls.data.staticMeshes.size(); ++i)
+                                        if (ls.data.staticMeshes[i].name == nm) return i;
+                                    return -1;
+                                };
+                                auto findNode3DByName = [&](const std::string& nm) -> int {
+                                    for (int i = 0; i < (int)ls.data.node3d.size(); ++i)
+                                        if (ls.data.node3d[i].name == nm) return i;
+                                    return -1;
+                                };
+                                for (int i = 0; i < (int)ls.data.staticMeshes.size(); ++i)
+                                {
+                                    auto& sm = ls.data.staticMeshes[i];
+                                    float wx = sm.x, wy = sm.y, wz = sm.z;
+                                    float wrx = sm.rotX, wry = sm.rotY, wrz = sm.rotZ;
+                                    float wsx = sm.scaleX, wsy = sm.scaleY, wsz = sm.scaleZ;
+                                    std::string p = sm.parent;
+                                    int guard = 0;
+                                    while (!p.empty() && guard++ < 256)
+                                    {
+                                        int pi = findStaticByName(p);
+                                        if (pi >= 0)
+                                        {
+                                            const auto& pn = ls.data.staticMeshes[pi];
+                                            wx += pn.x; wy += pn.y; wz += pn.z;
+                                            wrx += pn.rotX; wry += pn.rotY; wrz += pn.rotZ;
+                                            wsx *= pn.scaleX; wsy *= pn.scaleY; wsz *= pn.scaleZ;
+                                            p = pn.parent;
+                                            continue;
+                                        }
+                                        int ni = findNode3DByName(p);
+                                        if (ni >= 0)
+                                        {
+                                            const auto& pn = ls.data.node3d[ni];
+                                            wx += pn.x; wy += pn.y; wz += pn.z;
+                                            wrx += pn.rotX; wry += pn.rotY; wrz += pn.rotZ;
+                                            wsx *= pn.scaleX; wsy *= pn.scaleY; wsz *= pn.scaleZ;
+                                            p = pn.parent;
+                                            continue;
+                                        }
+                                        break;
+                                    }
+                                    sm.x = wx; sm.y = wy; sm.z = wz;
+                                    sm.rotX = wrx; sm.rotY = wry; sm.rotZ = wrz;
+                                    sm.scaleX = wsx; sm.scaleY = wsy; sm.scaleZ = wsz;
+                                }
+                            }
+
                             std::set<std::string> sortedMeshAbs;
                             std::set<std::string> sortedTexAbs;
                             std::set<std::string> sortedMatAbs;
                             std::unordered_map<std::string, std::string> meshLogicalByAbs;
                             std::unordered_map<std::string, std::string> texLogicalByAbs;
+                            printf("[DreamcastBuild] loadedScenes count: %d\n", (int)loadedScenes.size());
                             for (const auto& ls : loadedScenes)
                             {
+                                printf("[DreamcastBuild]   scene '%s': %d staticMeshes, %d node3d\n",
+                                    ls.sourcePath.string().c_str(),
+                                    (int)ls.data.staticMeshes.size(),
+                                    (int)ls.data.node3d.size());
                                 for (const auto& sm : ls.data.staticMeshes)
                                 {
                                     if (!sm.mesh.empty())
@@ -8072,7 +8297,9 @@ RenderImGuiOnly:
                                     if (ec) continue;
                                     stagedMeshByAbs[key] = outName;
                                     meshRefMapEntries.push_back({ meshLogicalByAbs[key], outName });
+                                    printf("[DreamcastBuild]   staged mesh: %s -> %s\n", meshLogicalByAbs[key].c_str(), outName.c_str());
                                 }
+                                printf("[DreamcastBuild] Total meshes collected: %d, staged: %d\n", (int)sortedMeshAbs.size(), (int)stagedMeshByAbs.size());
                                 if (!stagingNameCollision)
                                 {
                                     std::unordered_map<std::string, std::string> texAbsByOutName;
@@ -8164,6 +8391,8 @@ RenderImGuiOnly:
                                 if (!so.is_open()) continue;
 
                                 so << "scene=" << stagedScene.name << "\n";
+                                int sceneWrittenMeshes = 0;
+                                int sceneSkippedMeshes = 0;
                                 for (const auto& sm : stagedScene.staticMeshes)
                                 {
                                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
@@ -8173,7 +8402,7 @@ RenderImGuiOnly:
                                         auto it = stagedMeshByAbs.find(key);
                                         if (it != stagedMeshByAbs.end()) stagedMesh = it->second;
                                     }
-                                    if (stagedMesh.empty()) continue;
+                                    if (stagedMesh.empty()) { printf("[DreamcastBuild]   SKIP mesh '%s' (not staged)\n", sm.name.c_str()); ++sceneSkippedMeshes; continue; }
 
                                     std::array<std::string, kStaticMeshMaterialSlots> slotTexNames{};
                                     for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
@@ -8209,7 +8438,10 @@ RenderImGuiOnly:
                                     for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
                                         so << " " << (slotTexNames[(size_t)si].empty() ? "-" : slotTexNames[(size_t)si]);
                                     so << "\n";
+                                    ++sceneWrittenMeshes;
                                 }
+                                printf("[DreamcastBuild] Scene '%s' -> %s: %d meshes written, %d skipped\n",
+                                    stagedScene.name.c_str(), sceneOutName.c_str(), sceneWrittenMeshes, sceneSkippedMeshes);
                                 runtimeSceneFiles.push_back(sceneOutName);
                                 if (defaultSceneRuntimeFile.empty()) defaultSceneRuntimeFile = sceneOutName;
                             }
@@ -8220,13 +8452,55 @@ RenderImGuiOnly:
                                 if (so.is_open())
                                 {
                                     so << "scene=Default\n";
-                                    so << "staticmesh " << runtimeMeshDiskName << " "
-                                       << meshSrc.x << " " << meshSrc.y << " " << meshSrc.z << " "
-                                       << meshSrc.rotX << " " << meshSrc.rotY << " " << meshSrc.rotZ << " "
-                                       << meshSrc.scaleX << " " << meshSrc.scaleY << " " << meshSrc.scaleZ;
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                        so << " " << (runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)].empty() ? "-" : runtimeSlotDiskName[(size_t)std::min(si, runtimeSlotCount - 1)]);
-                                    so << "\n";
+                                    for (const auto& ls : loadedScenes)
+                                    {
+                                        for (const auto& sm : ls.data.staticMeshes)
+                                        {
+                                            std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
+                                            std::string stagedMesh;
+                                            {
+                                                std::string key = normalizeAbsKey(meshAbs);
+                                                auto it = stagedMeshByAbs.find(key);
+                                                if (it != stagedMeshByAbs.end()) stagedMesh = it->second;
+                                            }
+                                            if (stagedMesh.empty()) continue;
+
+                                            std::array<std::string, kStaticMeshMaterialSlots> slotTexNames{};
+                                            for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                            {
+                                                std::string matRef = sm.materialSlots[si];
+                                                if (matRef.empty() && si == 0) matRef = sm.material;
+                                                if (matRef.empty()) continue;
+
+                                                std::filesystem::path matAbs = std::filesystem::path(gProjectDir) / matRef;
+                                                std::filesystem::path texAbs;
+                                                if (matAbs.extension() == ".nebmat")
+                                                {
+                                                    std::string texRel;
+                                                    if (LoadMaterialTexture(matAbs, texRel) && !texRel.empty())
+                                                        texAbs = std::filesystem::path(gProjectDir) / texRel;
+                                                }
+                                                else if (matAbs.extension() == ".nebtex")
+                                                {
+                                                    texAbs = matAbs;
+                                                }
+                                                if (!texAbs.empty())
+                                                {
+                                                    std::string key = normalizeAbsKey(texAbs);
+                                                    auto it = stagedTexByAbs.find(key);
+                                                    if (it != stagedTexByAbs.end()) slotTexNames[(size_t)si] = it->second;
+                                                }
+                                            }
+
+                                            so << "staticmesh " << stagedMesh << " "
+                                               << sm.x << " " << sm.y << " " << sm.z << " "
+                                               << sm.rotX << " " << sm.rotY << " " << sm.rotZ << " "
+                                               << sm.scaleX << " " << sm.scaleY << " " << sm.scaleZ;
+                                            for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                                so << " " << (slotTexNames[(size_t)si].empty() ? "-" : slotTexNames[(size_t)si]);
+                                            so << "\n";
+                                        }
+                                    }
                                 }
                                 defaultSceneRuntimeFile = "DEFAULT.NEBSCENE";
                             }
@@ -8400,15 +8674,18 @@ RenderImGuiOnly:
                                 mc << "\n";
                                 auto fstr = [](float v) { return std::to_string(v) + "f"; };
                                 mc << "/* Dreamcast camera defaults come from scene camera export (+ optional neutral calibration offsets). */\n";
-                                mc << "static const float kCamPosInit[3] = {" << fstr(dcCam.view.eye.x) << "," << fstr(dcCam.view.eye.y) << "," << fstr(dcCam.view.eye.z) << "};\n";
-                                mc << "static float gCamPos[3] = {" << fstr(dcCam.view.eye.x) << "," << fstr(dcCam.view.eye.y) << "," << fstr(dcCam.view.eye.z) << "};\n";
-                                mc << "static float gCamForward[3] = {" << fstr(dcCam.view.basis.forward.x) << "," << fstr(-dcCam.view.basis.forward.y) << "," << fstr(dcCam.view.basis.forward.z) << "};\n";
-                                mc << "static float gCamRight[3] = {" << fstr(dcCam.view.basis.right.x) << "," << fstr(dcCam.view.basis.right.y) << "," << fstr(dcCam.view.basis.right.z) << "};\n";
-                                mc << "static float gCamUp[3] = {" << fstr(dcCam.view.basis.up.x) << "," << fstr(-dcCam.view.basis.up.y) << "," << fstr(dcCam.view.basis.up.z) << "};\n";
-                                mc << "static const float kProjFovYDeg = " << fstr(dcCam.projection.fovYDeg) << ";\n";
-                                mc << "static const float kProjAspect = " << fstr(dcCam.projection.aspect) << ";\n";
-                                mc << "static const float kProjNear = " << fstr(dcCam.projection.nearZ) << ";\n";
-                                mc << "static const float kProjFar = " << fstr(dcCam.projection.farZ) << ";\n";
+                                mc << "static const float kCamPosInit[3] = {" << fstr(dcView.eye.x) << "," << fstr(dcView.eye.y) << "," << fstr(dcView.eye.z) << "};\n";
+                                mc << "static const float kCamTargetInit[3] = {" << fstr(dcView.target.x) << "," << fstr(dcView.target.y) << "," << fstr(dcView.target.z) << "};\n";
+                                mc << "static const float kCamOrbitInit[3] = {" << fstr(camSrc.orbitX) << "," << fstr(camSrc.orbitY) << "," << fstr(camSrc.orbitZ) << "};\n";
+                                mc << "static float gPivotOffset[3] = {0.0f,1.2f,0.0f};\n";
+                                mc << "static float gCamPos[3] = {" << fstr(dcView.eye.x) << "," << fstr(dcView.eye.y) << "," << fstr(dcView.eye.z) << "};\n";
+                                mc << "static float gCamForward[3] = {" << fstr(dcView.basis.forward.x) << "," << fstr(dcView.basis.forward.y) << "," << fstr(dcView.basis.forward.z) << "};\n";
+                                mc << "static float gCamRight[3] = {" << fstr(dcView.basis.right.x) << "," << fstr(dcView.basis.right.y) << "," << fstr(dcView.basis.right.z) << "};\n";
+                                mc << "static float gCamUp[3] = {" << fstr(dcView.basis.up.x) << "," << fstr(dcView.basis.up.y) << "," << fstr(dcView.basis.up.z) << "};\n";
+                                mc << "static const float kProjFovYDeg = " << fstr(dcProj.fovYDeg) << ";\n";
+                                mc << "static const float kProjAspect = " << fstr(dcProj.aspect) << ";\n";
+                                mc << "static const float kProjNear = " << fstr(dcProj.nearZ) << ";\n";
+                                mc << "static const float kProjFar = " << fstr(dcProj.farZ) << ";\n";
                                 mc << "static const float kProjViewW = " << fstr(dcViewW) << ";\n";
                                 mc << "static const float kProjViewH = " << fstr(dcViewH) << ";\n";
                                 mc << "static const float kProjFocalX = " << fstr(dcFocalX) << ";\n";
@@ -8417,13 +8694,32 @@ RenderImGuiOnly:
                                 mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
                                 mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                mc << "static const char kPlayerMeshDisk[] = \"" << runtimeMeshDiskName << "\";\n";
+                                mc << "static int gPlayerMeshIdx = -1;\n";
                                 mc << "void NB_RT_GetMeshPosition(float outPos[3]){ if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
                                 mc << "void NB_RT_SetMeshPosition(float x,float y,float z){ gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; }\n";
                                 mc << "void NB_RT_AddMeshPositionDelta(float dx,float dy,float dz){ gMeshPos[0]+=dx; gMeshPos[1]+=dy; gMeshPos[2]+=dz; }\n";
-                                mc << "static int gMirrorX = -1;\n";
+                                mc << "\n";
+                                mc << "/* Script runtime bridge (name-tolerant fallback for DC runtime) */\n";
+                                mc << "static float gRtOrbit[3] = {0.0f, 0.0f, 0.0f};\n";
+                                mc << "static float gRtCamRot[3] = {0.0f, 0.0f, 0.0f};\n";
+                                mc << "static int gOrbitInited = 0;\n";
+                                mc << "static int gFollowAlign = 0;\n";
+                                mc << "static const int kDcDebug = 0;\n";
+                                mc << "void NB_RT_GetNode3DPosition(const char* name, float outPos[3]){ (void)name; if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
+                                mc << "void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z){ (void)name; gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; }\n";
+                                mc << "void NB_RT_GetNode3DRotation(const char* name, float outRot[3]){ (void)name; if(!outRot) return; outRot[0]=gMeshRot[0]; outRot[1]=gMeshRot[1]; outRot[2]=gMeshRot[2]; }\n";
+                                mc << "void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z){ (void)name; gMeshRot[0]=x; gMeshRot[1]=y; gMeshRot[2]=z; }\n";
+                                mc << "void NB_RT_GetCameraOrbit(const char* name, float outOrbit[3]){ (void)name; if(!outOrbit) return; outOrbit[0]=gRtOrbit[0]; outOrbit[1]=gRtOrbit[1]; outOrbit[2]=gRtOrbit[2]; }\n";
+                                mc << "void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z){ (void)name; gRtOrbit[0]=x; gRtOrbit[1]=y; gRtOrbit[2]=z; gOrbitInited=1; { float tx=gMeshPos[0], ty=gMeshPos[1]+1.2f, tz=gMeshPos[2]; gCamPos[0]=tx + gRtOrbit[0]; gCamPos[1]=ty + gRtOrbit[1]; gCamPos[2]=tz + gRtOrbit[2]; { float fx=tx-gCamPos[0], fy=ty-gCamPos[1], fz=tz-gCamPos[2]; float fl=sqrtf(fx*fx+fy*fy+fz*fz); if(fl<1e-6f) fl=1.0f; fx/=fl; fy/=fl; fz/=fl; gCamForward[0]=fx; gCamForward[1]=fy; gCamForward[2]=fz; gCamUp[0]=0.0f; gCamUp[1]=1.0f; gCamUp[2]=0.0f; { float rx=-fz, ry=0.0f, rz=fx; float rl=sqrtf(rx*rx+ry*ry+rz*rz); if(rl<1e-6f){ rx=1.0f; ry=0.0f; rz=0.0f; rl=1.0f; } gCamRight[0]=rx/rl; gCamRight[1]=ry/rl; gCamRight[2]=rz/rl; } } } }\n";
+                                mc << "void NB_RT_GetCameraRotation(const char* name, float outRot[3]){ (void)name; if(!outRot) return; outRot[0]=gRtCamRot[0]; outRot[1]=gRtCamRot[1]; outRot[2]=gRtCamRot[2]; }\n";
+                                mc << "void NB_RT_SetCameraRotation(const char* name, float x, float y, float z){ (void)name; gRtCamRot[0]=x; gRtCamRot[1]=y; gRtCamRot[2]=z; { float rx=x*0.0174532925f, ry=y*0.0174532925f; float cx=cosf(rx), sx=sinf(rx), cy=cosf(ry), sy=sinf(ry); float fx=sy*cx, fy=-sx, fz=cy*cx; float fl=sqrtf(fx*fx+fy*fy+fz*fz); if(fl<1e-6f) fl=1.0f; fx/=fl; fy/=fl; fz/=fl; gCamForward[0]=fx; gCamForward[1]=fy; gCamForward[2]=fz; gCamUp[0]=0.0f; gCamUp[1]=1.0f; gCamUp[2]=0.0f; float rxv = gCamUp[1]*fz - gCamUp[2]*fy; float ryv = gCamUp[2]*fx - gCamUp[0]*fz; float rzv = gCamUp[0]*fy - gCamUp[1]*fx; float rl=sqrtf(rxv*rxv+ryv*ryv+rzv*rzv); if(rl<1e-6f){ rxv=1.0f; ryv=0.0f; rzv=0.0f; rl=1.0f; } gCamRight[0]=rxv/rl; gCamRight[1]=ryv/rl; gCamRight[2]=rzv/rl; } }\n";
+                                mc << "void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]){ (void)name; if(!outFwd) return; outFwd[0]=gCamForward[0]; outFwd[1]=gCamForward[1]; outFwd[2]=gCamForward[2]; }\n";
+                                mc << "int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName){ (void)cameraName; (void)nodeName; return 1; }\n";
+                                mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
-                                mc << "static int gMirrorZ = -1;\n";
-                                mc << "static int gMirrorLrIndex = 5;\n";
+                                mc << "static int gMirrorZ = 1;\n";
+                                mc << "static int gMirrorLrIndex = 0;\n";
                                 mc << "static const int kVmuLoadOnBoot = " << vmuBootEnabled << ";\n";
                                 mc << "static const uint8_t kVmuBootPng[192] = {";
                                 for (size_t vb = 0; vb < vmuBootPacked.size(); ++vb)
@@ -8503,7 +8799,10 @@ RenderImGuiOnly:
                                 mc << "  gMirrorLrIndex = idx;\n";
                                 mc << "  dbgio_printf(\"[Mirror] idx=%d => X=%d Y=%d Z=%d\\n\", gMirrorLrIndex, gMirrorX, gMirrorY, gMirrorZ);\n";
                                 mc << "}\n";
-                                mc << "static char gDiskMeshFile[128] = \"" << runtimeMeshDiskName << "\";\n";
+                                mc << "enum { MAX_SLOT = 16, MAX_MESHES = 64 };\n";
+                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; } SceneMeshMeta;\n";
+                                mc << "static SceneMeshMeta gSceneMeshes[MAX_MESHES];\n";
+                                mc << "static int gSceneMeshCount = 0;\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
                                 mc << "static int gSceneIndex = 0;\n";
                                 mc << "static const char* gSceneFiles[] = {";
@@ -8532,20 +8831,8 @@ RenderImGuiOnly:
                                 }
                                 mc << "};\n";
                                 mc << "static const int kTexRefMapCount = " << (int)texRefMapEntries.size() << ";\n";
-                                mc << "static char gDiskMeshLogical[128] = \"\";\n";
-                                mc << "static char gSlotDiskNebtex[16][128] = {";
-                                for (int si = 0; si < 16; ++si)
-                                {
-                                    std::string nm;
-                                    if (si < runtimeSlotCount) nm = runtimeSlotDiskName[(size_t)si];
-                                    for (char& ch : nm) if (ch == '\\') ch = '/';
-                                    mc << "\"" << nm << "\"";
-                                    if (si + 1 < 16) mc << ",";
-                                }
-                                mc << "};\n";
-                                mc << "static char gSlotLogicalNebtex[16][128] = {{0}};\n";
                                 mc << "static const char* NB_ResolveMappedRef(const char* logical, const NB_RefMap* map, int count){ if(!logical||!logical[0]||!map||count<=0) return logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(logical,map[i].logical))||(map[i].staged&&dc_eq_nocase(logical,map[i].staged))) return map[i].staged; } const char* slash=strrchr(logical,'/'); const char* name=slash?slash+1:logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(name,map[i].logical))||(map[i].staged&&dc_eq_nocase(name,map[i].staged))) return map[i].staged; } return logical; }\n";
-                                mc << "static int NB_ApplyLoadedSceneState(void){ const char* mesh=NB_DC_GetSceneMeshPath(); if(!mesh||!mesh[0]) return 0; strncpy(gDiskMeshLogical,mesh,sizeof(gDiskMeshLogical)-1); gDiskMeshLogical[sizeof(gDiskMeshLogical)-1]=0; { const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(gDiskMeshFile,rm?rm:mesh,sizeof(gDiskMeshFile)-1); gDiskMeshFile[sizeof(gDiskMeshFile)-1]=0; } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransform(p,r,s); gMeshPos[0]=p[0]; gMeshPos[1]=p[1]; gMeshPos[2]=p[2]; gMeshRot[0]=r[0]; gMeshRot[1]=r[1]; gMeshRot[2]=r[2]; gMeshScale[0]=s[0]; gMeshScale[1]=s[1]; gMeshScale[2]=s[2]; } for(int i=0;i<16;++i){ const char* tp=NB_DC_GetSceneTexturePath(i); gSlotDiskNebtex[i][0]=0; gSlotLogicalNebtex[i][0]=0; if(tp&&tp[0]){ strncpy(gSlotLogicalNebtex[i],tp,127); gSlotLogicalNebtex[i][127]=0; const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(gSlotDiskNebtex[i],rt?rt:tp,127); gSlotDiskNebtex[i][127]=0; } } return 1; }\n";
+                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } if(gSceneMeshCount>0){ gMeshPos[0]=gSceneMeshes[0].pos[0]; gMeshPos[1]=gSceneMeshes[0].pos[1]; gMeshPos[2]=gSceneMeshes[0].pos[2]; gMeshRot[0]=gSceneMeshes[0].rot[0]; gMeshRot[1]=gSceneMeshes[0].rot[1]; gMeshRot[2]=gSceneMeshes[0].rot[2]; gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
                                 mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); if(!NB_DC_LoadScene(path)) return 0; return NB_ApplyLoadedSceneState(); }\n";
                                 mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",gSceneFiles[idx]); if(!NB_DC_SwitchScene(path)) return 0; if(!NB_ApplyLoadedSceneState()) return 0; gSceneIndex=idx; return 1; }\n";
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
@@ -8555,9 +8842,9 @@ RenderImGuiOnly:
                                 mc << "\n";
                                 mc << "static V3 rot_xyz(V3 v, float rx, float ry, float rz) {\n";
                                 mc << "  float sx=sinf(rx), cx=cosf(rx), sy=sinf(ry), cy=cosf(ry), sz=sinf(rz), cz=cosf(rz);\n";
-                                mc << "  float y=v.y*cx - v.z*sx, z=v.y*sx + v.z*cx; v.y=y; v.z=z;\n";
-                                mc << "  float x=v.x*cy + v.z*sy; z=-v.x*sy + v.z*cy; v.x=x; v.z=z;\n";
-                                mc << "  x=v.x*cz - v.y*sz; y=v.x*sz + v.y*cz; v.x=x; v.y=y;\n";
+                                mc << "  float x=v.x*cz - v.y*sz, y=v.x*sz + v.y*cz; v.x=x; v.y=y;\n";
+                                mc << "  x=v.x*cy + v.z*sy; float z=-v.x*sy + v.z*cy; v.x=x; v.z=z;\n";
+                                mc << "  y=v.y*cx - v.z*sx; z=v.y*sx + v.z*cx; v.y=y; v.z=z;\n";
                                 mc << "  return v;\n";
                                 mc << "}\n";
                                 mc << "\n";
@@ -8566,22 +8853,52 @@ RenderImGuiOnly:
                                 mc << "static V3 cross3(V3 a, V3 b){ V3 r={a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; return r; }\n";
                                 mc << "static V3 norm3(V3 v){ float m=sqrtf(v.x*v.x+v.y*v.y+v.z*v.z); if(m<1e-6f){V3 z={0,0,1}; return z;} V3 r={v.x/m,v.y/m,v.z/m}; return r; }\n";
                                 mc << "\n";
-                                mc << "static int project_point(V3 wp, SV *out) {\n";
-                                mc << "  V3 cam = {gCamPos[0], gCamPos[1], gCamPos[2]};\n";
-                                mc << "  V3 fwd = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
-                                mc << "  V3 up = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
-                                mc << "  V3 right = norm3(cross3(fwd, up));\n";
-                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
-                                mc << "  if (fabsf(dot3(right,right)) < 1e-6f) right = norm3(cross3((V3){0,1,0}, fwd));\n";
-                                mc << "  up = norm3(cross3(fwd, right));\n";
-                                mc << "  V3 d = sub3(wp, cam);\n";
-                                mc << "  V3 cp = { dot3(d,right), dot3(d,up), dot3(d,fwd) };\n";
-                                mc << "  if (cp.z <= kProjNear) return 0;\n";
-                                mc << "  out->x = (kProjViewW * 0.5f) - (cp.x / cp.z) * kProjFocalX;\n";
-                                mc << "  out->y = (kProjViewH * 0.5f) - (cp.y / cp.z) * kProjFocalY;\n";
-                                mc << "  /* Perspective-like depth for PVR: near should produce larger z when using GREATER compare. */\n";
-                                mc << "  out->z = 1.0f / (cp.z + 1.0f);\n";
+                                mc << "/* Camera basis (cached per frame) */\n";
+                                mc << "static V3 gBF,gBR,gBU,gBE;\n";
+                                mc << "static void cam_update_basis(void){\n";
+                                mc << "  gBE=(V3){gCamPos[0],gCamPos[1],gCamPos[2]};\n";
+                                mc << "  gBF=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]});\n";
+                                mc << "  gBU=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]});\n";
+                                mc << "  gBR=norm3(cross3(gBU,gBF));\n";
+                                mc << "  if(fabsf(dot3(gBR,gBR))<1e-6f) gBR=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]});\n";
+                                mc << "  if(fabsf(dot3(gBR,gBR))<1e-6f) gBR=norm3(cross3((V3){0,1,0},gBF));\n";
+                                mc << "  gBU=norm3(cross3(gBF,gBR));\n";
+                                mc << "}\n";
+                                mc << "static V3 w2c(V3 w){ V3 d=sub3(w,gBE); return (V3){dot3(d,gBR),dot3(d,gBU),dot3(d,gBF)}; }\n";
+                                mc << "static const float kClipNear = 0.05f;\n";
+                                mc << "/* Frustum side-plane slopes (with 10% margin to avoid edge popping) */\n";
+                                mc << "static const float kFrustSlopeX = (kProjViewW * 0.5f * 1.1f) / kProjFocalX;\n";
+                                mc << "static const float kFrustSlopeY = (kProjViewH * 0.5f * 1.1f) / kProjFocalY;\n";
+                                mc << "static void proj_sv(float cx, float cy, float cz, float u, float v, SV *out){\n";
+                                mc << "  out->x=(kProjViewW*0.5f)+(cx/cz)*kProjFocalX;\n";
+                                mc << "  out->y=(kProjViewH*0.5f)-(cy/cz)*kProjFocalY;\n";
+                                mc << "  out->z=1.0f/cz; out->u=u; out->v=v;\n";
+                                mc << "}\n";
+                                mc << "static int proj_cs(V3 cp, SV *out){\n";
+                                mc << "  if(cp.z<kClipNear) return 0;\n";
+                                mc << "  out->x=(kProjViewW*0.5f)+(cp.x/cp.z)*kProjFocalX;\n";
+                                mc << "  out->y=(kProjViewH*0.5f)-(cp.y/cp.z)*kProjFocalY;\n";
+                                mc << "  out->z=1.0f/cp.z;\n";
                                 mc << "  return 1;\n";
+                                mc << "}\n";
+                                mc << "static int project_point(V3 wp, SV *out){ return proj_cs(w2c(wp),out); }\n";
+                                mc << "/* Sutherland-Hodgman clip: clip polygon against plane nx*x+ny*y+nz*z+nd>=0 */\n";
+                                mc << "typedef struct { float x,y,z,u,v; } CV;\n";
+                                mc << "static int clip_poly(CV* in, int n, CV* out, float nx, float ny, float nz, float nd){\n";
+                                mc << "  if(n<3) return 0;\n";
+                                mc << "  int m=0;\n";
+                                mc << "  for(int i=0;i<n;i++){\n";
+                                mc << "    CV *a=&in[i], *b=&in[(i+1)%n];\n";
+                                mc << "    float da=a->x*nx+a->y*ny+a->z*nz+nd;\n";
+                                mc << "    float db=b->x*nx+b->y*ny+b->z*nz+nd;\n";
+                                mc << "    if(da>=0) out[m++]=*a;\n";
+                                mc << "    if((da>=0)!=(db>=0)){\n";
+                                mc << "      float t=da/(da-db);\n";
+                                mc << "      out[m].x=a->x+t*(b->x-a->x); out[m].y=a->y+t*(b->y-a->y); out[m].z=a->z+t*(b->z-a->z);\n";
+                                mc << "      out[m].u=a->u+t*(b->u-a->u); out[m].v=a->v+t*(b->v-a->v); m++;\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
+                                mc << "  return m;\n";
                                 mc << "}\n";
                                 mc << "\n";
                                 mc << "static void draw_tri(pvr_poly_hdr_t *hdr, SV a, SV b, SV c, uint32 argb) {\n";
@@ -8597,13 +8914,19 @@ RenderImGuiOnly:
                                 mc << "  pvr_init_defaults();\n";
                                 mc << "  dbgio_dev_select(\"fb\");\n";
                                 mc << "  dbgio_printf(\"Nebula Dreamcast Runtime (Scene Export v2)\\n\");\n";
+                                mc << "  dbgio_printf(\"[NEBULA][DC] Loading scene: %s (sceneCount=%d)\\n\", kDefaultSceneFile, gSceneCount);\n";
                                 mc << "  if (!NB_LoadScene(kDefaultSceneFile)) {\n";
                                 mc << "    if (!NB_LoadSceneIndex(0)) {\n";
                                 mc << "      dbgio_printf(\"[NEBULA][DC] Scene load failed: %s\\n\", kDefaultSceneFile);\n";
                                 mc << "      return 1;\n";
                                 mc << "    }\n";
                                 mc << "  }\n";
-                                mc << "  { V3 f=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(f,u)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[CameraParity][Runtime] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", gCamPos[0],gCamPos[1],gCamPos[2],f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
+                                mc << "  dbgio_printf(\"[NEBULA][DC] Scene loaded: meshCount=%d sceneName=%s\\n\", gSceneMeshCount, gSceneName);\n";
+                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi) { dbgio_printf(\"[NEBULA][DC]   mesh[%d] disk=%s pos=(%.2f,%.2f,%.2f)\\n\", mi, gSceneMeshes[mi].meshDisk, gSceneMeshes[mi].pos[0], gSceneMeshes[mi].pos[1], gSceneMeshes[mi].pos[2]); }\n";
+                                mc << "  gPlayerMeshIdx = -1;\n";
+                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi) { if(strcmp(gSceneMeshes[mi].meshDisk, kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } }\n";
+                                mc << "  dbgio_printf(\"[NEBULA][DC] Player mesh idx=%d disk=%s\\n\", gPlayerMeshIdx, kPlayerMeshDisk);\n";
+                                mc << "  { V3 f=norm3((V3){gCamForward[0],gCamForward[1],gCamForward[2]}); V3 u=norm3((V3){gCamUp[0],gCamUp[1],gCamUp[2]}); V3 r=norm3(cross3(u,f)); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3((V3){gCamRight[0],gCamRight[1],gCamRight[2]}); if (fabsf(dot3(r,r)) < 1e-6f) r=norm3(cross3((V3){0,1,0},f)); u=norm3(cross3(f,r)); dbgio_printf(\"[CameraParity][Runtime] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\\n\", gCamPos[0],gCamPos[1],gCamPos[2],f.x,f.y,f.z,r.x,r.y,r.z,u.x,u.y,u.z); }\n";
                                 mc << "\n";
                                 mc << "\n";
                                 mc << "  static const int kVertCountEmbedded = " << runtimeVerts.size() << ";\n";
@@ -8640,326 +8963,242 @@ RenderImGuiOnly:
                                     if (ii + 1 < runtimeIndices.size()) mc << ",";
                                 }
                                 mc << "};\n";
-                                mc << "  RuntimeMesh diskMesh = {0};\n";
-                                mc << "  RuntimeMesh activeMesh = {0};\n";
-                                mc << "  if (gDiskMeshFile[0]) {\n";
-                                mc << "    char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", gDiskMeshFile);\n";
-                                mc << "    if (!dc_try_load_nebmesh(mp, &diskMesh)) memset(&diskMesh, 0, sizeof(diskMesh));\n";
-                                mc << "  }\n";
-                                mc << "  if (diskMesh.vert_count > 0 && diskMesh.tri_count > 0) activeMesh = diskMesh;\n";
-                                mc << "  else { dbgio_printf(\"[NEBULA][DC] Disk mesh compat-open/load failed: logical=%s resolved=/cd/data/meshes/%s\\n\", gDiskMeshLogical[0]?gDiskMeshLogical:\"(none)\", gDiskMeshFile); return 1; }\n";
-                                mc << "  int kVertCount = activeMesh.vert_count;\n";
-                                mc << "  int kTriCount = activeMesh.tri_count;\n";
-                                mc << "  V3* base = activeMesh.pos;\n";
-                                mc << "  uint16_t* trisNormal = activeMesh.indices;\n";
-                                mc << "  V3* triUvNormal = activeMesh.tri_uv;\n";
-                                mc << "  uint16_t* triMatNormal = activeMesh.tri_mat;\n";
-                                mc << "  uint16_t *trisFlipped = (uint16_t*)malloc((size_t)kTriCount*3u*sizeof(uint16_t));\n";
-                                mc << "  V3 *triUvFlipped = (V3*)malloc((size_t)kTriCount*3u*sizeof(V3));\n";
-                                mc << "  if(!trisFlipped || !triUvFlipped){ free(trisFlipped); free(triUvFlipped); trisFlipped=0; triUvFlipped=0; }\n";
-                                mc << "  if (trisFlipped && triUvFlipped) for (int t=0; t<kTriCount; ++t) {\n";
-                                mc << "    trisFlipped[t*3+0] = trisNormal[t*3+0];\n";
-                                mc << "    trisFlipped[t*3+1] = trisNormal[t*3+2];\n";
-                                mc << "    trisFlipped[t*3+2] = trisNormal[t*3+1];\n";
-                                mc << "    triUvFlipped[t*3+0] = triUvNormal[t*3+0];\n";
-                                mc << "    triUvFlipped[t*3+1] = triUvNormal[t*3+2];\n";
-                                mc << "    triUvFlipped[t*3+2] = triUvNormal[t*3+1];\n";
-                                mc << "  }\n";
-                                mc << "  enum { MAX_SLOT = 16 };\n";
-                                mc << "  pvr_poly_hdr_t hdrSlot[MAX_SLOT];\n";
-                                mc << "  pvr_ptr_t slotTx[MAX_SLOT] = {0};\n";
-                                mc << "  const int slotCount = " << runtimeSlotCount << ";\n";
-                                mc << "  static uint16_t slotW[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotW[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static uint16_t slotH[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotH[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotUS[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotUScale[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotVS[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(runtimeSlotVScale[(size_t)si]); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                // KOS strict: omit per-slot material UV transform arrays.
-                                mc << "  static float slotHalfU[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(0.5f / (float)std::max(1, runtimeSlotW[(size_t)si])); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static float slotHalfV[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << fstr(0.5f / (float)std::max(1, runtimeSlotH[(size_t)si])); if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static uint8_t slotFmt[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFmt[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  static uint8_t slotFilter[MAX_SLOT] = {";
-                                for (int si = 0; si < runtimeSlotCount; ++si) { mc << runtimeSlotFilter[(size_t)si]; if (si + 1 < runtimeSlotCount) mc << ","; }
-                                mc << "};\n";
-                                mc << "  /* texture slot names come from scene metadata */\n";
-                                for (int si = 0; si < runtimeSlotCount; ++si)
-                                {
-                                    mc << "  static uint16_t texbuf_" << si << "[] = {";
-                                    const auto& pix = runtimeSlotTexUpload[(size_t)si];
-                                    for (size_t pi = 0; pi < pix.size(); ++pi)
-                                    {
-                                        mc << (unsigned int)pix[pi];
-                                        if (pi + 1 < pix.size()) mc << ",";
-                                    }
-                                    mc << "};\n";
-                                }
-                                mc << "  RuntimeTex diskTex[MAX_SLOT]; memset(diskTex, 0, sizeof(diskTex));\n";
+                                mc << "  typedef struct { RuntimeMesh diskMesh; RuntimeMesh activeMesh; int kVertCount; int kTriCount; V3* base; uint16_t* trisNormal; V3* triUvNormal; uint16_t* triMatNormal; uint16_t* trisFlipped; V3* triUvFlipped; pvr_poly_hdr_t hdrSlot[MAX_SLOT]; pvr_ptr_t slotTx[MAX_SLOT]; RuntimeTex diskTex[MAX_SLOT]; uint16_t slotW[MAX_SLOT]; uint16_t slotH[MAX_SLOT]; float slotUS[MAX_SLOT]; float slotVS[MAX_SLOT]; float slotHalfU[MAX_SLOT]; float slotHalfV[MAX_SLOT]; uint8_t slotFilter[MAX_SLOT]; uint8_t slotReady[MAX_SLOT]; int slotCount; int loaded; } RuntimeSceneMesh;\n";
+                                mc << "  static RuntimeSceneMesh meshRt[MAX_MESHES];\n";
+                                mc << "  memset(meshRt, 0, sizeof(meshRt));\n";
                                 mc << "  static const uint16_t kFallbackWhite2x2[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };\n";
-                                mc << "  for (int s=0; s<slotCount; ++s) {\n";
-                                mc << "    const uint16_t *buf = 0;\n";
-                                mc << "    if (!gSlotDiskNebtex[s][0]) {\n";
-                                mc << "      dbgio_printf(\"[NEBULA][DC] Missing disk texture path for slot %d logical=%s (fallback white)\\n\", s, gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\");\n";
-                                mc << "      buf = kFallbackWhite2x2; slotW[s]=2; slotH[s]=2;\n";
-                                mc << "      slotUS[s]=1.0f; slotVS[s]=1.0f; slotHalfU[s]=0.25f; slotHalfV[s]=0.25f;\n";
-                                mc << "      slotFilter[s]=0;\n";
-                                mc << "    } else {\n";
-                                mc << "      char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
-                                mc << "      if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] Disk texture compat-open/load failed: logical=%s resolved=%s (fallback white)\\n\", gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\", tp);\n";
-                                mc << "        buf = kFallbackWhite2x2; slotW[s]=2; slotH[s]=2;\n";
-                                mc << "        slotUS[s]=1.0f; slotVS[s]=1.0f; slotHalfU[s]=0.25f; slotHalfV[s]=0.25f;\n";
-                                mc << "        slotFilter[s]=0;\n";
-                                mc << "      } else {\n";
-                                mc << "        buf = diskTex[s].pixels; slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
-                                mc << "        slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs; slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1); slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
-                                mc << "        /* keep generated per-slot filter setting; do not override from diskTex metadata */\n";
-                                mc << "      }\n";
-                                mc << "    }\n";
-                                mc << "    int tw = slotW[s], th = slotH[s];\n";
-                                mc << "    pvr_ptr_t tx = pvr_mem_malloc(tw*th*2);\n";
-                                mc << "    if (!tx) tx = slotTx[0];\n";
-                                mc << "    else {\n";
-                                mc << "      slotTx[s] = tx;\n";
-                                mc << "      pvr_txr_load_ex((void*)buf, tx, tw, th, PVR_TXRLOAD_16BPP);\n";
-                                mc << "    }\n";
-                                mc << "    pvr_poly_cxt_t cxt;\n";
-                                mc << "    int isPow2W = (tw > 0) && ((tw & (tw - 1)) == 0);\n";
-                                mc << "    int isPow2H = (th > 0) && ((th & (th - 1)) == 0);\n";
-                                mc << "    uint32 layoutFmt = (isPow2W && isPow2H) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
-                                mc << "    uint32 strideFmt = (layoutFmt == PVR_TXRFMT_TWIDDLED) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
-                                mc << "    uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
-                                mc << "    pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
-                                mc << "    pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, tw, th, tx, f);\n";
-                                mc << "    cxt.gen.culling = PVR_CULLING_NONE;\n";
-                                mc << "    cxt.depth.comparison = PVR_DEPTHCMP_GREATER;\n";
-                                mc << "    cxt.depth.write = PVR_DEPTHWRITE_ENABLE;\n";
-                                mc << "    pvr_poly_compile(&hdrSlot[s], &cxt);\n";
-                                mc << "  }\n";
+                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=1; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
+                                mc << "  int maxVertCount=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>maxVertCount) maxVertCount=meshRt[mi].kVertCount; }\n";
+                                mc << "  SV* gSv=NULL; uint8_t* gOk=NULL; V3* gCs=NULL;\n";
+                                mc << "  if(maxVertCount>0){ gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs){ free(gSv); free(gOk); free(gCs); gSv=NULL; gOk=NULL; gCs=NULL; maxVertCount=0; } }\n";
                                 mc << "  NB_KOS_InitInput();\n";
                                 mc << "  NB_TryLoadVmuBootImage();\n";
                                 mc << "  NB_SetMirrorFromIndex(gMirrorLrIndex);\n";
                                 mc << "  int sceneReady = 1;\n";
                                 mc << "  int sceneSwitchReq = 0;\n";
-                                mc << "  int orbitPrimed = 0;\n";
+                                mc << "  /* legacy orbit priming removed; unified control owns orbit state. */\n";
                                 mc << "  NB_Game_OnStart();\n";
+                                mc << "  /* Compute pivot offset: world camera position WITHOUT orbit minus mesh position. */\n";
+                                mc << "  /* kCamPosInit already includes orbit; subtract orbit to get the target/pivot world pos. */\n";
+                                mc << "  gPivotOffset[0] = (kCamPosInit[0] - kCamOrbitInit[0]) - gMeshPos[0];\n";
+                                mc << "  gPivotOffset[1] = (kCamPosInit[1] - kCamOrbitInit[1]) - gMeshPos[1];\n";
+                                mc << "  gPivotOffset[2] = (kCamPosInit[2] - kCamOrbitInit[2]) - gMeshPos[2];\n";
                                 mc << "  {\n";
-                                mc << "    V3 toHead = { gMeshPos[0]-gCamPos[0], (gMeshPos[1] + 1.2f)-gCamPos[1], gMeshPos[2]-gCamPos[2] };\n";
-                                mc << "    toHead = norm3(toHead);\n";
-                                mc << "    gCamForward[0]=toHead.x; gCamForward[1]=toHead.y; gCamForward[2]=toHead.z;\n";
-                                mc << "    gCamUp[0]=0.0f; gCamUp[1]=-1.0f; gCamUp[2]=0.0f;\n";
-                                mc << "    {\n";
-                                mc << "      V3 r0 = norm3(cross3((V3){gCamForward[0], gCamForward[1], gCamForward[2]}, (V3){gCamUp[0], gCamUp[1], gCamUp[2]}));\n";
-                                mc << "      if (fabsf(dot3(r0,r0)) < 1e-6f) r0 = (V3){1,0,0};\n";
-                                mc << "      gCamRight[0]=r0.x; gCamRight[1]=r0.y; gCamRight[2]=r0.z;\n";
-                                mc << "    }\n";
+                                mc << "    gFollowAlign = 0;\n";
+                                mc << "    gRtOrbit[0] = kCamOrbitInit[0]; gRtOrbit[1] = kCamOrbitInit[1]; gRtOrbit[2] = kCamOrbitInit[2];\n";
+                                mc << "    gOrbitInited = 1;\n";
+                                mc << "    if (kDcDebug) dbgio_printf(\"[NEBULA][DC] cameraInit followAlign=%d orbit=(%.3f,%.3f,%.3f)\\n\", gFollowAlign, gRtOrbit[0], gRtOrbit[1], gRtOrbit[2]);\n";
                                 mc << "  }\n";
                                 mc << "\n";
                                 mc << "  for (;;) {\n";
+                                mc << "    const float dt = 0.016f;\n";
                                 mc << "    NB_KOS_PollInput();\n";
                                 mc << "    NB_TryLoadVmuBootImage();\n";
-                                mc << "    NB_UpdateVmuAnim(0.016f);\n";
-                                mc << "    NB_Game_OnUpdate(0.016f);\n";
+                                mc << "    NB_UpdateVmuAnim(dt);\n";
+                                mc << "\n";
+                                mc << "    float inX = 0.0f, inY = 0.0f;\n";
+                                mc << "    float lookYaw = 0.0f, lookPitch = 0.0f;\n";
+                                mc << "    float stickX = 0.0f, stickY = 0.0f;\n";
+                                mc << "    float ltr = 0.0f, rtr = 0.0f;\n";
                                 mc << "    if (NB_KOS_HasController()) {\n";
-                                mc << "      const float kZoomStep = 0.20f;\n";
-                                mc << "      const float kOrbitStep = 0.06f;\n";
-                                mc << "      const float kOrbitTargetYOffset = 1.2f;\n";
-                                mc << "\n";
-                                mc << "      V3 f = norm3((V3){gCamForward[0], gCamForward[1], gCamForward[2]});\n";
-                                mc << "      V3 u = norm3((V3){gCamUp[0], gCamUp[1], gCamUp[2]});\n";
-                                mc << "      V3 r = norm3(cross3(f, u));\n";
-                                mc << "      if (fabsf(dot3(r,r)) < 1e-6f) r = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
-                                mc << "      if (fabsf(dot3(r,r)) < 1e-6f) r = norm3((V3){1,0,0});\n";
-                                mc << "\n";
+                                mc << "      stickX = NB_KOS_GetStickX();\n";
+                                mc << "      stickY = NB_KOS_GetStickY();\n";
                                 mc << "      {\n";
-                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
-                                mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";
-                                mc << "        float dist = sqrtf(dot3(off, off));\n";
-                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_A)) {\n";
-                                mc << "          dist -= kZoomStep;\n";
-                                mc << "        }\n";
-                                mc << "        if (NB_KOS_ButtonDown(NB_BTN_X)) {\n";
-                                mc << "          dist += kZoomStep;\n";
-                                mc << "        }\n";
-                                mc << "        if (dist < 0.8f) dist = 0.8f;\n";
-                                mc << "        if (dist > 200.0f) dist = 200.0f;\n";
-                                mc << "        if (dist > 0.0f) {\n";
-                                mc << "          V3 dir = norm3(off);\n";
-                                mc << "          gCamPos[0] = tgt.x + dir.x * dist; gCamPos[1] = tgt.y + dir.y * dist; gCamPos[2] = tgt.z + dir.z * dist;\n";
+                                mc << "        const float stickDead = 0.25f;\n";
+                                mc << "        if (fabsf(stickX) > stickDead || fabsf(stickY) > stickDead) {\n";
+                                mc << "          inX = stickX;\n";
+                                mc << "          inY = -stickY;\n";
+                                mc << "        } else {\n";
+                                mc << "          if (NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT)) inX -= 1.0f;\n";
+                                mc << "          if (NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) inX += 1.0f;\n";
+                                mc << "          if (NB_KOS_ButtonDown(NB_BTN_DPAD_UP)) inY += 1.0f;\n";
+                                mc << "          if (NB_KOS_ButtonDown(NB_BTN_DPAD_DOWN)) inY -= 1.0f;\n";
                                 mc << "        }\n";
                                 mc << "      }\n";
+                                mc << "      ltr = NB_KOS_GetLTrigger();\n";
+                                mc << "      rtr = NB_KOS_GetRTrigger();\n";
+                                mc << "      if (ltr > 0.15f) lookYaw += ltr;\n";
+                                mc << "      if (rtr > 0.15f) lookYaw -= rtr;\n";
+                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_Y)) lookPitch += 1.0f;\n";
+                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_A)) lookPitch -= 1.0f;\n";
+                                mc << "    }\n";
                                 mc << "\n";
-                                mc << "      if (NB_KOS_ButtonDown(NB_BTN_B) || NB_KOS_ButtonDown(NB_BTN_Y) || NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT) || NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) {\n";
-                                mc << "        float ang = (NB_KOS_ButtonDown(NB_BTN_B) || NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT)) ? kOrbitStep : -kOrbitStep;\n";
-                                mc << "        float c = cosf(ang), s = sinf(ang);\n";
-                                mc << "        V3 tgt = { gMeshPos[0], gMeshPos[1] + kOrbitTargetYOffset, gMeshPos[2] };\n";
-                                mc << "        V3 off = { gCamPos[0] - tgt.x, gCamPos[1] - tgt.y, gCamPos[2] - tgt.z };\n";
-                                mc << "        V3 noff = off;\n";
-                                mc << "        if (orbitPrimed) {\n";
-                                mc << "          noff.x = off.x * c - off.z * s;\n";
-                                mc << "          noff.z = off.x * s + off.z * c;\n";
-                                mc << "        } else {\n";
-                                mc << "          orbitPrimed = 1;\n";
-                                mc << "        }\n";
-                                mc << "        gCamPos[0] = tgt.x + noff.x; gCamPos[1] = tgt.y + noff.y; gCamPos[2] = tgt.z + noff.z;\n";
+                                mc << "    float inLen = sqrtf(inX * inX + inY * inY);\n";
+                                mc << "    if (inLen > 1.0f) { inX /= inLen; inY /= inLen; inLen = 1.0f; }\n";
                                 mc << "\n";
-                                mc << "        /* keep world-up stable during yaw orbit; runtime projection expects inverted stored up basis */\n";
-                                mc << "        V3 nf = norm3((V3){tgt.x - gCamPos[0], tgt.y - gCamPos[1], tgt.z - gCamPos[2]});\n";
-                                mc << "        V3 storedUp = {0,-1,0};\n";
-                                mc << "        V3 nr = norm3(cross3(nf, storedUp));\n";
-                                mc << "        if (fabsf(dot3(nr,nr)) < 1e-6f) nr = r;\n";
-                                mc << "        gCamForward[0]=nf.x; gCamForward[1]=nf.y; gCamForward[2]=nf.z;\n";
-                                mc << "        gCamRight[0]=nr.x; gCamRight[1]=nr.y; gCamRight[2]=nr.z;\n";
-                                mc << "        gCamUp[0]=storedUp.x; gCamUp[1]=storedUp.y; gCamUp[2]=storedUp.z;\n";
+                                mc << "    const float moveStep = 5.0f * dt;\n";
+                                mc << "    const float lookYawStep = 120.0f * dt;\n";
+                                mc << "    const float lookPitchStep = 90.0f * dt;\n";
+                                mc << "    const float turnSpeed = 360.0f * dt;\n";
+                                mc << "\n";
+                                mc << "    V3 pivot = { gMeshPos[0] + gPivotOffset[0], gMeshPos[1] + gPivotOffset[1], gMeshPos[2] + gPivotOffset[2] };\n";
+                                mc << "    if (!gOrbitInited) { gRtOrbit[0] = kCamOrbitInit[0]; gRtOrbit[1] = kCamOrbitInit[1]; gRtOrbit[2] = kCamOrbitInit[2]; gOrbitInited = 1; }\n";
+                                mc << "\n";
+                                mc << "    {\n";
+                                mc << "      float camToNodeX = pivot.x - gCamPos[0];\n";
+                                mc << "      float camToNodeZ = pivot.z - gCamPos[2];\n";
+                                mc << "      float fLen = sqrtf(camToNodeX * camToNodeX + camToNodeZ * camToNodeZ);\n";
+                                mc << "      if (fLen < 0.0001f) {\n";
+                                mc << "        float yawRad = gMeshRot[1] * 0.0174532925f;\n";
+                                mc << "        camToNodeX = sinf(yawRad);\n";
+                                mc << "        camToNodeZ = cosf(yawRad);\n";
+                                mc << "        fLen = 1.0f;\n";
+                                mc << "      }\n";
+                                mc << "      camToNodeX /= fLen;\n";
+                                mc << "      camToNodeZ /= fLen;\n";
+                                mc << "      float camRightX = camToNodeZ;\n";
+                                mc << "      float camRightZ = -camToNodeX;\n";
+                                mc << "      float moveX = camRightX * inX + camToNodeX * inY;\n";
+                                mc << "      float moveZ = camRightZ * inX + camToNodeZ * inY;\n";
+                                mc << "      float moveLen = sqrtf(moveX * moveX + moveZ * moveZ);\n";
+                                mc << "      const float deadzone = 0.05f;\n";
+                                mc << "      if (moveLen > deadzone) {\n";
+                                mc << "        moveX /= moveLen;\n";
+                                mc << "        moveZ /= moveLen;\n";
+                                mc << "        gMeshPos[0] += moveX * moveStep;\n";
+                                mc << "        gMeshPos[2] += moveZ * moveStep;\n";
+                                mc << "        float targetYaw = atan2f(moveX, moveZ) * 57.2957795f;\n";
+                                mc << "        float dy = targetYaw - gMeshRot[1];\n";
+                                mc << "        while (dy > 180.0f) dy -= 360.0f;\n";
+                                mc << "        while (dy < -180.0f) dy += 360.0f;\n";
+                                mc << "        if (dy > turnSpeed) dy = turnSpeed;\n";
+                                mc << "        if (dy < -turnSpeed) dy = -turnSpeed;\n";
+                                mc << "        gMeshRot[1] += dy;\n";
                                 mc << "      }\n";
                                 mc << "    }\n";
+                                mc << "\n";
+                                mc << "    pivot = (V3){ gMeshPos[0] + gPivotOffset[0], gMeshPos[1] + gPivotOffset[1], gMeshPos[2] + gPivotOffset[2] };\n";
+                                mc << "\n";
+                                mc << "    if (fabsf(lookYaw) > 0.0001f || fabsf(lookPitch) > 0.0001f) {\n";
+                                mc << "      if (fabsf(lookYaw) > 0.0001f) {\n";
+                                mc << "        float yawRad = (-lookYaw * lookYawStep) * 0.0174532925f;\n";
+                                mc << "        float sn = sinf(yawRad), cs = cosf(yawRad);\n";
+                                mc << "        float ox = gRtOrbit[0], oz = gRtOrbit[2];\n";
+                                mc << "        gRtOrbit[0] = ox * cs - oz * sn;\n";
+                                mc << "        gRtOrbit[2] = ox * sn + oz * cs;\n";
+                                mc << "      }\n";
+                                mc << "      if (fabsf(lookPitch) > 0.0001f) {\n";
+                                mc << "        float ox = gRtOrbit[0], oy = gRtOrbit[1], oz = gRtOrbit[2];\n";
+                                mc << "        float horiz = sqrtf(ox * ox + oz * oz);\n";
+                                mc << "        float radius = sqrtf(horiz * horiz + oy * oy);\n";
+                                mc << "        if (radius > 0.0001f) {\n";
+                                mc << "          float pitch = atan2f(oy, (horiz > 0.0001f ? horiz : 0.0001f));\n";
+                                mc << "          pitch += (lookPitch * lookPitchStep) * 0.0174532925f;\n";
+                                mc << "          const float lim = 1.39626f;\n";
+                                mc << "          if (pitch > lim) pitch = lim;\n";
+                                mc << "          if (pitch < -lim) pitch = -lim;\n";
+                                mc << "          float newHoriz = cosf(pitch) * radius;\n";
+                                mc << "          gRtOrbit[1] = sinf(pitch) * radius;\n";
+                                mc << "          if (horiz > 0.0001f) {\n";
+                                mc << "            float s = newHoriz / horiz;\n";
+                                mc << "            gRtOrbit[0] = ox * s;\n";
+                                mc << "            gRtOrbit[2] = oz * s;\n";
+                                mc << "          } else {\n";
+                                mc << "            gRtOrbit[0] = 0.0f;\n";
+                                mc << "            gRtOrbit[2] = -newHoriz;\n";
+                                mc << "          }\n";
+                                mc << "        }\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
+                                mc << "\n";
+                                mc << "    gCamPos[0] = pivot.x + gRtOrbit[0];\n";
+                                mc << "    gCamPos[1] = pivot.y + gRtOrbit[1];\n";
+                                mc << "    gCamPos[2] = pivot.z + gRtOrbit[2];\n";
+                                mc << "\n";
+                                mc << "    {\n";
+                                mc << "      V3 nf = norm3((V3){pivot.x - gCamPos[0], pivot.y - gCamPos[1], pivot.z - gCamPos[2]});\n";
+                                mc << "      V3 storedUp = {0,1,0};\n";
+                                mc << "      V3 nr = norm3(cross3(storedUp, nf));\n";
+                                mc << "      if (fabsf(dot3(nr,nr)) < 1e-6f) nr = norm3((V3){gCamRight[0], gCamRight[1], gCamRight[2]});\n";
+                                mc << "      if (fabsf(dot3(nr,nr)) < 1e-6f) nr = (V3){1,0,0};\n";
+                                mc << "      gCamForward[0]=nf.x; gCamForward[1]=nf.y; gCamForward[2]=nf.z;\n";
+                                mc << "      gCamRight[0]=nr.x; gCamRight[1]=nr.y; gCamRight[2]=nr.z;\n";
+                                mc << "      gCamUp[0]=storedUp.x; gCamUp[1]=storedUp.y; gCamUp[2]=storedUp.z;\n";
+                                mc << "    }\n";
+                                mc << "\n";
+                                mc << "    if (kDcDebug) {\n";
+                                mc << "      static int sDbg = 0;\n";
+                                mc << "      if ((sDbg++ % 60) == 0) {\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] input move=(%.2f,%.2f) look=(%.2f,%.2f) stick=(%.2f,%.2f) trig=(%.2f,%.2f)\\n\", inX, inY, lookYaw, lookPitch, stickX, stickY, ltr, rtr);\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] player pos=(%.3f,%.3f,%.3f) rot=(%.3f,%.3f,%.3f)\\n\", gMeshPos[0], gMeshPos[1], gMeshPos[2], gMeshRot[0], gMeshRot[1], gMeshRot[2]);\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] cam pos=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f) orbit=(%.3f,%.3f,%.3f)\\n\", gCamPos[0], gCamPos[1], gCamPos[2], gCamForward[0], gCamForward[1], gCamForward[2], gCamUp[0], gCamUp[1], gCamUp[2], gRtOrbit[0], gRtOrbit[1], gRtOrbit[2]);\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
+                                mc << "\n";
+                                mc << "    NB_Game_OnUpdate(dt);\n";
                                 mc << "    if (sceneSwitchReq != 0) {\n";
                                 mc << "      int metaOk = (sceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
                                 mc << "      sceneSwitchReq = 0;\n";
-                                mc << "      for (int s=0; s<slotCount; ++s) {\n";
-                                mc << "        if (slotTx[s]) { pvr_mem_free(slotTx[s]); slotTx[s] = 0; }\n";
-                                mc << "        dc_free_tex(&diskTex[s]);\n";
-                                mc << "        slotW[s] = 0; slotH[s] = 0; slotUS[s] = 1.0f; slotVS[s] = 1.0f;\n";
-                                mc << "        slotHalfU[s] = 0.5f; slotHalfV[s] = 0.5f; slotFilter[s] = 0;\n";
-                                mc << "      }\n";
-                                mc << "      memset(hdrSlot, 0, sizeof(hdrSlot));\n";
-                                mc << "      if (trisFlipped) { free(trisFlipped); trisFlipped = 0; }\n";
-                                mc << "      if (triUvFlipped) { free(triUvFlipped); triUvFlipped = 0; }\n";
-                                mc << "      dc_free_mesh(&diskMesh);\n";
-                                mc << "      memset(&activeMesh, 0, sizeof(activeMesh));\n";
-                                mc << "      kVertCount = 0; kTriCount = 0;\n";
-                                mc << "      base = 0; trisNormal = 0; triUvNormal = 0; triMatNormal = 0;\n";
                                 mc << "      sceneReady = 0;\n";
-                                mc << "      if (!metaOk) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] Scene metadata switch failed\\n\");\n";
-                                mc << "      } else if (!gDiskMeshFile[0]) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] Scene has empty mesh ref\\n\");\n";
-                                mc << "      } else {\n";
-                                mc << "        char mp[256]; snprintf(mp, sizeof(mp), \"/cd/data/meshes/%s\", gDiskMeshFile);\n";
-                                mc << "        if (!dc_try_load_nebmesh(mp, &diskMesh)) {\n";
-                                mc << "          dbgio_printf(\"[NEBULA][DC] Scene mesh compat-open/load failed: logical=%s resolved=%s\\n\", gDiskMeshLogical[0]?gDiskMeshLogical:\"(none)\", mp);\n";
-                                mc << "        } else {\n";
-                                mc << "          activeMesh = diskMesh;\n";
-                                mc << "          kVertCount = activeMesh.vert_count;\n";
-                                mc << "          kTriCount = activeMesh.tri_count;\n";
-                                mc << "          base = activeMesh.pos;\n";
-                                mc << "          trisNormal = activeMesh.indices;\n";
-                                mc << "          triUvNormal = activeMesh.tri_uv;\n";
-                                mc << "          triMatNormal = activeMesh.tri_mat;\n";
-                                mc << "          trisFlipped = (uint16_t*)malloc((size_t)kTriCount*3u*sizeof(uint16_t));\n";
-                                mc << "          triUvFlipped = (V3*)malloc((size_t)kTriCount*3u*sizeof(V3));\n";
-                                mc << "          if (trisFlipped && triUvFlipped) {\n";
-                                mc << "            for (int t=0; t<kTriCount; ++t) {\n";
-                                mc << "              trisFlipped[t*3+0] = trisNormal[t*3+0];\n";
-                                mc << "              trisFlipped[t*3+1] = trisNormal[t*3+2];\n";
-                                mc << "              trisFlipped[t*3+2] = trisNormal[t*3+1];\n";
-                                mc << "              triUvFlipped[t*3+0] = triUvNormal[t*3+0];\n";
-                                mc << "              triUvFlipped[t*3+1] = triUvNormal[t*3+2];\n";
-                                mc << "              triUvFlipped[t*3+2] = triUvNormal[t*3+1];\n";
-                                mc << "            }\n";
-                                mc << "          }\n";
-                                mc << "          int texOk = 1;\n";
-                                mc << "          for (int s=0; s<slotCount; ++s) {\n";
-                                mc << "            const uint16_t *buf = 0;\n";
-                                mc << "            if (!gSlotDiskNebtex[s][0]) {\n";
-                                mc << "              dbgio_printf(\"[NEBULA][DC] Scene texture slot missing: %d (fallback white)\\n\", s);\n";
-                                mc << "              buf = kFallbackWhite2x2; slotW[s]=2; slotH[s]=2;\n";
-                                mc << "              slotUS[s]=1.0f; slotVS[s]=1.0f; slotHalfU[s]=0.25f; slotHalfV[s]=0.25f; slotFilter[s]=0;\n";
-                                mc << "            } else {\n";
-                                mc << "              char tp[256]; snprintf(tp, sizeof(tp), \"/cd/data/textures/%s\", gSlotDiskNebtex[s]);\n";
-                                mc << "              if (!dc_try_load_nebtex(tp, &diskTex[s])) {\n";
-                                mc << "                dbgio_printf(\"[NEBULA][DC] Scene texture compat-open/load failed: logical=%s resolved=%s (fallback white)\\n\", gSlotLogicalNebtex[s][0]?gSlotLogicalNebtex[s]:\"(none)\", tp);\n";
-                                mc << "                buf = kFallbackWhite2x2; slotW[s]=2; slotH[s]=2;\n";
-                                mc << "                slotUS[s]=1.0f; slotVS[s]=1.0f; slotHalfU[s]=0.25f; slotHalfV[s]=0.25f; slotFilter[s]=0;\n";
-                                mc << "              } else {\n";
-                                mc << "                buf = diskTex[s].pixels;\n";
-                                mc << "                slotW[s]=(uint16_t)diskTex[s].w; slotH[s]=(uint16_t)diskTex[s].h;\n";
-                                mc << "                slotUS[s]=diskTex[s].us; slotVS[s]=diskTex[s].vs;\n";
-                                mc << "                slotHalfU[s]=0.5f/(float)(diskTex[s].w>0?diskTex[s].w:1);\n";
-                                mc << "                slotHalfV[s]=0.5f/(float)(diskTex[s].h>0?diskTex[s].h:1);\n";
-                                mc << "                /* keep generated per-slot filter setting; do not override from diskTex metadata */\n";
-                                mc << "              }\n";
-                                mc << "            }\n";
-                                mc << "            pvr_ptr_t tx = pvr_mem_malloc(slotW[s]*slotH[s]*2);\n";
-                                mc << "            if (!tx) { texOk = 0; dbgio_printf(\"[NEBULA][DC] VRAM alloc failed on slot %d\\n\", s); break; }\n";
-                                mc << "            slotTx[s] = tx;\n";
-                                mc << "            pvr_txr_load_ex((void*)buf, tx, slotW[s], slotH[s], PVR_TXRLOAD_16BPP);\n";
-                                mc << "            pvr_poly_cxt_t cxt;\n";
-                                mc << "            int isPow2W = (slotW[s] > 0) && ((slotW[s] & (slotW[s] - 1)) == 0);\n";
-                                mc << "            int isPow2H = (slotH[s] > 0) && ((slotH[s] & (slotH[s] - 1)) == 0);\n";
-                                mc << "            uint32 layoutFmt = (isPow2W && isPow2H) ? PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_NONTWIDDLED;\n";
-                                mc << "            uint32 strideFmt = (layoutFmt == PVR_TXRFMT_TWIDDLED) ? PVR_TXRFMT_POW2_STRIDE : PVR_TXRFMT_X32_STRIDE;\n";
-                                mc << "            uint32 fmt = PVR_TXRFMT_RGB565 | PVR_TXRFMT_VQ_DISABLE | strideFmt | layoutFmt;\n";
-                                mc << "            pvr_filter_mode_t f = slotFilter[s] ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE;\n";
-                                mc << "            pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, fmt, slotW[s], slotH[s], tx, f);\n";
-                                mc << "            cxt.gen.culling = PVR_CULLING_NONE;\n";
-                                mc << "            cxt.depth.comparison = PVR_DEPTHCMP_GREATER;\n";
-                                mc << "            cxt.depth.write = PVR_DEPTHWRITE_ENABLE;\n";
-                                mc << "            pvr_poly_compile(&hdrSlot[s], &cxt);\n";
-                                mc << "          }\n";
-                                mc << "          sceneReady = texOk;\n";
-                                mc << "          if (!sceneReady) dbgio_printf(\"[NEBULA][DC] Scene switch failed, entering safe empty state\\n\");\n";
-                                mc << "          else NB_Game_OnSceneSwitch(gSceneName);\n";
-                                mc << "        }\n";
-                                mc << "      }\n";
+                                mc << "      for(int mi=0; mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; for(int s=0;s<MAX_SLOT;++s){ if(rm->slotTx[s]){ pvr_mem_free(rm->slotTx[s]); rm->slotTx[s]=0; } dc_free_tex(&rm->diskTex[s]); } if(rm->trisFlipped){ free(rm->trisFlipped); rm->trisFlipped=0; } if(rm->triUvFlipped){ free(rm->triUvFlipped); rm->triUvFlipped=0; } dc_free_mesh(&rm->diskMesh); memset(rm,0,sizeof(*rm)); }\n";
+                                mc << "      if (!metaOk) { dbgio_printf(\"[NEBULA][DC] Scene metadata switch failed\\n\"); }\n";
+                                mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=1; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs){ free(gSv); free(gOk); free(gCs); gSv=NULL; gOk=NULL; gCs=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_Game_OnSceneSwitch(gSceneName); } }\n";
                                 mc << "    }\n";
-                                mc << "    if (!sceneReady || kVertCount <= 0 || kTriCount <= 0 || !base || !trisNormal || !triUvNormal || !triMatNormal) {\n";
-                                mc << "      pvr_wait_ready();\n";
-                                mc << "      pvr_scene_begin();\n";
-                                mc << "      pvr_list_begin(PVR_LIST_OP_POLY);\n";
-                                mc << "      pvr_list_finish();\n";
-                                mc << "      pvr_scene_finish();\n";
-                                mc << "      thd_sleep(16);\n";
-                                mc << "      continue;\n";
+                                mc << "    if (!sceneReady) {\n";
+                                mc << "      pvr_wait_ready(); pvr_scene_begin(); pvr_list_begin(PVR_LIST_OP_POLY); pvr_list_finish(); pvr_scene_finish(); thd_sleep(16); continue;\n";
                                 mc << "    }\n";
+                                mc << "    cam_update_basis();\n";
                                 mc << "    pvr_wait_ready();\n";
                                 mc << "    pvr_scene_begin();\n";
                                 mc << "    pvr_list_begin(PVR_LIST_OP_POLY);\n";
-                                mc << "\n";
-                                mc << "    SV sv[kVertCount]; int ok[kVertCount];\n";
-                                mc << "    for (int i=0;i<kVertCount;++i){\n";
-                                mc << "      V3 v = base[i];\n";
-                                mc << "      v.x *= gMeshScale[0] * (float)gMirrorX; v.y *= gMeshScale[1] * (float)gMirrorY; v.z *= gMeshScale[2] * (float)gMirrorZ;\n";
-                                mc << "      v = rot_xyz(v, deg2rad(gMeshRot[0]), deg2rad(gMeshRot[1]), deg2rad(gMeshRot[2]));\n";
-                                mc << "      v.x += gMeshPos[0]; v.y += gMeshPos[1]; v.z += gMeshPos[2];\n";
-                                mc << "      ok[i] = project_point(v, &sv[i]);\n";
-                                mc << "    }\n";
-                                mc << "\n";
-                                mc << "    float mirrorDet = (gMeshScale[0] * (float)gMirrorX) * (gMeshScale[1] * (float)gMirrorY) * (gMeshScale[2] * (float)gMirrorZ);\n";
-                                mc << "    const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
-                                mc << "    const uint16_t *tris = (mirroredWinding && trisFlipped) ? trisFlipped : trisNormal;\n";
-                                mc << "    const V3 *triUv = (mirroredWinding && triUvFlipped) ? triUvFlipped : triUvNormal;\n";
-                                mc << "    for (int t=0;t<kTriCount;++t){\n";
-                                mc << "      int a=tris[t*3+0], b=tris[t*3+1], c=tris[t*3+2];\n";
-                                mc << "      if (!(ok[a] && ok[b] && ok[c])) continue;\n";
-                                mc << "      SV sa = sv[a], sb = sv[b], sc = sv[c];\n";
-                                mc << "      int sid = (int)triMatNormal[t]; if (sid < 0 || sid >= slotCount) sid = 0;\n";
-                                mc << "      float us = slotUS[sid], vs = slotVS[sid];\n";
-                                mc << "      float hu = slotHalfU[sid], hv = slotHalfV[sid];\n";
-                                mc << "      float u0 = triUv[t*3+0].x, v0 = 1.0f - triUv[t*3+0].y;\n";
-                                mc << "      float u1 = triUv[t*3+1].x, v1 = 1.0f - triUv[t*3+1].y;\n";
-                                mc << "      float u2 = triUv[t*3+2].x, v2 = 1.0f - triUv[t*3+2].y;\n";
-                                mc << "      if (u0 < 0.0f) u0 = 0.0f; else if (u0 > 1.0f) u0 = 1.0f; if (v0 < 0.0f) v0 = 0.0f; else if (v0 > 1.0f) v0 = 1.0f;\n";
-                                mc << "      if (u1 < 0.0f) u1 = 0.0f; else if (u1 > 1.0f) u1 = 1.0f; if (v1 < 0.0f) v1 = 0.0f; else if (v1 > 1.0f) v1 = 1.0f;\n";
-                                mc << "      if (u2 < 0.0f) u2 = 0.0f; else if (u2 > 1.0f) u2 = 1.0f; if (v2 < 0.0f) v2 = 0.0f; else if (v2 > 1.0f) v2 = 1.0f;\n";
-                                mc << "      sa.u = (u0 * (1.0f - 2.0f*hu) + hu) * us; sa.v = (v0 * (1.0f - 2.0f*hv) + hv) * vs;\n";
-                                mc << "      sb.u = (u1 * (1.0f - 2.0f*hu) + hu) * us; sb.v = (v1 * (1.0f - 2.0f*hv) + hv) * vs;\n";
-                                mc << "      sc.u = (u2 * (1.0f - 2.0f*hu) + hu) * us; sc.v = (v2 * (1.0f - 2.0f*hv) + hv) * vs;\n";
-                                mc << "      uint8 tr = (uint8)(255 - ((sid * 17) & 31)); uint8 tg = (uint8)(255 - ((sid * 29) & 31)); uint8 tb = (uint8)(255 - ((sid * 11) & 31));\n";
-                                mc << "      uint32 col = 0xFF000000 | (tr << 16) | (tg << 8) | tb;\n";
-                                mc << "      draw_tri(&hdrSlot[sid], sa, sb, sc, col);\n";
+                                mc << "    for (int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi) {\n";
+                                mc << "      RuntimeSceneMesh* rm = &meshRt[mi]; SceneMeshMeta* sm = &gSceneMeshes[mi];\n";
+                                mc << "      if (!rm->loaded || rm->kVertCount <= 0 || rm->kTriCount <= 0 || !rm->base || !rm->trisNormal || !rm->triUvNormal || !rm->triMatNormal) continue;\n";
+                                mc << "      if (!gSv || !gOk || !gCs || rm->kVertCount > maxVertCount) continue;\n";
+                                mc << "      SV* sv = gSv; uint8_t* ok = gOk; V3* cs = gCs;\n";
+                                mc << "      float smPos[3] = {sm->pos[0], sm->pos[1], sm->pos[2]};\n";
+                                mc << "      float smRot[3] = {sm->rot[0], sm->rot[1], sm->rot[2]};\n";
+                                mc << "      if (mi == gPlayerMeshIdx) { smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
+                                mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
+                                mc << "      /* Player mesh (parented under Node3D) uses identity remap. */\n";
+                                mc << "      float rxr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
+                                mc << "      float ryr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[1]) : deg2rad(smRot[0]);\n";
+                                mc << "      float rzr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[2]) : deg2rad(smRot[1]);\n";
+                                mc << "      for (int i=0;i<rm->kVertCount;++i){ V3 v = rm->base[i]; v.x *= sm->scale[0] * (float)gMirrorX; v.y *= sm->scale[1] * (float)gMirrorY; v.z *= sm->scale[2] * (float)gMirrorZ; v = rot_xyz(v, rxr, ryr, rzr); v.x += smPos[0]; v.y += smPos[1]; v.z += smPos[2]; cs[i] = w2c(v); ok[i] = proj_cs(cs[i], &sv[i]) ? 1 : 0; }\n";
+                                mc << "      float mirrorDet = (sm->scale[0] * (float)gMirrorX) * (sm->scale[1] * (float)gMirrorY) * (sm->scale[2] * (float)gMirrorZ);\n";
+                                mc << "      const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
+                                mc << "      const uint16_t *tris = (mirroredWinding && rm->trisFlipped) ? rm->trisFlipped : rm->trisNormal;\n";
+                                mc << "      const V3 *triUv = (mirroredWinding && rm->triUvFlipped) ? rm->triUvFlipped : rm->triUvNormal;\n";
+                                mc << "      for (int t=0;t<rm->kTriCount;++t){\n";
+                                mc << "        int ia=tris[t*3+0], ib=tris[t*3+1], ic=tris[t*3+2];\n";
+                                mc << "        int sid = (int)rm->triMatNormal[t]; if (sid < 0 || sid >= rm->slotCount) sid = 0; if (!rm->slotReady[sid]) continue;\n";
+                                mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
+                                mc << "        uint8 tr = (uint8)(255 - ((sid * 17) & 31)); uint8 tg = (uint8)(255 - ((sid * 29) & 31)); uint8 tb = (uint8)(255 - ((sid * 11) & 31)); uint32 col = 0xFF000000 | (tr << 16) | (tg << 8) | tb;\n";
+                                mc << "        /* Compute UV for each original vertex */\n";
+                                mc << "        float uv[3][2];\n";
+                                mc << "        for(int k=0;k<3;++k){ float u=triUv[t*3+k].x, v=1.0f-triUv[t*3+k].y; if(u<0.0f)u=0.0f; else if(u>1.0f)u=1.0f; if(v<0.0f)v=0.0f; else if(v>1.0f)v=1.0f; uv[k][0]=(u*(1.0f-2.0f*hu)+hu)*us; uv[k][1]=(v*(1.0f-2.0f*hv)+hv)*vs_; }\n";
+                                mc << "        /* Quick accept: all 3 on-screen → fast path (no clipping) */\n";
+                                mc << "        if (ok[ia] && ok[ib] && ok[ic]) {\n";
+                                mc << "          SV sa=sv[ia],sb=sv[ib],sc=sv[ic];\n";
+                                mc << "          float mnx=sa.x,mxx=sa.x,mny=sa.y,mxy=sa.y;\n";
+                                mc << "          if(sb.x<mnx)mnx=sb.x; if(sb.x>mxx)mxx=sb.x; if(sb.y<mny)mny=sb.y; if(sb.y>mxy)mxy=sb.y;\n";
+                                mc << "          if(sc.x<mnx)mnx=sc.x; if(sc.x>mxx)mxx=sc.x; if(sc.y<mny)mny=sc.y; if(sc.y>mxy)mxy=sc.y;\n";
+                                mc << "          if(mnx>=-32.0f && mxx<=kProjViewW+32.0f && mny>=-32.0f && mxy<=kProjViewH+32.0f){\n";
+                                mc << "            sa.u=uv[0][0]; sa.v=uv[0][1]; sb.u=uv[1][0]; sb.v=uv[1][1]; sc.u=uv[2][0]; sc.v=uv[2][1];\n";
+                                mc << "            draw_tri(&rm->hdrSlot[sid],sa,sb,sc,col); continue;\n";
+                                mc << "          }\n";
+                                mc << "        }\n";
+                                mc << "        /* Full frustum clip (Sutherland-Hodgman against 5 planes in camera space) */\n";
+                                mc << "        CV polyA[12], polyB[12];\n";
+                                mc << "        polyA[0]=(CV){cs[ia].x,cs[ia].y,cs[ia].z,uv[0][0],uv[0][1]};\n";
+                                mc << "        polyA[1]=(CV){cs[ib].x,cs[ib].y,cs[ib].z,uv[1][0],uv[1][1]};\n";
+                                mc << "        polyA[2]=(CV){cs[ic].x,cs[ic].y,cs[ic].z,uv[2][0],uv[2][1]};\n";
+                                mc << "        int pn=3;\n";
+                                mc << "        /* Near */\n";
+                                mc << "        pn=clip_poly(polyA,pn,polyB, 0,0,1,-kClipNear); if(pn<3) continue; memcpy(polyA,polyB,pn*sizeof(CV));\n";
+                                mc << "        /* Left: x + z*slopeX >= 0 */\n";
+                                mc << "        pn=clip_poly(polyA,pn,polyB, 1,0,kFrustSlopeX,0); if(pn<3) continue; memcpy(polyA,polyB,pn*sizeof(CV));\n";
+                                mc << "        /* Right: -x + z*slopeX >= 0 */\n";
+                                mc << "        pn=clip_poly(polyA,pn,polyB, -1,0,kFrustSlopeX,0); if(pn<3) continue; memcpy(polyA,polyB,pn*sizeof(CV));\n";
+                                mc << "        /* Bottom: y + z*slopeY >= 0 */\n";
+                                mc << "        pn=clip_poly(polyA,pn,polyB, 0,1,kFrustSlopeY,0); if(pn<3) continue; memcpy(polyA,polyB,pn*sizeof(CV));\n";
+                                mc << "        /* Top: -y + z*slopeY >= 0 */\n";
+                                mc << "        pn=clip_poly(polyA,pn,polyB, 0,-1,kFrustSlopeY,0); if(pn<3) continue; memcpy(polyA,polyB,pn*sizeof(CV));\n";
+                                mc << "        /* Project clipped polygon and fan-triangulate */\n";
+                                mc << "        SV svp[12];\n";
+                                mc << "        for(int i=0;i<pn;i++) proj_sv(polyB[i].x,polyB[i].y,polyB[i].z,polyB[i].u,polyB[i].v,&svp[i]);\n";
+                                mc << "        for(int i=1;i<pn-1;i++) draw_tri(&rm->hdrSlot[sid],svp[0],svp[i],svp[i+1],col);\n";
+                                mc << "      }\n";
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    pvr_list_finish();\n";
@@ -9009,10 +9248,7 @@ RenderImGuiOnly:
                                     mk << "TARGET = nebula_dreamcast.elf\n";
                                     mk << "NEBULA_DC_BINDINGS ?= " << bindingsPosix << "\n";
                                     mk << "VPATH += $(NEBULA_DC_BINDINGS)\n";
-                                    mk << "SOURCES = main.c KosBindings.c KosInput.c NebulaGameStub.c";
-                                    for (const auto& s : scriptSourcesForMake)
-                                        mk << " \\\n\t" << s;
-                                    mk << "\n";
+                                    mk << "SOURCES = main.c KosBindings.c KosInput.c NebulaGameStub.c\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";
@@ -9058,12 +9294,12 @@ RenderImGuiOnly:
                                     lf << "[DreamcastCamera] source=" << cameraSourceScene
                                        << " srcPos=(" << camSrc.x << "," << camSrc.y << "," << camSrc.z << ")"
                                        << " srcRot=(" << camSrc.rotX << "," << camSrc.rotY << "," << camSrc.rotZ << ")"
-                                       << " convPos=(" << dcCam.view.eye.x << "," << dcCam.view.eye.y << "," << dcCam.view.eye.z << ")"
-                                       << " convTarget=(" << dcCam.view.target.x << "," << dcCam.view.target.y << "," << dcCam.view.target.z << ")"
-                                       << " convForward=(" << dcCam.view.basis.forward.x << "," << dcCam.view.basis.forward.y << "," << dcCam.view.basis.forward.z << ")"
-                                       << " convRight=(" << dcCam.view.basis.right.x << "," << dcCam.view.basis.right.y << "," << dcCam.view.basis.right.z << ")"
-                                       << " convUp=(" << dcCam.view.basis.up.x << "," << dcCam.view.basis.up.y << "," << dcCam.view.basis.up.z << ")"
-                                       << " proj=(fov=" << dcCam.projection.fovYDeg << ",a=" << dcCam.projection.aspect << ",n=" << dcCam.projection.nearZ << ",f=" << dcCam.projection.farZ << ")\n";
+                                       << " convPos=(" << dcView.eye.x << "," << dcView.eye.y << "," << dcView.eye.z << ")"
+                                       << " convTarget=(" << dcView.target.x << "," << dcView.target.y << "," << dcView.target.z << ")"
+                                       << " convForward=(" << dcView.basis.forward.x << "," << dcView.basis.forward.y << "," << dcView.basis.forward.z << ")"
+                                       << " convRight=(" << dcView.basis.right.x << "," << dcView.basis.right.y << "," << dcView.basis.right.z << ")"
+                                       << " convUp=(" << dcView.basis.up.x << "," << dcView.basis.up.y << "," << dcView.basis.up.z << ")"
+                                       << " proj=(fov=" << dcProj.fovYDeg << ",a=" << dcProj.aspect << ",n=" << dcProj.nearZ << ",f=" << dcProj.farZ << ")\n";
                                     lf << "[DreamcastScripts] policy=.c only (recursive from <Project>/Scripts)\n";
                                     lf << "[DreamcastScripts] discovered_c=" << scriptDiscoveredC
                                        << " copied_c=" << scriptCopiedC

@@ -24,14 +24,21 @@ void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState) {
     outState->r_trigger = st->rtrig;
 }
 
-typedef struct NB_DC_SceneState {
-    int loaded;
-    char scene_name[64];
+enum { NB_DC_MAX_SCENE_MESHES = 64, NB_DC_MAX_TEXTURE_SLOTS = 16 };
+
+typedef struct NB_DC_SceneMeshState {
     char mesh_path[128];
-    char texture_paths[16][128];
+    char texture_paths[NB_DC_MAX_TEXTURE_SLOTS][128];
     float pos[3];
     float rot[3];
     float scale[3];
+} NB_DC_SceneMeshState;
+
+typedef struct NB_DC_SceneState {
+    int loaded;
+    char scene_name[64];
+    int mesh_count;
+    NB_DC_SceneMeshState meshes[NB_DC_MAX_SCENE_MESHES];
 } NB_DC_SceneState;
 
 static NB_DC_SceneState gSceneState;
@@ -74,11 +81,8 @@ static int NB_DC_SceneTokenize(char* s, char* toks[], int maxTok) {
 int NB_DC_LoadScene(const char* scenePath) {
     if (!scenePath || !scenePath[0]) return 0;
 
-    NB_DC_SceneState nextState;
+    static NB_DC_SceneState nextState;
     memset(&nextState, 0, sizeof(nextState));
-    nextState.scale[0] = 1.0f;
-    nextState.scale[1] = 1.0f;
-    nextState.scale[2] = 1.0f;
 
     FILE* f = fopen(scenePath, "r");
     if (!f) return 0;
@@ -99,26 +103,36 @@ int NB_DC_LoadScene(const char* scenePath) {
             char* toks[64];
             int tc = NB_DC_SceneTokenize(line, toks, 64);
             if (tc < 25) continue;
-            strncpy(nextState.mesh_path, toks[1], sizeof(nextState.mesh_path) - 1);
-            nextState.mesh_path[sizeof(nextState.mesh_path) - 1] = 0;
-            nextState.pos[0] = strtof(toks[2], 0);
-            nextState.pos[1] = strtof(toks[3], 0);
-            nextState.pos[2] = strtof(toks[4], 0);
-            nextState.rot[0] = strtof(toks[5], 0);
-            nextState.rot[1] = strtof(toks[6], 0);
-            nextState.rot[2] = strtof(toks[7], 0);
-            nextState.scale[0] = strtof(toks[8], 0);
-            nextState.scale[1] = strtof(toks[9], 0);
-            nextState.scale[2] = strtof(toks[10], 0);
-            for (int i = 0; i < 16; ++i) {
-                nextState.texture_paths[i][0] = 0;
+            if (nextState.mesh_count >= NB_DC_MAX_SCENE_MESHES) continue;
+
+            NB_DC_SceneMeshState* mesh = &nextState.meshes[nextState.mesh_count];
+            memset(mesh, 0, sizeof(*mesh));
+            mesh->scale[0] = 1.0f;
+            mesh->scale[1] = 1.0f;
+            mesh->scale[2] = 1.0f;
+
+            strncpy(mesh->mesh_path, toks[1], sizeof(mesh->mesh_path) - 1);
+            mesh->mesh_path[sizeof(mesh->mesh_path) - 1] = 0;
+            mesh->pos[0] = strtof(toks[2], 0);
+            mesh->pos[1] = strtof(toks[3], 0);
+            mesh->pos[2] = strtof(toks[4], 0);
+            mesh->rot[0] = strtof(toks[5], 0);
+            mesh->rot[1] = strtof(toks[6], 0);
+            mesh->rot[2] = strtof(toks[7], 0);
+            mesh->scale[0] = strtof(toks[8], 0);
+            mesh->scale[1] = strtof(toks[9], 0);
+            mesh->scale[2] = strtof(toks[10], 0);
+            for (int i = 0; i < NB_DC_MAX_TEXTURE_SLOTS; ++i) {
+                mesh->texture_paths[i][0] = 0;
                 if (11 + i < tc && strcmp(toks[11 + i], "-") != 0) {
-                    strncpy(nextState.texture_paths[i], toks[11 + i], sizeof(nextState.texture_paths[i]) - 1);
-                    nextState.texture_paths[i][sizeof(nextState.texture_paths[i]) - 1] = 0;
+                    strncpy(mesh->texture_paths[i], toks[11 + i], sizeof(mesh->texture_paths[i]) - 1);
+                    mesh->texture_paths[i][sizeof(mesh->texture_paths[i]) - 1] = 0;
                 }
             }
+
+            nextState.mesh_count++;
             found = 1;
-            break;
+            continue;
         }
     }
 
@@ -371,29 +385,63 @@ const char* NB_DC_GetSceneName(void) {
 }
 
 const char* NB_DC_GetSceneMeshPath(void) {
-    return gSceneState.mesh_path;
+    if (gSceneState.mesh_count <= 0) return "";
+    return gSceneState.meshes[0].mesh_path;
 }
 
 const char* NB_DC_GetSceneTexturePath(int slotIndex) {
-    if (slotIndex < 0 || slotIndex >= 16) return "";
-    return gSceneState.texture_paths[slotIndex];
+    if (gSceneState.mesh_count <= 0) return "";
+    if (slotIndex < 0 || slotIndex >= NB_DC_MAX_TEXTURE_SLOTS) return "";
+    return gSceneState.meshes[0].texture_paths[slotIndex];
 }
 
 void NB_DC_GetSceneTransform(float outPos[3], float outRot[3], float outScale[3]) {
+    if (gSceneState.mesh_count <= 0) {
+        if (outPos) outPos[0] = outPos[1] = outPos[2] = 0.0f;
+        if (outRot) outRot[0] = outRot[1] = outRot[2] = 0.0f;
+        if (outScale) outScale[0] = outScale[1] = outScale[2] = 1.0f;
+        return;
+    }
+    NB_DC_GetSceneTransformAt(0, outPos, outRot, outScale);
+}
+
+int NB_DC_GetSceneMeshCount(void) {
+    return gSceneState.mesh_count;
+}
+
+const char* NB_DC_GetSceneMeshPathAt(int meshIndex) {
+    if (meshIndex < 0 || meshIndex >= gSceneState.mesh_count) return "";
+    return gSceneState.meshes[meshIndex].mesh_path;
+}
+
+const char* NB_DC_GetSceneTexturePathAt(int meshIndex, int slotIndex) {
+    if (meshIndex < 0 || meshIndex >= gSceneState.mesh_count) return "";
+    if (slotIndex < 0 || slotIndex >= NB_DC_MAX_TEXTURE_SLOTS) return "";
+    return gSceneState.meshes[meshIndex].texture_paths[slotIndex];
+}
+
+void NB_DC_GetSceneTransformAt(int meshIndex, float outPos[3], float outRot[3], float outScale[3]) {
+    if (meshIndex < 0 || meshIndex >= gSceneState.mesh_count) {
+        if (outPos) outPos[0] = outPos[1] = outPos[2] = 0.0f;
+        if (outRot) outRot[0] = outRot[1] = outRot[2] = 0.0f;
+        if (outScale) outScale[0] = outScale[1] = outScale[2] = 1.0f;
+        return;
+    }
+    const NB_DC_SceneMeshState* mesh = &gSceneState.meshes[meshIndex];
     if (outPos) {
-        outPos[0] = gSceneState.pos[0];
-        outPos[1] = gSceneState.pos[1];
-        outPos[2] = gSceneState.pos[2];
+        outPos[0] = mesh->pos[0];
+        outPos[1] = mesh->pos[1];
+        outPos[2] = mesh->pos[2];
     }
     if (outRot) {
-        outRot[0] = gSceneState.rot[0];
-        outRot[1] = gSceneState.rot[1];
-        outRot[2] = gSceneState.rot[2];
+        outRot[0] = mesh->rot[0];
+        outRot[1] = mesh->rot[1];
+        outRot[2] = mesh->rot[2];
     }
     if (outScale) {
-        outScale[0] = gSceneState.scale[0];
-        outScale[1] = gSceneState.scale[1];
-        outScale[2] = gSceneState.scale[2];
+        outScale[0] = mesh->scale[0];
+        outScale[1] = mesh->scale[1];
+        outScale[2] = mesh->scale[2];
     }
 }
 

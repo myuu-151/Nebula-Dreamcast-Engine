@@ -43,6 +43,12 @@ where kos-cc
 ```
 
 ## Dreamcast Runtime Notes
+- Runtime staged data is packaged under:
+  - `build_dreamcast/cd_root/data/materials`
+  - `build_dreamcast/cd_root/data/meshes`
+  - `build_dreamcast/cd_root/data/scenes`
+  - `build_dreamcast/cd_root/data/textures`
+  - `build_dreamcast/cd_root/data/vmu`
 - Scene/mesh/texture staging uses short deterministic names:
   - Scenes: `Sxxxxx.*`
   - Meshes: `Mxxxxx.*`

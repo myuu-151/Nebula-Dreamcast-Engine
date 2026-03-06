@@ -92,11 +92,12 @@ where kos-cc
 7. Click **Open Project** (opens the generated `.sln` in Visual Studio).
 
 ### Compile in Visual Studio
-1. Set configuration to **Debug** or **Release**.
-2. Set platform to **x64**.
-3. Build:
+1. Set **NebulaEditor** as the startup project (Solution Explorer → right-click `NebulaEditor` → **Set as Startup Project**).
+2. Set configuration to **Debug** or **Release**.
+3. Set platform to **x64**.
+4. Build:
    - **Build → Build Solution** (`Ctrl+Shift+B`)
-4. Run from Visual Studio (or run built exe from `build/...`).
+5. Run from Visual Studio (or run built exe from `build/...`).
 
 ### Command-line alternative (optional)
 ```bat

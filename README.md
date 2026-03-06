@@ -109,8 +109,9 @@ cmake --build build --config Release
 General flow:
 1. Open project in editor
 2. Export/package Dreamcast build
-3. Test `nebula_dreamcast.cdi` (emulator/hardware)
-4. Iterate
+3. Run `_nebula_build_dreamcast.bat` in `build_dreamcast`
+4. Test `nebula_dreamcast.cdi` (emulator/hardware)
+5. Iterate
 
 ### Compile Dreamcast runtime via batch script
 After export/staging, compile/package from the Dreamcast build folder with:

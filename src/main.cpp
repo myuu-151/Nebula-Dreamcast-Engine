@@ -225,10 +225,10 @@ static bool gEditorScriptActive = false;
 static bool gEditorScriptStarted = false;
 static double gEditorScriptNextTickLog = 0.0;
 // Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
-static bool useScriptController = false;
+static bool useScriptController = true;
 // Keep script-owned controls on desktop, but keep C++ fallback enabled on Dreamcast
 // until full runtime script parity is confirmed.
-static bool gEnableCppPlayFallbackControls = true;
+static bool gEnableCppPlayFallbackControls = false;
 using EditorScriptStartFn = void(*)(void);
 using EditorScriptUpdateFn = void(*)(float);
 using EditorScriptSceneSwitchFn = void(*)(const char*);
@@ -5501,7 +5501,7 @@ int main(int, char**)
 
         // Editor parity toggle: mirror runtime + viewport horizontally (right-to-left).
         // This applies to both editor navigation view and play-camera runtime view.
-        const bool kMirrorViewportRTL = true;
+        const bool kMirrorViewportRTL = false;
         if (kMirrorViewportRTL)
         {
             proj.m[0] = -proj.m[0];
@@ -9119,7 +9119,7 @@ RenderImGuiOnly:
                                 mc << "    if (kDcDebug) {\n";
                                 mc << "      static int sDbg = 0;\n";
                                 mc << "      if ((sDbg++ % 60) == 0) {\n";
-                                mc << "        dbgio_printf(\"[NEBULA][DC] input move=(%.2f,%.2f) look=(%.2f,%.2f) stick=(%.2f,%.2f) trig=(%.2f,%.2f)\\n\", inX, inY, lookYaw, lookPitch, stickX, stickY, ltr, rtr);\n";
+                                mc << "        dbgio_printf(\"[NEBULA][DC] input move=(%.2f,%.2f) look=(%.2f,%.2f)\\n\", inX, inY, lookYaw, lookPitch);\n";
                                 mc << "        dbgio_printf(\"[NEBULA][DC] player pos=(%.3f,%.3f,%.3f) rot=(%.3f,%.3f,%.3f)\\n\", gMeshPos[0], gMeshPos[1], gMeshPos[2], gMeshRot[0], gMeshRot[1], gMeshRot[2]);\n";
                                 mc << "        dbgio_printf(\"[NEBULA][DC] cam pos=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f) orbit=(%.3f,%.3f,%.3f)\\n\", gCamPos[0], gCamPos[1], gCamPos[2], gCamForward[0], gCamForward[1], gCamForward[2], gCamUp[0], gCamUp[1], gCamUp[2], gRtOrbit[0], gRtOrbit[1], gRtOrbit[2]);\n";
                                 mc << "      }\n";
@@ -9248,7 +9248,8 @@ RenderImGuiOnly:
                                     mk << "TARGET = nebula_dreamcast.elf\n";
                                     mk << "NEBULA_DC_BINDINGS ?= " << bindingsPosix << "\n";
                                     mk << "VPATH += $(NEBULA_DC_BINDINGS)\n";
-                                    mk << "SOURCES = main.c KosBindings.c KosInput.c NebulaGameStub.c\n";
+                                    mk << "SCRIPT_SOURCES = $(wildcard scripts/*.c)\n";
+                                    mk << "SOURCES = main.c KosBindings.c KosInput.c $(SCRIPT_SOURCES) NebulaGameStub.c\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";

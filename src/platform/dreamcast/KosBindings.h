@@ -52,6 +52,10 @@ const char* NB_DC_GetSceneName(void);
 const char* NB_DC_GetSceneMeshPath(void);
 const char* NB_DC_GetSceneTexturePath(int slotIndex);
 void NB_DC_GetSceneTransform(float outPos[3], float outRot[3], float outScale[3]);
+int NB_DC_GetSceneMeshCount(void);
+const char* NB_DC_GetSceneMeshPathAt(int meshIndex);
+const char* NB_DC_GetSceneTexturePathAt(int meshIndex, int slotIndex);
+void NB_DC_GetSceneTransformAt(int meshIndex, float outPos[3], float outRot[3], float outScale[3]);
 
 // Runtime transform bridge (implemented by generated Dreamcast runtime main.c)
 void NB_RT_GetMeshPosition(float outPos[3]);

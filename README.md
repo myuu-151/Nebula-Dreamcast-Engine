@@ -112,6 +112,16 @@ General flow:
 3. Test `nebula_dreamcast.cdi` (emulator/hardware)
 4. Iterate
 
+### Compile Dreamcast runtime via batch script
+After export/staging, compile/package from the Dreamcast build folder with:
+
+```bat
+cd build_dreamcast
+_nebula_build_dreamcast.bat
+```
+
+This runs the Dreamcast compile/link/package pipeline and produces updated runtime outputs (including ELF/CDI artifacts) using the generated `main.c` + `Makefile.dreamcast`.
+
 > Exact environment/toolchain setup may vary by local DreamSDK/KOS install.
 
 ## Roadmap Direction

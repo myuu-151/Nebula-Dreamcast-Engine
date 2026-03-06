@@ -113,6 +113,13 @@ General flow:
 4. Test `nebula_dreamcast.cdi` (emulator/hardware)
 5. Iterate
 
+Quick analysis of what `_nebula_build_dreamcast.bat` runs:
+- Cleans prior ELF output (`rm -f nebula_dreamcast.elf`)
+- Compiles C sources to objects (`main.c`, bindings/input files, and script `.c` files)
+- Links objects into `nebula_dreamcast.elf` with `kos-cc`
+- Builds disc image data (`mkisofs`)
+- Generates final CDI image for emulator/hardware testing (`cdi4dc`)
+
 > Exact environment/toolchain setup may vary by local DreamSDK/KOS install.
 
 ## Roadmap Direction

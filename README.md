@@ -18,6 +18,30 @@ It is built for fast iteration: edit in the desktop editor, package for Dreamcas
 ## Current Status
 Active development / prototyping, with a working Dreamcast package flow and hardware-focused iteration.
 
+## Dependencies
+
+### Windows Editor / Tooling
+- **Visual Studio 2022 + Native Tools x64**
+  - Required for MSVC/`cl.exe` build flows.
+  - Install "Desktop development with C++" workload.
+- **CMake + CMake GUI**
+  - Used to configure/generate Visual Studio solution files.
+- **Git**
+  - Source sync and branch workflows.
+
+### Dreamcast Build Toolchain
+- **DreamSDK (KallistiOS toolchain)**
+  - Provides Dreamcast compile/link/package tools (e.g. `sh-elf-gcc`, `kos-cc`, `mkisofs`, CDI tooling).
+  - Required for building `nebula_dreamcast.elf` and packaging CDI output.
+
+### Quick checks
+```bat
+where cl
+cmake --version
+where sh-elf-gcc
+where kos-cc
+```
+
 ## Dreamcast Runtime Notes
 - Scene/mesh/texture staging uses short deterministic names:
   - Scenes: `Sxxxxx.*`
@@ -40,6 +64,39 @@ Active development / prototyping, with a working Dreamcast package flow and hard
 - **.nebtex** - texture format
 - **.nebmat** - material reference file
 - **.nebslots** - StaticMesh material-slot manifest
+
+## Compile (Windows Editor) — CMake GUI + Visual Studio
+
+### Prerequisites
+- Visual Studio 2022 (Desktop development with C++)
+- CMake (and **CMake GUI**)
+- Git
+
+### CMake GUI configure/generate
+1. Open **CMake GUI**.
+2. Set:
+   - **Where is the source code:** `<repo>/` (this folder)
+   - **Where to build the binaries:** `<repo>/build`
+3. Click **Configure**.
+4. Choose generator:
+   - `Visual Studio 17 2022`
+   - Platform: `x64`
+5. Let configure finish (fix any missing dependency prompts if shown).
+6. Click **Generate**.
+7. Click **Open Project** (opens the generated `.sln` in Visual Studio).
+
+### Compile in Visual Studio
+1. Set configuration to **Debug** or **Release**.
+2. Set platform to **x64**.
+3. Build:
+   - **Build → Build Solution** (`Ctrl+Shift+B`)
+4. Run from Visual Studio (or run built exe from `build/...`).
+
+### Command-line alternative (optional)
+```bat
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
 
 ## Build / Package (Dreamcast)
 General flow:

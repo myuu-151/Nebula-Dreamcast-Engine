@@ -604,6 +604,16 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
             "C:/Program Files (x86)/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
             "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
 
+            // Custom/legacy VS major folder variants seen on some systems
+            "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+
             // VS 2019 fallback
             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvarsall.bat",
             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/VC/Auxiliary/Build/vcvarsall.bat",

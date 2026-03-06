@@ -5033,7 +5033,7 @@ int main(int, char**)
                 lastX = mx;
                 lastY = my;
 
-                orbitYaw   += (float)dx * orbitSensitivity;
+                orbitYaw   -= (float)dx * orbitSensitivity;
                 orbitPitch -= (float)dy * orbitSensitivity;
                 if (orbitPitch > 89.0f) orbitPitch = 89.0f;
                 if (orbitPitch < -89.0f) orbitPitch = -89.0f;
@@ -5065,7 +5065,7 @@ int main(int, char**)
                 lastY = my;
 
                 viewLocked = false;
-                viewYaw   += (float)dx * rotateSensitivity;
+                viewYaw   -= (float)dx * rotateSensitivity;
                 viewPitch -= (float)dy * rotateSensitivity;
                 if (viewPitch > 89.0f) viewPitch = 89.0f;
                 if (viewPitch < -89.0f) viewPitch = -89.0f;

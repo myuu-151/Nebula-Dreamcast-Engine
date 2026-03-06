@@ -5114,13 +5114,13 @@ int main(int, char**)
             }
             if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
             {
-                orbitCenter.x -= rightXZ.x * move;
-                orbitCenter.z -= rightXZ.z * move;
+                orbitCenter.x += rightXZ.x * move;
+                orbitCenter.z += rightXZ.z * move;
             }
             if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
             {
-                orbitCenter.x += rightXZ.x * move;
-                orbitCenter.z += rightXZ.z * move;
+                orbitCenter.x -= rightXZ.x * move;
+                orbitCenter.z -= rightXZ.z * move;
             }
             if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
             {
@@ -5144,8 +5144,8 @@ int main(int, char**)
             static double sFreezeLogTime = 0.0;
 
             float inX = 0.0f, inY = 0.0f;
-            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) inX -= 1.0f;
-            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) inX += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) inX += 1.0f;
+            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) inX -= 1.0f;
             if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) inY += 1.0f;
             if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) inY -= 1.0f;
             float inLen = sqrtf(inX * inX + inY * inY);
@@ -11109,7 +11109,9 @@ RenderImGuiOnly:
             };
 
             for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
-                if (gStaticMeshNodes[i].parent.empty() || FindStaticMeshByName(gStaticMeshNodes[i].parent) < 0)
+                if (gStaticMeshNodes[i].parent.empty()
+                    || (FindStaticMeshByName(gStaticMeshNodes[i].parent) < 0
+                        && FindNode3DByName(gStaticMeshNodes[i].parent) < 0))
                     drawStaticNode(i, 0);
         }
 
@@ -11119,6 +11121,10 @@ RenderImGuiOnly:
             for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
             {
                 auto& n = gCamera3DNodes[i];
+
+                // If this camera is directly parented to a Node3D, it is shown under that Node3D branch.
+                if (!n.parent.empty() && FindNode3DByName(n.parent) >= 0)
+                    continue;
 
                 // Hide descendants of collapsed Camera3D parents.
                 bool skipCameraNode = false;
@@ -11403,6 +11409,47 @@ RenderImGuiOnly:
                 {
                     for (int ci = 0; ci < (int)gNode3DNodes.size(); ++ci)
                         if (gNode3DNodes[ci].parent == n.name) drawNode3D(ci, depth + 1);
+
+                    auto drawChildLeaf = [&](const std::string& label, bool selected, auto&& onSelect)
+                    {
+                        ImGui::PushID(label.c_str());
+                        if (depth + 1 > 0) ImGui::Indent(14.0f * (depth + 1));
+                        if (ImGui::Selectable(label.c_str(), selected)) onSelect();
+                        if (depth + 1 > 0) ImGui::Unindent(14.0f * (depth + 1));
+                        ImGui::PopID();
+                    };
+
+                    // Show direct non-Node3D children under Node3D parents so hierarchy linking is visible in-place.
+                    for (int ai = 0; ai < (int)gAudio3DNodes.size(); ++ai)
+                    {
+                        if (gAudio3DNodes[ai].parent != n.name) continue;
+                        drawChildLeaf(std::string("[Audio] ") + gAudio3DNodes[ai].name, gSelectedAudio3D == ai, [&]() {
+                            gSelectedAudio3D = ai;
+                            gSelectedStaticMesh = -1;
+                            gSelectedCamera3D = -1;
+                            gSelectedNode3D = -1;
+                        });
+                    }
+                    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+                    {
+                        if (gStaticMeshNodes[si].parent != n.name) continue;
+                        drawChildLeaf(std::string("[StaticMesh3D] ") + gStaticMeshNodes[si].name, gSelectedStaticMesh == si, [&]() {
+                            gSelectedAudio3D = -1;
+                            gSelectedStaticMesh = si;
+                            gSelectedCamera3D = -1;
+                            gSelectedNode3D = -1;
+                        });
+                    }
+                    for (int ci = 0; ci < (int)gCamera3DNodes.size(); ++ci)
+                    {
+                        if (gCamera3DNodes[ci].parent != n.name) continue;
+                        drawChildLeaf(std::string("[Camera3D] ") + gCamera3DNodes[ci].name, gSelectedCamera3D == ci, [&]() {
+                            gSelectedAudio3D = -1;
+                            gSelectedStaticMesh = -1;
+                            gSelectedCamera3D = ci;
+                            gSelectedNode3D = -1;
+                        });
+                    }
                 }
 
                 if (depth > 0) ImGui::Unindent(14.0f * depth);

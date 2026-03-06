@@ -122,6 +122,13 @@ _nebula_build_dreamcast.bat
 
 This runs the Dreamcast compile/link/package pipeline and produces updated runtime outputs (including ELF/CDI artifacts) using the generated `main.c` + `Makefile.dreamcast`.
 
+Quick analysis of what the batch does:
+- Cleans prior ELF output (`rm -f nebula_dreamcast.elf`)
+- Compiles C sources to objects (`main.c`, bindings/input files, and script `.c` files)
+- Links objects into `nebula_dreamcast.elf` with `kos-cc`
+- Builds disc image data (`mkisofs`)
+- Generates final CDI image for emulator/hardware testing (`cdi4dc`)
+
 > Exact environment/toolchain setup may vary by local DreamSDK/KOS install.
 
 ## Roadmap Direction

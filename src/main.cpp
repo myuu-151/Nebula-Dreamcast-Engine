@@ -4876,6 +4876,14 @@ int main(int, char**)
     float playSavedDistance = 10.0f;
     Vec3 playSavedOrbitCenter = { 0.0f, 0.0f, 0.0f };
 
+    bool playSceneSnapshotValid = false;
+    int playSavedActiveScene = -1;
+    std::vector<SceneData> playSavedOpenScenes;
+    std::vector<Audio3DNode> playSavedAudio3DNodes;
+    std::vector<StaticMesh3DNode> playSavedStaticMeshNodes;
+    std::vector<Camera3DNode> playSavedCamera3DNodes;
+    std::vector<Node3DNode> playSavedNode3DNodes;
+
     bool showPreferences = false;
     bool showViewportDebugTab = false;
     float uiScale = 2.0f;
@@ -5558,6 +5566,15 @@ int main(int, char**)
                         viewPitch = playSavedViewPitch;
                         distance = playSavedDistance;
                         orbitCenter = playSavedOrbitCenter;
+                    }
+                    if (playSceneSnapshotValid)
+                    {
+                        gOpenScenes = playSavedOpenScenes;
+                        gActiveScene = playSavedActiveScene;
+                        gAudio3DNodes = playSavedAudio3DNodes;
+                        gStaticMeshNodes = playSavedStaticMeshNodes;
+                        gCamera3DNodes = playSavedCamera3DNodes;
+                        gNode3DNodes = playSavedNode3DNodes;
                     }
                 }
                 else
@@ -6917,6 +6934,16 @@ RenderImGuiOnly:
                 playSavedDistance = distance;
                 playSavedOrbitCenter = orbitCenter;
                 playCamSnapshotValid = true;
+
+                // Snapshot scene/editor state so play-mode changes do not persist after stop.
+                playSavedActiveScene = gActiveScene;
+                playSavedOpenScenes = gOpenScenes;
+                playSavedAudio3DNodes = gAudio3DNodes;
+                playSavedStaticMeshNodes = gStaticMeshNodes;
+                playSavedCamera3DNodes = gCamera3DNodes;
+                playSavedNode3DNodes = gNode3DNodes;
+                playSceneSnapshotValid = true;
+
                 gPlayMode = true;
                 BeginPlayScriptRuntime();
             }
@@ -6932,6 +6959,15 @@ RenderImGuiOnly:
                     viewPitch = playSavedViewPitch;
                     distance = playSavedDistance;
                     orbitCenter = playSavedOrbitCenter;
+                }
+                if (playSceneSnapshotValid)
+                {
+                    gOpenScenes = playSavedOpenScenes;
+                    gActiveScene = playSavedActiveScene;
+                    gAudio3DNodes = playSavedAudio3DNodes;
+                    gStaticMeshNodes = playSavedStaticMeshNodes;
+                    gCamera3DNodes = playSavedCamera3DNodes;
+                    gNode3DNodes = playSavedNode3DNodes;
                 }
             }
         }

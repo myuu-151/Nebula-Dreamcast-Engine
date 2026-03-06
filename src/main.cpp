@@ -594,14 +594,21 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
     if (hasCl != 0)
     {
         const std::filesystem::path vcvarsCandidates[] = {
-            "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/17/Community/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/17/Professional/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/17/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
-            "C:/Program Files/Microsoft Visual Studio/17/BuildTools/VC/Auxiliary/Build/vcvarsall.bat"
+            // VS 2022 layout (most common)
+            "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+
+            // VS 2019 fallback
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Auxiliary/Build/vcvarsall.bat"
         };
 
         std::filesystem::path vcvarsPath;

@@ -12,7 +12,7 @@ This guide explains how to write C gameplay scripts for Nebula so they run corre
 - Recommended location: `Scripts/` (project) and/or `build_dreamcast/scripts/` (staged build).
 - Keep one main gameplay owner script per build unless you intentionally split logic across multiple files.
 
-Recommended header skeleton:
+Example header skeleton:
 
 ```c
 #include <math.h>

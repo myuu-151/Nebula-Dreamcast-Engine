@@ -110,6 +110,8 @@ static std::string gProjectDir;
 static std::string gProjectFile;
 static std::vector<std::string> gRecentProjects;
 
+static std::filesystem::path ResolveVcvarsPathFromPreference(const std::string& pref);
+
 // User-overridable tool paths (Preferences)
 static std::string gPrefDreamSdkHome = "C:\\DreamSDK";
 static std::string gPrefVcvarsPath;
@@ -636,9 +638,18 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
         std::filesystem::path vcvarsPath;
         if (!gPrefVcvarsPath.empty())
         {
-            std::filesystem::path userVcvars = gPrefVcvarsPath;
-            if (std::filesystem::exists(userVcvars))
+            std::filesystem::path userVcvars = ResolveVcvarsPathFromPreference(gPrefVcvarsPath);
+            if (!userVcvars.empty())
+            {
                 vcvarsPath = userVcvars;
+                gViewportToast = std::string("Using MSVC from Preferences: ") + userVcvars.string();
+                gViewportToastUntil = glfwGetTime() + 2.0;
+            }
+            else
+            {
+                gViewportToast = std::string("MSVC path not found (Preferences): ") + gPrefVcvarsPath;
+                gViewportToastUntil = glfwGetTime() + 2.5;
+            }
         }
         if (vcvarsPath.empty())
         {
@@ -1061,6 +1072,50 @@ static std::string GetPrefsPath()
     return "editor_prefs.ini";
 }
 
+static std::filesystem::path ResolveVcvarsPathFromPreference(const std::string& pref)
+{
+    if (pref.empty()) return {};
+    std::string s = pref;
+    while (!s.empty() && (s[0] == '=' || s[0] == ' ' || s[0] == '\t' || s[0] == '"')) s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '"')) s.pop_back();
+    if (s.empty()) return {};
+
+    std::filesystem::path p = s;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(p, ec) && !ec) return p;
+    ec.clear();
+    if (std::filesystem::is_directory(p, ec) && !ec)
+    {
+        auto tryCandidate = [](const std::filesystem::path& base) -> std::filesystem::path
+        {
+            const char* rels[] = {
+                "VC/Auxiliary/Build/vcvarsall.bat",
+                "VC/Auxiliary/Build/vcvars64.bat"
+            };
+            for (const char* rel : rels)
+            {
+                std::filesystem::path cand = base / rel;
+                if (std::filesystem::exists(cand)) return cand;
+            }
+            return {};
+        };
+
+        if (auto direct = tryCandidate(p); !direct.empty()) return direct;
+
+        const char* years[] = { "2022", "2019", "18", "17" };
+        const char* editions[] = { "Community", "Professional", "Enterprise", "BuildTools" };
+        for (const char* y : years)
+        {
+            for (const char* e : editions)
+            {
+                std::filesystem::path inst = p / y / e;
+                if (auto hit = tryCandidate(inst); !hit.empty()) return hit;
+            }
+        }
+    }
+    return {};
+}
+
 static void LoadPreferences(float& uiScale, int& themeMode)
 {
     std::ifstream in(GetPrefsPath());
@@ -1089,6 +1144,10 @@ static void LoadPreferences(float& uiScale, int& themeMode)
         else if (line.rfind("vcvarsPath=", 0) == 0)
         {
             gPrefVcvarsPath = line.substr(10);
+            while (!gPrefVcvarsPath.empty() && (gPrefVcvarsPath[0] == '=' || gPrefVcvarsPath[0] == ' ' || gPrefVcvarsPath[0] == '\t' || gPrefVcvarsPath[0] == '"'))
+                gPrefVcvarsPath.erase(gPrefVcvarsPath.begin());
+            while (!gPrefVcvarsPath.empty() && (gPrefVcvarsPath.back() == ' ' || gPrefVcvarsPath.back() == '\t' || gPrefVcvarsPath.back() == '"'))
+                gPrefVcvarsPath.pop_back();
         }
     }
 }
@@ -7392,6 +7451,16 @@ RenderImGuiOnly:
                                 return s;
                             };
                             std::string dreamSdkHome = gPrefDreamSdkHome.empty() ? std::string("C:\\DreamSDK") : normWinPath(gPrefDreamSdkHome);
+                            if (std::filesystem::exists(std::filesystem::path(dreamSdkHome)))
+                            {
+                                gViewportToast = std::string("DreamSDK path hook OK: ") + dreamSdkHome;
+                                gViewportToastUntil = glfwGetTime() + 2.0;
+                            }
+                            else
+                            {
+                                gViewportToast = std::string("DreamSDK path missing (Preferences): ") + dreamSdkHome;
+                                gViewportToastUntil = glfwGetTime() + 2.8;
+                            }
 
                             std::ofstream bs(scriptPath, std::ios::out | std::ios::trunc);
                             if (bs.is_open())
@@ -10663,15 +10732,28 @@ RenderImGuiOnly:
                 strncpy(vcvarsBuf, gPrefVcvarsPath.c_str(), sizeof(vcvarsBuf) - 1);
                 prefPathInit = true;
             }
-            ImGui::InputText("DreamSDK Home", dreamSdkBuf, sizeof(dreamSdkBuf));
-            ImGui::InputText("VC Vars Batch", vcvarsBuf, sizeof(vcvarsBuf));
+            ImGui::InputText("DreamSDK", dreamSdkBuf, sizeof(dreamSdkBuf));
+            ImGui::InputText("MSVC", vcvarsBuf, sizeof(vcvarsBuf));
             gPrefDreamSdkHome = dreamSdkBuf;
             gPrefVcvarsPath = vcvarsBuf;
+            while (!gPrefVcvarsPath.empty() && (gPrefVcvarsPath[0] == '=' || gPrefVcvarsPath[0] == ' ' || gPrefVcvarsPath[0] == '\t' || gPrefVcvarsPath[0] == '"'))
+                gPrefVcvarsPath.erase(gPrefVcvarsPath.begin());
+            while (!gPrefVcvarsPath.empty() && (gPrefVcvarsPath.back() == ' ' || gPrefVcvarsPath.back() == '\t' || gPrefVcvarsPath.back() == '"'))
+                gPrefVcvarsPath.pop_back();
+
+            const bool dreamSdkOk = gPrefDreamSdkHome.empty() ? false : std::filesystem::exists(std::filesystem::path(gPrefDreamSdkHome));
+            const bool vcvarsOk = !ResolveVcvarsPathFromPreference(gPrefVcvarsPath).empty();
+            ImGui::TextColored(dreamSdkOk ? ImVec4(0.55f, 0.95f, 0.55f, 1.0f) : ImVec4(0.95f, 0.55f, 0.55f, 1.0f),
+                dreamSdkOk ? "DreamSDK path: OK" : "DreamSDK path: missing/not set");
+            ImGui::TextColored(vcvarsOk ? ImVec4(0.55f, 0.95f, 0.55f, 1.0f) : ImVec4(0.95f, 0.55f, 0.55f, 1.0f),
+                vcvarsOk ? "MSVC path: OK" : "MSVC path: missing/not set");
 
             ImGui::Separator();
             if (ImGui::Button("Save"))
             {
                 SavePreferences(uiScale, themeMode);
+                gViewportToast = std::string("Preferences saved (DreamSDK: ") + (dreamSdkOk ? "OK" : "MISSING") + ", MSVC: " + (vcvarsOk ? "OK" : "MISSING") + ")";
+                gViewportToastUntil = glfwGetTime() + 2.5;
             }
             ImGui::End();
         }

@@ -1,4 +1,4 @@
-﻿#include "imgui.h"
+#include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl2.h"
 
@@ -3657,7 +3657,7 @@ static Vec3 ApplyImportBasis(const Vec3& v)
 {
     switch (gImportBasisMode)
     {
-    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90ï¿½ X so imported mesh is upright)
+    case 1: // Blender (-Z forward, Y up) -> Nebula basis (+ corrective -90� X so imported mesh is upright)
         return Vec3{ v.z, v.y, -v.x };
     case 2: // Maya-style (+Z forward, Y up)
         return Vec3{ v.y, -v.x, v.z };
@@ -5908,9 +5908,9 @@ int main(int, char**)
 
                 if (gTransformMode == Transform_Grab)
                 {
-                    Vec3 delta = { right.x * dx * moveScale + upAxis.x * -dy * moveScale,
-                                   right.y * dx * moveScale + upAxis.y * -dy * moveScale,
-                                   right.z * dx * moveScale + upAxis.z * -dy * moveScale };
+                    Vec3 delta = { right.x * -dx * moveScale + upAxis.x * -dy * moveScale,
+                                   right.y * -dx * moveScale + upAxis.y * -dy * moveScale,
+                                   right.z * -dx * moveScale + upAxis.z * -dy * moveScale };
 
                     if (gAxisLock == 'X') { n.x += delta.x; }
                     else if (gAxisLock == 'Y') { n.y += delta.y; }
@@ -6040,9 +6040,9 @@ int main(int, char**)
 
                 if (gTransformMode == Transform_Grab)
                 {
-                    Vec3 delta = { right.x * dx * moveScale + upAxis.x * -dy * moveScale,
-                                   right.y * dx * moveScale + upAxis.y * -dy * moveScale,
-                                   right.z * dx * moveScale + upAxis.z * -dy * moveScale };
+                    Vec3 delta = { right.x * -dx * moveScale + upAxis.x * -dy * moveScale,
+                                   right.y * -dx * moveScale + upAxis.y * -dy * moveScale,
+                                   right.z * -dx * moveScale + upAxis.z * -dy * moveScale };
 
                     if (gAxisLock == 'X') { n.x += delta.x; }
                     else if (gAxisLock == 'Y') { n.y += delta.y; }
@@ -6167,9 +6167,9 @@ int main(int, char**)
 
                 if (gTransformMode == Transform_Grab)
                 {
-                    Vec3 delta = { right.x * dx * moveScale + upAxis.x * -dy * moveScale,
-                                   right.y * dx * moveScale + upAxis.y * -dy * moveScale,
-                                   right.z * dx * moveScale + upAxis.z * -dy * moveScale };
+                    Vec3 delta = { right.x * -dx * moveScale + upAxis.x * -dy * moveScale,
+                                   right.y * -dx * moveScale + upAxis.y * -dy * moveScale,
+                                   right.z * -dx * moveScale + upAxis.z * -dy * moveScale };
 
                     if (gAxisLock == 'X') { n.x += delta.x; }
                     else if (gAxisLock == 'Y') { n.y += delta.y; }
@@ -6427,7 +6427,7 @@ int main(int, char**)
                 glVertex3f(nebula[i][0], nebula[i][1], nebula[i][2]);
             }
 
-            // Stars (front) ï¿½ GL_POINTS buckets (3/6/12px)
+            // Stars (front) � GL_POINTS buckets (3/6/12px)
             auto drawPoints = [&](float sizeMin, float sizeMax, float px)
             {
                 glPointSize(px);
@@ -9333,7 +9333,7 @@ RenderImGuiOnly:
                                 mc << "        /* Compute UV for each original vertex */\n";
                                 mc << "        float uv[3][2];\n";
                                 mc << "        for(int k=0;k<3;++k){ float u=triUv[t*3+k].x, v=1.0f-triUv[t*3+k].y; if(u<0.0f)u=0.0f; else if(u>1.0f)u=1.0f; if(v<0.0f)v=0.0f; else if(v>1.0f)v=1.0f; uv[k][0]=(u*(1.0f-2.0f*hu)+hu)*us; uv[k][1]=(v*(1.0f-2.0f*hv)+hv)*vs_; }\n";
-                                mc << "        /* Quick accept: all 3 on-screen → fast path (no clipping) */\n";
+                                mc << "        /* Quick accept: all 3 on-screen ? fast path (no clipping) */\n";
                                 mc << "        if (ok[ia] && ok[ib] && ok[ic]) {\n";
                                 mc << "          SV sa=sv[ia],sb=sv[ib],sc=sv[ic];\n";
                                 mc << "          float mnx=sa.x,mxx=sa.x,mny=sa.y,mxy=sa.y;\n";
@@ -13765,6 +13765,7 @@ RenderImGuiOnly:
     glfwTerminate();
     return 0;
 }
+
 
 
 

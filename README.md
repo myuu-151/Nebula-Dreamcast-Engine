@@ -13,7 +13,6 @@ It is built for fast iteration: edit in the desktop editor, package for Dreamcas
 - **Editor-driven content workflow** (scenes, meshes, textures, materials)
 - **Deterministic asset staging names** for reliable disc lookup
 - **Runtime safety fallbacks** to avoid hard crashes on missing texture refs
-- **Continuous controller orbit/zoom controls** in Dreamcast runtime
 
 ## Current Status
 Active development / prototyping, with a working Dreamcast package flow and hardware-focused iteration.

@@ -122,6 +122,22 @@ Quick analysis of what `_nebula_build_dreamcast.bat` runs:
 
 > Exact environment/toolchain setup may vary by local DreamSDK/KOS install.
 
+## Preferences Path Hooks (Toolchain Fallbacks)
+If default toolchain detection fails on your machine, set custom paths in:
+- `Edit -> Preferences`
+
+Fields:
+- **DreamSDK**
+  - Path to your DreamSDK root (example: `C:\DreamSDK`)
+  - Used by Dreamcast build packaging scripts when generating/running `_nebula_build_dreamcast.bat`
+- **MSVC**
+  - Path to either:
+    - a Visual Studio root folder (example: `C:\Program Files\Microsoft Visual Studio`), or
+    - a direct vcvars batch file path (`vcvarsall.bat` / `vcvars64.bat`)
+  - Used by script runtime compile fallback when `cl.exe` is not already in PATH
+
+Nebula validates these paths in Preferences and shows status (OK/missing). Save preferences to persist them in `editor_prefs.ini`.
+
 ## Roadmap Direction
 - Keep editor/runtime parity tight
 - Harden scene/material-slot serialization consistency

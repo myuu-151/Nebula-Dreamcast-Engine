@@ -613,6 +613,14 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
             "C:/Program Files (x86)/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvarsall.bat",
             "C:/Program Files (x86)/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvarsall.bat",
             "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvarsall.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Professional/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/Enterprise/VC/Auxiliary/Build/vcvars64.bat",
+            "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
 
             // VS 2019 fallback
             "C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Auxiliary/Build/vcvarsall.bat",
@@ -638,8 +646,11 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
         }
 
         std::string vcvarsStr = SanitizeCmdPath(vcvarsPath);
-        clPrefix = "call \"" + vcvarsStr + "\" x64 && cl";
-        printf("[ScriptRuntime] Using vcvarsall fallback: %s\n", vcvarsStr.c_str());
+        std::string vcvarsLower = vcvarsStr;
+        std::transform(vcvarsLower.begin(), vcvarsLower.end(), vcvarsLower.begin(), [](unsigned char ch){ return (char)std::tolower(ch); });
+        bool isVcvarsAll = (vcvarsLower.find("vcvarsall.bat") != std::string::npos);
+        clPrefix = "call \"" + vcvarsStr + "\"" + (isVcvarsAll ? " x64" : "") + " && cl";
+        printf("[ScriptRuntime] Using VC env fallback: %s\n", vcvarsStr.c_str());
     }
 
     std::string cmd;

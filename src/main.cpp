@@ -110,6 +110,10 @@ static std::string gProjectDir;
 static std::string gProjectFile;
 static std::vector<std::string> gRecentProjects;
 
+// User-overridable tool paths (Preferences)
+static std::string gPrefDreamSdkHome = "C:\\DreamSDK";
+static std::string gPrefVcvarsPath;
+
 struct UndoAction
 {
     std::string label;
@@ -630,12 +634,21 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
         };
 
         std::filesystem::path vcvarsPath;
-        for (const auto& cand : vcvarsCandidates)
+        if (!gPrefVcvarsPath.empty())
         {
-            if (std::filesystem::exists(cand))
+            std::filesystem::path userVcvars = gPrefVcvarsPath;
+            if (std::filesystem::exists(userVcvars))
+                vcvarsPath = userVcvars;
+        }
+        if (vcvarsPath.empty())
+        {
+            for (const auto& cand : vcvarsCandidates)
             {
-                vcvarsPath = cand;
-                break;
+                if (std::filesystem::exists(cand))
+                {
+                    vcvarsPath = cand;
+                    break;
+                }
             }
         }
 
@@ -1069,6 +1082,14 @@ static void LoadPreferences(float& uiScale, int& themeMode)
             // legacy support
             themeMode = (line.substr(11) == "1") ? 0 : 1;
         }
+        else if (line.rfind("dreamSdkHome=", 0) == 0)
+        {
+            gPrefDreamSdkHome = line.substr(13);
+        }
+        else if (line.rfind("vcvarsPath=", 0) == 0)
+        {
+            gPrefVcvarsPath = line.substr(10);
+        }
     }
 }
 
@@ -1078,6 +1099,8 @@ static void SavePreferences(float uiScale, int themeMode)
     if (!out.is_open()) return;
     out << "uiScale=" << uiScale << "\n";
     out << "themeMode=" << themeMode << "\n";
+    out << "dreamSdkHome=" << gPrefDreamSdkHome << "\n";
+    out << "vcvarsPath=" << gPrefVcvarsPath << "\n";
 }
 
 static std::string GetFolderName(const std::string& path)
@@ -7364,31 +7387,41 @@ RenderImGuiOnly:
                         std::filesystem::path scriptPath = buildDir / "_nebula_build_dreamcast.bat";
 
                         {
+                            auto normWinPath = [](std::string s) {
+                                std::replace(s.begin(), s.end(), '/', '\\');
+                                return s;
+                            };
+                            std::string dreamSdkHome = gPrefDreamSdkHome.empty() ? std::string("C:\\DreamSDK") : normWinPath(gPrefDreamSdkHome);
+
                             std::ofstream bs(scriptPath, std::ios::out | std::ios::trunc);
                             if (bs.is_open())
                             {
                                 bs << "@echo off\n";
                                 bs << "setlocal\n";
                                 bs << "set BUILD_DIR=%~dp0\n";
-                                bs << "set DREAMSDK_HOME=C:\\DreamSDK\n";
-                                bs << "set KOS_BASE=C:\\DreamSDK\\opt\\toolchains\\dc\\kos\n";
-                                bs << "set KOS_CC_BASE=C:\\DreamSDK\\opt\\toolchains\\dc\n";
-                                bs << "set MAKE_EXE=C:\\DreamSDK\\usr\\bin\\make.exe\n";
-                                bs << "set SCRAMBLE_EXE=C:\\DreamSDK\\opt\\toolchains\\dc\\kos\\utils\\scramble\\scramble.exe\n";
-                                bs << "set MAKEIP_EXE=C:\\DreamSDK\\opt\\toolchains\\dc\\kos\\utils\\makeip\\makeip.exe\n";
-                                bs << "set MKISOFS_EXE=C:\\DreamSDK\\usr\\bin\\mkisofs.exe\n";
-                                bs << "set CDI4DC_EXE=C:\\DreamSDK\\usr\\bin\\cdi4dc.exe\n";
+                                bs << "set DREAMSDK_HOME=" << dreamSdkHome << "\n";
+                                bs << "set KOS_BASE=%DREAMSDK_HOME%\\opt\\toolchains\\dc\\kos\n";
+                                bs << "set KOS_CC_BASE=%DREAMSDK_HOME%\\opt\\toolchains\\dc\n";
+                                bs << "set MAKE_EXE=%DREAMSDK_HOME%\\usr\\bin\\make.exe\n";
+                                bs << "set SCRAMBLE_EXE=%DREAMSDK_HOME%\\opt\\toolchains\\dc\\kos\\utils\\scramble\\scramble.exe\n";
+                                bs << "set MAKEIP_EXE=%DREAMSDK_HOME%\\opt\\toolchains\\dc\\kos\\utils\\makeip\\makeip.exe\n";
+                                bs << "set MKISOFS_EXE=%DREAMSDK_HOME%\\usr\\bin\\mkisofs.exe\n";
+                                bs << "set CDI4DC_EXE=%DREAMSDK_HOME%\\usr\\bin\\cdi4dc.exe\n";
                                 bs << "if not exist \"%MAKE_EXE%\" ( echo [DreamcastBuild] Missing DreamSDK make: %MAKE_EXE% & exit /b 1 )\n";
                                 bs << "if not exist \"%KOS_BASE%\\include\\kos.h\" ( echo [DreamcastBuild] Missing DreamSDK KOS headers: %KOS_BASE%\\include\\kos.h & exit /b 1 )\n";
                                 bs << "if not exist \"%KOS_BASE%\\lib\\dreamcast\\libkallisti.a\" ( echo [DreamcastBuild] Missing DreamSDK KOS runtime lib: %KOS_BASE%\\lib\\dreamcast\\libkallisti.a & exit /b 1 )\n";
-                                bs << "if not exist \"C:\\DreamSDK\\tmp\" mkdir \"C:\\DreamSDK\\tmp\"\n";
-                                bs << "set TMP=C:\\DreamSDK\\tmp\n";
-                                bs << "set TEMP=C:\\DreamSDK\\tmp\n";
-                                bs << "set PATH=C:\\DreamSDK\\opt\\toolchains\\dc\\sh-elf\\bin;C:\\DreamSDK\\usr\\bin;C:\\DreamSDK\\mingw64\\bin;%PATH%\n";
+                                bs << "if not exist \"%DREAMSDK_HOME%\\tmp\" mkdir \"%DREAMSDK_HOME%\\tmp\"\n";
+                                bs << "set TMP=%DREAMSDK_HOME%\\tmp\n";
+                                bs << "set TEMP=%DREAMSDK_HOME%\\tmp\n";
+                                bs << "set PATH=%DREAMSDK_HOME%\\opt\\toolchains\\dc\\sh-elf\\bin;%DREAMSDK_HOME%\\usr\\bin;%DREAMSDK_HOME%\\mingw64\\bin;%PATH%\n";
+                                bs << "set DREAMSDK_HOME_MSYS=%DREAMSDK_HOME:\\=/%\n";
+                                bs << "if \"%DREAMSDK_HOME_MSYS:~1,1%\"==\":\" set DREAMSDK_HOME_MSYS=/%DREAMSDK_HOME_MSYS:~0,1%%DREAMSDK_HOME_MSYS:~2%\n";
+                                bs << "set KOS_BASE_MSYS=%DREAMSDK_HOME_MSYS%/opt/toolchains/dc/kos\n";
+                                bs << "set KOS_CC_BASE_MSYS=%DREAMSDK_HOME_MSYS%/opt/toolchains/dc\n";
                                 bs << "pushd \"%BUILD_DIR%\"\n";
                                 bs << "if exist \"*.o\" del /q *.o >nul 2>nul\n";
                                 bs << "if exist \"scripts\" for /r scripts %%f in (*.o) do del /q \"%%f\" >nul 2>nul\n";
-                                bs << "\"%MAKE_EXE%\" -f Makefile.dreamcast KOS_BASE=\"/c/DreamSDK/opt/toolchains/dc/kos\" KOS_CC_BASE=\"/c/DreamSDK/opt/toolchains/dc\" TMP=\"%TMP%\" TEMP=\"%TEMP%\"\n";
+                                bs << "\"%MAKE_EXE%\" -f Makefile.dreamcast KOS_BASE=\"%KOS_BASE_MSYS%\" KOS_CC_BASE=\"%KOS_CC_BASE_MSYS%\" TMP=\"%TMP%\" TEMP=\"%TEMP%\"\n";
                                 bs << "if errorlevel 1 exit /b 1\n";
                                 bs << "sh-elf-objcopy -O binary nebula_dreamcast.elf nebula_dreamcast.bin\n";
                                 bs << "if errorlevel 1 exit /b 1\n";
@@ -10620,6 +10653,21 @@ RenderImGuiOnly:
             const char* themes[] = { "Space", "Slate (6D7F89 -> 2A363D)", "Arctic (75A8B2 -> 162229)", "Classic (7F7E83 -> 5A595C)", "Black" };
             ImGui::Combo("Theme", &themeMode, themes, IM_ARRAYSIZE(themes));
             ImGui::Checkbox("Hide unselected wireframes", &gHideUnselectedWireframes);
+
+            static char dreamSdkBuf[512] = {0};
+            static char vcvarsBuf[512] = {0};
+            static bool prefPathInit = false;
+            if (!prefPathInit)
+            {
+                strncpy(dreamSdkBuf, gPrefDreamSdkHome.c_str(), sizeof(dreamSdkBuf) - 1);
+                strncpy(vcvarsBuf, gPrefVcvarsPath.c_str(), sizeof(vcvarsBuf) - 1);
+                prefPathInit = true;
+            }
+            ImGui::InputText("DreamSDK Home", dreamSdkBuf, sizeof(dreamSdkBuf));
+            ImGui::InputText("VC Vars Batch", vcvarsBuf, sizeof(vcvarsBuf));
+            gPrefDreamSdkHome = dreamSdkBuf;
+            gPrefVcvarsPath = vcvarsBuf;
+
             ImGui::Separator();
             if (ImGui::Button("Save"))
             {

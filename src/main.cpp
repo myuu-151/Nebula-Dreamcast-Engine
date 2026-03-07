@@ -1441,6 +1441,22 @@ static bool LoadNebSlotsManifest(const std::filesystem::path& absMeshPath, std::
 static void AutoAssignMaterialSlotsFromMesh(StaticMesh3DNode& n)
 {
     NebulaNodes::AutoAssignMaterialSlotsFromMesh(n);
+
+    if (n.mesh.empty() || gProjectDir.empty())
+        return;
+
+    std::filesystem::path absMeshPath = std::filesystem::path(gProjectDir) / n.mesh;
+    std::vector<std::string> slots;
+    if (LoadNebSlotsManifest(absMeshPath, slots))
+    {
+        for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+        {
+            if (si < (int)slots.size() && !slots[si].empty())
+                n.materialSlots[si] = slots[si];
+        }
+        if (!n.materialSlots[0].empty())
+            n.material = n.materialSlots[0];
+    }
 }
 
 static bool TryGetNodeWorldPosByName(const std::string& name, float& ox, float& oy, float& oz)

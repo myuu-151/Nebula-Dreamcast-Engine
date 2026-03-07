@@ -124,7 +124,7 @@ Quick analysis of what `_nebula_build_dreamcast.bat` runs:
 
 ## Preferences Path Hooks (Toolchain Fallbacks)
 If default toolchain detection fails on your machine, set custom paths in:
-- `Edit -> Preferences`
+- `File -> Preferences`
 
 Fields:
 - **DreamSDK**

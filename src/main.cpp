@@ -305,6 +305,13 @@ static bool gImportDeltaCompress = false;
 static int gImportBasisMode = 1; // 0=None(raw), 1=Blender(-Z Forward, Y Up), 2=Maya(+Z Forward, Y Up)
 static std::vector<std::string> gPendingDroppedImports;
 
+static bool gStaticAnimPreviewPlay = false;
+static bool gStaticAnimPreviewLoop = true;
+static float gStaticAnimPreviewTimeSec = 0.0f;
+static int gStaticAnimPreviewFrame = 0;
+static int gStaticAnimPreviewLastNode = -1;
+static int gStaticAnimPreviewNode = -1;
+
 static bool gHasTransformSnapshot = false;
 static bool gTransformIsStatic = false;
 static bool gTransformIsNode3D = false;
@@ -2067,6 +2074,7 @@ static std::filesystem::path gMaterialInspectorPath2;
 static bool gNebTexInspectorOpen2 = false;
 static std::filesystem::path gNebTexInspectorPath2;
 static bool gPreviewSaturnSampling = true;
+static bool gAnimIgnoreScaleKeys = true;
 struct VtxAnimPlaybackState
 {
     bool playing = false;
@@ -2121,6 +2129,8 @@ struct NebAnimClip
     bool valid = false;
     std::vector<std::vector<Vec3>> frames;
 };
+
+static std::unordered_map<std::string, NebAnimClip> gStaticAnimClipCache;
 
 struct NebMeshEmbeddedAnimMeta
 {
@@ -3110,6 +3120,7 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
     if (usingEmbeddedPlayback && selectedEmbeddedAnim)
     {
         ImGui::Checkbox("Debug anim diagnostics (log)", &st.animDebugDumpEnabled);
+        ImGui::Checkbox("Ignore scale keys", &gAnimIgnoreScaleKeys);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(130.0f);
         if (ImGui::InputInt("Probe frame##AnimDiagProbe", &st.animDebugProbeFrame))
@@ -4473,7 +4484,8 @@ static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim
 
     aiVector3D t = (channel->mNumPositionKeys > 0) ? AiSamplePosition(channel, time) : bindT;
     aiQuaternion r = (channel->mNumRotationKeys > 0) ? AiSampleRotation(channel, time) : bindR;
-    aiVector3D s = (channel->mNumScalingKeys > 0) ? AiSampleScale(channel, time) : bindS;
+    const bool useAnimatedScale = (!gAnimIgnoreScaleKeys) && (channel->mNumScalingKeys > 0);
+    aiVector3D s = useAnimatedScale ? AiSampleScale(channel, time) : bindS;
     if (outSample)
     {
         outSample->translation = t;
@@ -4485,7 +4497,7 @@ static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim
         outSample->sclKeys = channel->mNumScalingKeys;
         outSample->usedBindTranslation = (channel->mNumPositionKeys == 0);
         outSample->usedBindRotation = (channel->mNumRotationKeys == 0);
-        outSample->usedBindScale = (channel->mNumScalingKeys == 0);
+        outSample->usedBindScale = !useAnimatedScale;
     }
     return AiComposeTRS(t, r, s);
 }
@@ -9489,6 +9501,35 @@ int main(int, char**)
             const NebMesh* mesh = GetNebMesh(meshPath);
             if (!mesh || !mesh->valid) continue;
 
+            std::vector<Vec3> staticAnimPosed;
+            const std::vector<Vec3>* renderPositions = &mesh->positions;
+            if (!s.vtxAnim.empty())
+            {
+                std::filesystem::path animPath = ResolveProjectAssetPath(s.vtxAnim);
+                if (!animPath.empty() && std::filesystem::exists(animPath))
+                {
+                    std::string key = animPath.generic_string();
+                    auto it = gStaticAnimClipCache.find(key);
+                    if (it == gStaticAnimClipCache.end())
+                    {
+                        NebAnimClip clip;
+                        std::string err;
+                        if (LoadNebAnimClip(animPath, clip, err))
+                            it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
+                    }
+                    if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.vertexCount == mesh->positions.size() && !it->second.frames.empty())
+                    {
+                        int frame = 0;
+                        if (i == gStaticAnimPreviewNode)
+                            frame = std::max(0, std::min(gStaticAnimPreviewFrame, (int)it->second.frameCount - 1));
+                        frame = std::max(0, std::min(frame, (int)it->second.frames.size() - 1));
+                        staticAnimPosed = it->second.frames[(size_t)frame];
+                        if (staticAnimPosed.size() == mesh->positions.size())
+                            renderPositions = &staticAnimPosed;
+                    }
+                }
+            }
+
             struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; };
             std::unordered_map<int, MatState> matState;
             auto getMatState = [&](int matIndex) -> MatState {
@@ -9635,9 +9676,9 @@ int main(int, char**)
                     {
                         uint16_t ia = poly[k];
                         uint16_t ib = poly[(k + 1) % poly.size()];
-                        if (ia >= mesh->positions.size() || ib >= mesh->positions.size()) continue;
-                        const Vec3& a = mesh->positions[ia];
-                        const Vec3& b = mesh->positions[ib];
+                        if (ia >= renderPositions->size() || ib >= renderPositions->size()) continue;
+                        const Vec3& a = (*renderPositions)[ia];
+                        const Vec3& b = (*renderPositions)[ib];
                         glVertex3f(a.x, a.y, a.z);
                         glVertex3f(b.x, b.y, b.z);
                     }
@@ -9655,7 +9696,7 @@ int main(int, char**)
                     uint16_t i0 = mesh->indices[idx + 0];
                     uint16_t i1 = mesh->indices[idx + 1];
                     uint16_t i2 = mesh->indices[idx + 2];
-                    if (i0 >= mesh->positions.size() || i1 >= mesh->positions.size() || i2 >= mesh->positions.size())
+                    if (i0 >= renderPositions->size() || i1 >= renderPositions->size() || i2 >= renderPositions->size())
                         continue;
 
                     int triIndex = (int)(idx / 3);
@@ -9675,13 +9716,13 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    const Vec3& v0 = mesh->positions[i0];
+                    const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    const Vec3& v1 = mesh->positions[i1];
+                    const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    const Vec3& v2 = mesh->positions[i2];
+                    const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);
                 }
                 glEnd();
@@ -9714,11 +9755,11 @@ int main(int, char**)
                     uint16_t i0 = mesh->indices[idx + 0];
                     uint16_t i1 = mesh->indices[idx + 1];
                     uint16_t i2 = mesh->indices[idx + 2];
-                    if (i0 >= mesh->positions.size() || i1 >= mesh->positions.size() || i2 >= mesh->positions.size())
+                    if (i0 >= renderPositions->size() || i1 >= renderPositions->size() || i2 >= renderPositions->size())
                         continue;
-                    const Vec3& v0 = mesh->positions[i0];
-                    const Vec3& v1 = mesh->positions[i1];
-                    const Vec3& v2 = mesh->positions[i2];
+                    const Vec3& v0 = (*renderPositions)[i0];
+                    const Vec3& v1 = (*renderPositions)[i1];
+                    const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v0.x, v0.y, v0.z);
                     glVertex3f(v1.x, v1.y, v1.z);
                     glVertex3f(v2.x, v2.y, v2.z);
@@ -15359,6 +15400,116 @@ RenderImGuiOnly:
                 }
                 ImGui::SameLine();
                 ImGui::Text("%s", meshDisplayName.c_str());
+
+                ImGui::Spacing();
+                ImGui::Text("Load NebAnim");
+                static char animBuf[256] = {};
+                if (inspectorChanged)
+                    strncpy_s(animBuf, n.vtxAnim.c_str(), sizeof(animBuf) - 1);
+                if (ImGui::Button(">##StaticAnimAssign"))
+                {
+                    if (!gSelectedAssetPath.empty() && gSelectedAssetPath.extension() == ".nebanim" && !gProjectDir.empty())
+                    {
+                        std::filesystem::path rel = std::filesystem::relative(gSelectedAssetPath, std::filesystem::path(gProjectDir));
+                        n.vtxAnim = rel.generic_string();
+                        strncpy_s(animBuf, n.vtxAnim.c_str(), sizeof(animBuf) - 1);
+                        gViewportToast = "Static mesh anim assigned";
+                    }
+                    else
+                    {
+                        gViewportToast = "Select a .nebanim in Assets";
+                    }
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+                ImGui::SameLine();
+                if (!ImGui::IsAnyItemActive() && n.vtxAnim != animBuf)
+                    strncpy_s(animBuf, n.vtxAnim.c_str(), sizeof(animBuf) - 1);
+                if (ImGui::InputText("##StaticAnimPath", animBuf, sizeof(animBuf)))
+                {
+                    std::string s = animBuf;
+                    if (!s.empty() && s.rfind("Assets/", 0) != 0 && s.rfind("Assets\\", 0) != 0)
+                        s = "Assets/" + s;
+                    n.vtxAnim = s;
+                }
+
+                if (gStaticAnimPreviewLastNode != inspectStatic)
+                {
+                    gStaticAnimPreviewLastNode = inspectStatic;
+                    gStaticAnimPreviewNode = inspectStatic;
+                    gStaticAnimPreviewPlay = false;
+                    gStaticAnimPreviewTimeSec = 0.0f;
+                    gStaticAnimPreviewFrame = 0;
+                }
+
+                std::filesystem::path animAbs = ResolveProjectAssetPath(n.vtxAnim);
+                NebAnimClip* previewClip = nullptr;
+                if (!animAbs.empty() && std::filesystem::exists(animAbs))
+                {
+                    std::string key = animAbs.generic_string();
+                    auto it = gStaticAnimClipCache.find(key);
+                    if (it == gStaticAnimClipCache.end())
+                    {
+                        NebAnimClip clip;
+                        std::string err;
+                        if (LoadNebAnimClip(animAbs, clip, err))
+                            it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
+                    }
+                    if (it != gStaticAnimClipCache.end() && it->second.valid)
+                        previewClip = &it->second;
+                }
+
+                if (previewClip && previewClip->frameCount > 0)
+                {
+                    float fps = std::max(1.0f, previewClip->fps);
+                    const int maxFrame = (int)previewClip->frameCount - 1;
+                    if (gStaticAnimPreviewPlay)
+                    {
+                        gStaticAnimPreviewTimeSec += ImGui::GetIO().DeltaTime;
+                        int nextFrame = (int)std::floor(gStaticAnimPreviewTimeSec * fps);
+                        if (gStaticAnimPreviewLoop)
+                        {
+                            if (maxFrame > 0)
+                            {
+                                nextFrame = nextFrame % (maxFrame + 1);
+                                gStaticAnimPreviewFrame = nextFrame;
+                            }
+                        }
+                        else
+                        {
+                            if (nextFrame > maxFrame)
+                            {
+                                gStaticAnimPreviewFrame = maxFrame;
+                                gStaticAnimPreviewPlay = false;
+                            }
+                            else
+                            {
+                                gStaticAnimPreviewFrame = std::max(0, nextFrame);
+                            }
+                        }
+                    }
+                    gStaticAnimPreviewFrame = std::max(0, std::min(gStaticAnimPreviewFrame, maxFrame));
+
+                    if (ImGui::Button(gStaticAnimPreviewPlay ? "Pause Anim" : "Play Anim"))
+                    {
+                        gStaticAnimPreviewNode = inspectStatic;
+                        if (!gStaticAnimPreviewPlay && gStaticAnimPreviewFrame >= maxFrame)
+                        {
+                            gStaticAnimPreviewFrame = 0;
+                            gStaticAnimPreviewTimeSec = 0.0f;
+                        }
+                        gStaticAnimPreviewPlay = !gStaticAnimPreviewPlay;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Loop Anim", &gStaticAnimPreviewLoop);
+                    if (ImGui::SliderInt("Frame##StaticAnimFrame", &gStaticAnimPreviewFrame, 0, maxFrame))
+                    {
+                        gStaticAnimPreviewTimeSec = (float)gStaticAnimPreviewFrame / fps;
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled("Anim preview: assign a valid .nebanim");
+                }
 
                 ImGui::Text("Parent: %s", n.parent.empty() ? "(none)" : n.parent.c_str());
                 ImGui::SameLine();

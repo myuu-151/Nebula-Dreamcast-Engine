@@ -113,6 +113,7 @@ namespace NebulaScene
             RewritePathRefForRename(n.script, oldRel, newRel, isDir);
             RewritePathRefForRename(n.material, oldRel, newRel, isDir);
             RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+            RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
             for (auto& ms : n.materialSlots)
                 RewritePathRefForRename(ms, oldRel, newRel, isDir);
         }
@@ -133,6 +134,7 @@ namespace NebulaScene
                 RewritePathRefForRename(n.script, oldRel, newRel, isDir);
                 RewritePathRefForRename(n.material, oldRel, newRel, isDir);
                 RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+                RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
                 for (auto& ms : n.materialSlots)
                     RewritePathRefForRename(ms, oldRel, newRel, isDir);
             }
@@ -182,6 +184,7 @@ namespace NebulaScene
                         diskChanged |= RewritePathRefForRename(n.script, oldRel, newRel, isDir);
                         diskChanged |= RewritePathRefForRename(n.material, oldRel, newRel, isDir);
                         diskChanged |= RewritePathRefForRename(n.mesh, oldRel, newRel, isDir);
+                        diskChanged |= RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
                         for (auto& ms : n.materialSlots)
                             diskChanged |= RewritePathRefForRename(ms, oldRel, newRel, isDir);
                     }
@@ -236,6 +239,7 @@ namespace NebulaScene
                 out << " " << EncodeSceneToken(n.materialSlots[si]);
             out << " " << EncodeSceneToken(n.parent);
             out << " " << (n.collisionSource ? 1 : 0);
+            out << " " << EncodeSceneToken(n.vtxAnim);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -348,6 +352,12 @@ namespace NebulaScene
                 size_t collisionIdx = parentIdx + 1;
                 if (collisionIdx < extra.size())
                     n.collisionSource = (atoi(extra[collisionIdx].c_str()) != 0);
+                size_t animIdx = collisionIdx + 1;
+                if (animIdx < extra.size())
+                {
+                    n.vtxAnim = extra[animIdx];
+                    DecodeSceneToken(n.vtxAnim);
+                }
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;
                 outScene.staticMeshes.push_back(n);

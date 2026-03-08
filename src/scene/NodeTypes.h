@@ -18,6 +18,7 @@ struct StaticMesh3DNode
     std::array<std::string, kStaticMeshMaterialSlots> materialSlots{};
     int materialSlot = 0;
     std::string mesh;
+    std::string vtxAnim;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;

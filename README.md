@@ -49,10 +49,11 @@ where kos-cc
   - `build_dreamcast/cd_root/data/textures`
   - `build_dreamcast/cd_root/data/animations`
   - `build_dreamcast/cd_root/data/vmu`
-- Scene/mesh/texture staging uses short deterministic names:
+- Scene/mesh/texture/animation staging uses short deterministic names:
   - Scenes: `Sxxxxx.*`
   - Meshes: `Mxxxxx.*`
   - Textures: `Txxxxx.*`
+  - Animations: `Axxxxx.*`
 - Missing scene texture refs can fall back safely at runtime.
 - Missing/unloadable textures use fallback white texture instead of hard exit.
 - Material refs are staged to `data/materials` for packaging parity.

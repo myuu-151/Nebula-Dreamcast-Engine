@@ -2074,7 +2074,6 @@ static std::filesystem::path gMaterialInspectorPath2;
 static bool gNebTexInspectorOpen2 = false;
 static std::filesystem::path gNebTexInspectorPath2;
 static bool gPreviewSaturnSampling = true;
-static bool gAnimIgnoreScaleKeys = true;
 struct VtxAnimPlaybackState
 {
     bool playing = false;
@@ -3120,7 +3119,6 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
     if (usingEmbeddedPlayback && selectedEmbeddedAnim)
     {
         ImGui::Checkbox("Debug anim diagnostics (log)", &st.animDebugDumpEnabled);
-        ImGui::Checkbox("Ignore scale keys", &gAnimIgnoreScaleKeys);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(130.0f);
         if (ImGui::InputInt("Probe frame##AnimDiagProbe", &st.animDebugProbeFrame))
@@ -4484,7 +4482,7 @@ static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim
 
     aiVector3D t = (channel->mNumPositionKeys > 0) ? AiSamplePosition(channel, time) : bindT;
     aiQuaternion r = (channel->mNumRotationKeys > 0) ? AiSampleRotation(channel, time) : bindR;
-    const bool useAnimatedScale = (!gAnimIgnoreScaleKeys) && (channel->mNumScalingKeys > 0);
+    const bool useAnimatedScale = (channel->mNumScalingKeys > 0);
     aiVector3D s = useAnimatedScale ? AiSampleScale(channel, time) : bindS;
     if (outSample)
     {

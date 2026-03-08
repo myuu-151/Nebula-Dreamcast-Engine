@@ -85,7 +85,10 @@ static bool SampleMergedFbxVertices(const aiScene* scene, const aiAnimation* ani
 static bool ComputeEmbeddedClipDiagnostics(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, float sampleFps, AnimBakeDiagnostics& outDiag);
 static const aiNode* ResolveSceneNodeByNameRobust(const aiScene* scene, const aiString& rawName);
 static const aiNodeAnim* AiFindChannel(const aiAnimation* anim, const aiString& name);
-static void DrawNebMeshMiniPreview(const struct NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize);
+static bool AiFindNodeGlobal(const aiNode* node, const aiAnimation* anim, double time, const aiMatrix4x4& parent, const aiNode* target, aiMatrix4x4& out);
+static aiVector3D AiTransformPoint(const aiMatrix4x4& m, const aiVector3D& v);
+static Vec3 ApplyImportBasis(const Vec3& v);
+static void DrawNebMeshMiniPreview(const struct NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize, const Vec3* helperPoint = nullptr);
 static const struct NebMesh* GetNebMesh(const std::filesystem::path& path);
 static void CleanupNebMeshTopology(struct NebMesh& mesh, std::vector<uint32_t>* outProvMeshIndices = nullptr, std::vector<uint32_t>* outProvVertexIndices = nullptr);
 
@@ -2166,6 +2169,7 @@ struct NebMeshInspectorState
     int loggedPreviewFrame = -1;
     InspectorPlaybackMode loggedPreviewMode = InspectorPlaybackMode::EmbeddedExact;
     std::string lastPreviewReason;
+    std::string selectedHelperBoneName;
 
     // Mini-preview camera controls
     float previewYaw = 0.62f;
@@ -3272,7 +3276,11 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
                     label += hasChannel ? "  [bone|ch]" : "  [bone]";
 
                 ImGuiTreeNodeFlags flags = hasVisibleChild ? 0 : (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+                if (n->mName.length > 0 && st.selectedHelperBoneName == n->mName.C_Str())
+                    flags |= ImGuiTreeNodeFlags_Selected;
                 bool open = ImGui::TreeNodeEx((void*)n, flags, "%s", label.c_str());
+                if (ImGui::IsItemClicked() && n->mName.length > 0)
+                    st.selectedHelperBoneName = n->mName.C_Str();
                 if (hasVisibleChild && open)
                 {
                     for (unsigned int ci = 0; ci < n->mNumChildren; ++ci)
@@ -3283,6 +3291,45 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
 
             if (!matchedBones.empty())
             {
+                std::vector<std::string> selectableBones;
+                std::function<void(const aiNode*)> collectSelectable = [&](const aiNode* n)
+                {
+                    if (!n || visibleNodes.find(n) == visibleNodes.end()) return;
+                    if (matchedBones.find(n) != matchedBones.end() && n->mName.length > 0)
+                        selectableBones.push_back(n->mName.C_Str());
+                    for (unsigned int ci = 0; ci < n->mNumChildren; ++ci)
+                        collectSelectable(n->mChildren[ci]);
+                };
+                collectSelectable(st.embeddedScene->mRootNode);
+
+                if (!selectableBones.empty() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput)
+                {
+                    int sel = -1;
+                    for (int i = 0; i < (int)selectableBones.size(); ++i)
+                    {
+                        if (st.selectedHelperBoneName == selectableBones[(size_t)i]) { sel = i; break; }
+                    }
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+                    {
+                        if (sel < 0) sel = 0;
+                        else sel = (sel - 1 + (int)selectableBones.size()) % (int)selectableBones.size();
+                        st.selectedHelperBoneName = selectableBones[(size_t)sel];
+                    }
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+                    {
+                        if (sel < 0) sel = 0;
+                        else sel = (sel + 1) % (int)selectableBones.size();
+                        st.selectedHelperBoneName = selectableBones[(size_t)sel];
+                    }
+                }
+
+                if (!st.selectedHelperBoneName.empty())
+                {
+                    ImGui::Text("Selected helper: %s", st.selectedHelperBoneName.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear helper"))
+                        st.selectedHelperBoneName.clear();
+                }
                 drawNode(st.embeddedScene->mRootNode);
                 ImGui::TextDisabled("[bone] matched bone, [bone|ch] matched with animation channel");
             }
@@ -3295,17 +3342,39 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
     if (!previewApplied)
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.45f, 1.0f), "%s", previewReason.c_str());
 
+    Vec3 helperPoint = { 0.0f, 0.0f, 0.0f };
+    bool helperPointValid = false;
+    if (!st.selectedHelperBoneName.empty() && st.embeddedScene && selectedEmbeddedAnim)
+    {
+        aiString q;
+        q.Set(st.selectedHelperBoneName);
+        const aiNode* helperNode = ResolveSceneNodeByNameRobust(st.embeddedScene, q);
+        if (helperNode)
+        {
+            const double tps = selectedEmbeddedAnim->mTicksPerSecond != 0.0 ? selectedEmbeddedAnim->mTicksPerSecond : 24.0;
+            const double timeTicks = ((double)st.inspectorPlayback.currentFrame / std::max(1.0f, activeFps)) * tps;
+            aiMatrix4x4 global;
+            aiMatrix4x4 identity;
+            if (AiFindNodeGlobal(st.embeddedScene->mRootNode, selectedEmbeddedAnim, timeTicks, identity, helperNode, global))
+            {
+                aiVector3D h = AiTransformPoint(global, aiVector3D(0, 0, 0));
+                helperPoint = ApplyImportBasis(Vec3{ h.x, h.y, h.z });
+                helperPointValid = true;
+            }
+        }
+    }
+
     ImGui::TextUnformatted("Preview");
     if (mesh && mesh->valid)
     {
-        DrawNebMeshMiniPreview(*mesh, posed, ImVec2(-1.0f, 180.0f));
+        DrawNebMeshMiniPreview(*mesh, posed, ImVec2(-1.0f, 180.0f), helperPointValid ? &helperPoint : nullptr);
         if (!previewApplied)
             ImGui::TextDisabled("Previewing base mesh");
     }
     else
     {
         static const NebMesh kEmptyPreviewMesh;
-        DrawNebMeshMiniPreview(kEmptyPreviewMesh, nullptr, ImVec2(-1.0f, 180.0f));
+        DrawNebMeshMiniPreview(kEmptyPreviewMesh, nullptr, ImVec2(-1.0f, 180.0f), nullptr);
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Mesh missing or invalid");
     }
 
@@ -6206,7 +6275,7 @@ static bool RebuildNebMeshEmbeddedMapping(NebMeshInspectorState& st)
     return true;
 }
 
-static void DrawNebMeshMiniPreview(const NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize)
+static void DrawNebMeshMiniPreview(const NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize, const Vec3* helperPoint)
 {
     ImVec2 drawSize = previewSize;
     if (drawSize.x <= 0.0f)
@@ -6292,6 +6361,25 @@ static void DrawNebMeshMiniPreview(const NebMesh& mesh, const std::vector<Vec3>*
         projected[i].y = cy2 - (q.y / denom) * scale;
     }
 
+    bool hasHelperProjected = false;
+    ImVec2 helperProj = ImVec2(cx, cy2);
+    if (helperPoint)
+    {
+        const Vec3 v = *helperPoint;
+        const float x1 = cy * v.x + sy * v.z;
+        const float z1 = -sy * v.x + cy * v.z;
+        const float y2 = cp * v.y - sp * z1;
+        const float z2 = sp * v.y + cp * z1;
+        Vec3 q = { x1 - center.x, y2 - center.y, z2 - center.z };
+        const float denom = q.z + dist;
+        if (fabsf(denom) >= 1e-5f)
+        {
+            helperProj.x = cx + (q.x / denom) * scale;
+            helperProj.y = cy2 - (q.y / denom) * scale;
+            hasHelperProjected = true;
+        }
+    }
+
     const size_t triCount = mesh.indices.size() / 3;
     const size_t maxTri = std::min<size_t>(triCount, 3000);
     for (size_t t = 0; t < maxTri; ++t)
@@ -6304,6 +6392,12 @@ static void DrawNebMeshMiniPreview(const NebMesh& mesh, const std::vector<Vec3>*
         dl->AddLine(projected[i0], projected[i1], IM_COL32(172, 206, 255, 255), 1.0f);
         dl->AddLine(projected[i1], projected[i2], IM_COL32(172, 206, 255, 255), 1.0f);
         dl->AddLine(projected[i2], projected[i0], IM_COL32(172, 206, 255, 255), 1.0f);
+    }
+
+    if (hasHelperProjected)
+    {
+        dl->AddCircleFilled(helperProj, 4.0f, IM_COL32(255, 232, 48, 255));
+        dl->AddCircle(helperProj, 6.0f, IM_COL32(255, 196, 0, 255), 16, 1.0f);
     }
 }
 

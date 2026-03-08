@@ -1835,17 +1835,29 @@ static bool SaveNebSlotsManifest(const std::filesystem::path& absMeshPath, const
 
 static std::filesystem::path GetNebMeshMetaPath(const std::filesystem::path& absMeshPath)
 {
-    return NebulaAssets::GetNebMeshMetaPath(absMeshPath);
+    return std::filesystem::path(absMeshPath.string() + ".animmeta");
+}
+
+static std::filesystem::path GetNebMeshVtxAnimLinkPath(const std::filesystem::path& absMeshPath)
+{
+    return std::filesystem::path(absMeshPath.string() + ".vtxlink");
 }
 
 static bool LoadNebMeshVtxAnimLink(const std::filesystem::path& absMeshPath, std::string& outAnimPath)
 {
-    return NebulaAssets::LoadNebMeshVtxAnimLink(absMeshPath, outAnimPath);
+    outAnimPath.clear();
+    std::ifstream in(GetNebMeshVtxAnimLinkPath(absMeshPath));
+    if (!in.is_open()) return false;
+    std::getline(in, outAnimPath);
+    return !outAnimPath.empty();
 }
 
 static bool SaveNebMeshVtxAnimLink(const std::filesystem::path& absMeshPath, const std::string& animPath)
 {
-    return NebulaAssets::SaveNebMeshVtxAnimLink(absMeshPath, animPath);
+    std::ofstream out(GetNebMeshVtxAnimLinkPath(absMeshPath), std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+    out << animPath;
+    return true;
 }
 
 static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,

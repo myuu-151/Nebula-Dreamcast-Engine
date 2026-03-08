@@ -69,6 +69,7 @@ where kos-cc
 - **.nebtex** - texture format
 - **.nebmat** - material reference file
 - **.nebslots** - StaticMesh material-slot manifest
+- **.nebanim** - vertex animation clip format
 
 ## Compile (Windows Editor) — CMake GUI + Visual Studio
 

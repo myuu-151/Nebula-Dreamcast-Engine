@@ -86,11 +86,13 @@ static bool ComputeEmbeddedClipDiagnostics(const aiScene* scene, const aiAnimati
 static const aiNode* ResolveSceneNodeByNameRobust(const aiScene* scene, const aiString& rawName);
 static const aiNodeAnim* AiFindChannel(const aiAnimation* anim, const aiString& name);
 static bool AiFindNodeGlobal(const aiNode* node, const aiAnimation* anim, double time, const aiMatrix4x4& parent, const aiNode* target, aiMatrix4x4& out);
+static bool AiFindNodeGlobalLegacy(const aiNode* node, const aiAnimation* anim, double time, const aiMatrix4x4& parent, const aiNode* target, aiMatrix4x4& out);
 static aiVector3D AiTransformPoint(const aiMatrix4x4& m, const aiVector3D& v);
 static Vec3 ApplyImportBasis(const Vec3& v);
 static void DrawNebMeshMiniPreview(const struct NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize, const Vec3* helperPoint = nullptr);
 static const struct NebMesh* GetNebMesh(const std::filesystem::path& path);
 static void CleanupNebMeshTopology(struct NebMesh& mesh, std::vector<uint32_t>* outProvMeshIndices = nullptr, std::vector<uint32_t>* outProvVertexIndices = nullptr);
+static void DumpEmbeddedAnimDiagnostics(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, int probeFrame, float fps);
 
 static std::filesystem::path GetExecutableDirectory()
 {
@@ -2170,6 +2172,11 @@ struct NebMeshInspectorState
     InspectorPlaybackMode loggedPreviewMode = InspectorPlaybackMode::EmbeddedExact;
     std::string lastPreviewReason;
     std::string selectedHelperBoneName;
+    bool animDebugDumpEnabled = false;
+    int animDebugProbeFrame = 10;
+    int animDebugLastClip = -1;
+    int animDebugLastProbeFrame = -1;
+    bool animDebugForceDump = false;
 
     // Mini-preview camera controls
     float previewYaw = 0.62f;
@@ -3100,6 +3107,20 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
         }
     }
 
+    if (usingEmbeddedPlayback && selectedEmbeddedAnim)
+    {
+        ImGui::Checkbox("Debug anim diagnostics (log)", &st.animDebugDumpEnabled);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        if (ImGui::InputInt("Probe frame##AnimDiagProbe", &st.animDebugProbeFrame))
+            st.animDebugLastProbeFrame = -1;
+        if (st.animDebugProbeFrame < 0) st.animDebugProbeFrame = 0;
+        if (activeFrameCount > 0 && st.animDebugProbeFrame >= (int)activeFrameCount) st.animDebugProbeFrame = (int)activeFrameCount - 1;
+        ImGui::SameLine();
+        if (ImGui::Button("Dump now##AnimDiagDump"))
+            st.animDebugForceDump = true;
+    }
+
     if (usingEmbeddedPlayback && selectedEmbeddedAnim &&
         (st.embeddedDiagDirty || st.lastEmbeddedClipIndex != st.inspectorPlayback.selectedClip))
     {
@@ -3123,6 +3144,20 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
         }
         st.embeddedDiagDirty = false;
         st.lastEmbeddedClipIndex = st.inspectorPlayback.selectedClip;
+    }
+
+    if (usingEmbeddedPlayback && selectedEmbeddedAnim)
+    {
+        const int probeFrame = std::max(0, std::min(st.animDebugProbeFrame, (int)activeFrameCount - 1));
+        const bool autoDump = st.animDebugDumpEnabled &&
+            (st.animDebugLastClip != st.inspectorPlayback.selectedClip || st.animDebugLastProbeFrame != probeFrame);
+        if (autoDump || st.animDebugForceDump)
+        {
+            DumpEmbeddedAnimDiagnostics(st.embeddedScene, selectedEmbeddedAnim, st.embeddedMeta.meshIndices, probeFrame, activeFps);
+            st.animDebugLastClip = st.inspectorPlayback.selectedClip;
+            st.animDebugLastProbeFrame = probeFrame;
+            st.animDebugForceDump = false;
+        }
     }
     st.playback.fps = activeFps;
 
@@ -4352,7 +4387,47 @@ static aiQuaternion AiSampleRotation(const aiNodeAnim* channel, double time)
     return channel->mRotationKeys[channel->mNumRotationKeys - 1].mValue;
 }
 
-static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim, double time)
+struct AiNodeTrsSample
+{
+    aiVector3D translation = aiVector3D(0, 0, 0);
+    aiQuaternion rotation = aiQuaternion();
+    aiVector3D scale = aiVector3D(1, 1, 1);
+    aiVector3D bindTranslation = aiVector3D(0, 0, 0);
+    aiQuaternion bindRotation = aiQuaternion();
+    aiVector3D bindScale = aiVector3D(1, 1, 1);
+    bool hasChannel = false;
+    bool usedBindTranslation = false;
+    bool usedBindRotation = false;
+    bool usedBindScale = false;
+    unsigned int posKeys = 0;
+    unsigned int rotKeys = 0;
+    unsigned int sclKeys = 0;
+};
+
+static bool AiTryDecomposeTrs(const aiMatrix4x4& m, aiVector3D& outT, aiQuaternion& outR, aiVector3D& outS)
+{
+    outT = aiVector3D(0, 0, 0);
+    outR = aiQuaternion();
+    outS = aiVector3D(1, 1, 1);
+    aiVector3D s;
+    aiVector3D t;
+    aiQuaternion r;
+    m.Decompose(s, r, t);
+    auto finite3 = [](const aiVector3D& v) -> bool {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    };
+    auto finite4 = [](const aiQuaternion& q) -> bool {
+        return std::isfinite(q.w) && std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z);
+    };
+    if (!finite3(s) || !finite3(t) || !finite4(r))
+        return false;
+    outT = t;
+    outR = r;
+    outS = s;
+    return true;
+}
+
+static aiMatrix4x4 AiNodeLocalAtTimeLegacy(const aiNode* node, const aiAnimation* anim, double time)
 {
     if (!node) return aiMatrix4x4();
     const aiNodeAnim* channel = AiFindChannel(anim, node->mName);
@@ -4361,6 +4436,57 @@ static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim
     aiVector3D t = AiSamplePosition(channel, time);
     aiVector3D s = AiSampleScale(channel, time);
     aiQuaternion r = AiSampleRotation(channel, time);
+    return AiComposeTRS(t, r, s);
+}
+
+static aiMatrix4x4 AiNodeLocalAtTime(const aiNode* node, const aiAnimation* anim, double time, AiNodeTrsSample* outSample = nullptr)
+{
+    if (outSample) *outSample = AiNodeTrsSample{};
+    if (!node) return aiMatrix4x4();
+
+    aiVector3D bindT(0, 0, 0);
+    aiQuaternion bindR;
+    aiVector3D bindS(1, 1, 1);
+    const bool haveBindTrs = AiTryDecomposeTrs(node->mTransformation, bindT, bindR, bindS);
+    if (outSample)
+    {
+        outSample->bindTranslation = bindT;
+        outSample->bindRotation = bindR;
+        outSample->bindScale = bindS;
+    }
+
+    const aiNodeAnim* channel = AiFindChannel(anim, node->mName);
+    if (!channel)
+    {
+        if (outSample)
+        {
+            outSample->translation = bindT;
+            outSample->rotation = bindR;
+            outSample->scale = bindS;
+            outSample->hasChannel = false;
+            outSample->usedBindTranslation = haveBindTrs;
+            outSample->usedBindRotation = haveBindTrs;
+            outSample->usedBindScale = haveBindTrs;
+        }
+        return node->mTransformation;
+    }
+
+    aiVector3D t = (channel->mNumPositionKeys > 0) ? AiSamplePosition(channel, time) : bindT;
+    aiQuaternion r = (channel->mNumRotationKeys > 0) ? AiSampleRotation(channel, time) : bindR;
+    aiVector3D s = (channel->mNumScalingKeys > 0) ? AiSampleScale(channel, time) : bindS;
+    if (outSample)
+    {
+        outSample->translation = t;
+        outSample->rotation = r;
+        outSample->scale = s;
+        outSample->hasChannel = true;
+        outSample->posKeys = channel->mNumPositionKeys;
+        outSample->rotKeys = channel->mNumRotationKeys;
+        outSample->sclKeys = channel->mNumScalingKeys;
+        outSample->usedBindTranslation = (channel->mNumPositionKeys == 0);
+        outSample->usedBindRotation = (channel->mNumRotationKeys == 0);
+        outSample->usedBindScale = (channel->mNumScalingKeys == 0);
+    }
     return AiComposeTRS(t, r, s);
 }
 
@@ -4376,6 +4502,23 @@ static bool AiFindNodeGlobal(const aiNode* node, const aiAnimation* anim, double
     for (unsigned int i = 0; i < node->mNumChildren; ++i)
     {
         if (AiFindNodeGlobal(node->mChildren[i], anim, time, global, target, out))
+            return true;
+    }
+    return false;
+}
+
+static bool AiFindNodeGlobalLegacy(const aiNode* node, const aiAnimation* anim, double time, const aiMatrix4x4& parent, const aiNode* target, aiMatrix4x4& out)
+{
+    aiMatrix4x4 local = AiNodeLocalAtTimeLegacy(node, anim, time);
+    aiMatrix4x4 global = parent * local;
+    if (node == target)
+    {
+        out = global;
+        return true;
+    }
+    for (unsigned int i = 0; i < node->mNumChildren; ++i)
+    {
+        if (AiFindNodeGlobalLegacy(node->mChildren[i], anim, time, global, target, out))
             return true;
     }
     return false;
@@ -4404,6 +4547,162 @@ static aiVector3D AiTransformPoint(const aiMatrix4x4& m, const aiVector3D& p)
     r.y = m.b1 * p.x + m.b2 * p.y + m.b3 * p.z + m.b4;
     r.z = m.c1 * p.x + m.c2 * p.y + m.c3 * p.z + m.c4;
     return r;
+}
+
+static float AiMaxAbs3(const aiVector3D& v)
+{
+    return std::max(std::fabs(v.x), std::max(std::fabs(v.y), std::fabs(v.z)));
+}
+
+static float AiQuatAngularDeltaDeg(const aiQuaternion& a, const aiQuaternion& b)
+{
+    const double na = std::sqrt((double)a.w * a.w + (double)a.x * a.x + (double)a.y * a.y + (double)a.z * a.z);
+    const double nb = std::sqrt((double)b.w * b.w + (double)b.x * b.x + (double)b.y * b.y + (double)b.z * b.z);
+    if (na <= 1e-12 || nb <= 1e-12) return 0.0f;
+    double dot = (a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z) / (na * nb);
+    dot = std::fabs(std::max(-1.0, std::min(1.0, dot)));
+    const double ang = 2.0 * std::acos(dot);
+    return (float)(ang * (180.0 / 3.14159265358979323846));
+}
+
+static void DumpEmbeddedAnimDiagnostics(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, int probeFrame, float fps)
+{
+    if (!scene || !scene->mRootNode || !anim || meshIndices.empty()) return;
+
+    const double tps = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 24.0;
+    const double time0 = 0.0;
+    const double timeProbe = ((double)std::max(0, probeFrame) / std::max(1.0f, fps)) * tps;
+    std::unordered_set<const aiNode*> bonesSet;
+    for (unsigned int mi : meshIndices)
+    {
+        if (mi >= scene->mNumMeshes || !scene->mMeshes[mi]) continue;
+        const aiMesh* mesh = scene->mMeshes[mi];
+        for (unsigned int bi = 0; bi < mesh->mNumBones; ++bi)
+        {
+            const aiBone* b = mesh->mBones[bi];
+            if (!b) continue;
+            const aiNode* bn = ResolveSceneNodeByNameRobust(scene, b->mName);
+            if (bn) bonesSet.insert(bn);
+        }
+    }
+    if (bonesSet.empty())
+    {
+        printf("[AnimDiag] no matched bones for selected mesh set\n");
+        return;
+    }
+
+    std::vector<const aiNode*> bones;
+    bones.reserve(bonesSet.size());
+    for (const aiNode* n : bonesSet) bones.push_back(n);
+    std::sort(bones.begin(), bones.end(), [](const aiNode* a, const aiNode* b) {
+        const char* an = (a && a->mName.length > 0) ? a->mName.C_Str() : "";
+        const char* bn = (b && b->mName.length > 0) ? b->mName.C_Str() : "";
+        return std::strcmp(an, bn) < 0;
+    });
+
+    int nonUnitScale = 0;
+    int unstableScale = 0;
+    int legacyScaleMismatch = 0;
+    int legacyRotMismatch = 0;
+    int legacyPosMismatch = 0;
+    int missingScaleKeysUsingBind = 0;
+    const float epsScale = 1e-3f;
+    const float epsPos = 1e-4f;
+    const float epsRotDeg = 0.05f;
+
+    aiMatrix4x4 identity;
+    printf("[AnimDiag] clip=%s probeFrame=%d fps=%.3f tps=%.3f bones=%zu\n",
+        (anim->mName.length > 0) ? anim->mName.C_Str() : "<unnamed>",
+        std::max(0, probeFrame), fps, (float)tps, bones.size());
+
+    size_t printed = 0;
+    for (const aiNode* bn : bones)
+    {
+        AiNodeTrsSample fixed0;
+        AiNodeTrsSample fixedProbe;
+        AiNodeLocalAtTime(bn, anim, time0, &fixed0);
+        AiNodeLocalAtTime(bn, anim, timeProbe, &fixedProbe);
+        aiMatrix4x4 localLegacy0 = AiNodeLocalAtTimeLegacy(bn, anim, time0);
+        aiMatrix4x4 localLegacyProbe = AiNodeLocalAtTimeLegacy(bn, anim, timeProbe);
+        aiVector3D legT0, legS0, legT1, legS1;
+        aiQuaternion legR0, legR1;
+        AiTryDecomposeTrs(localLegacy0, legT0, legR0, legS0);
+        AiTryDecomposeTrs(localLegacyProbe, legT1, legR1, legS1);
+
+        const float nonUnit = std::max(
+            AiMaxAbs3(aiVector3D(fixed0.scale.x - 1.0f, fixed0.scale.y - 1.0f, fixed0.scale.z - 1.0f)),
+            AiMaxAbs3(aiVector3D(fixedProbe.scale.x - 1.0f, fixedProbe.scale.y - 1.0f, fixedProbe.scale.z - 1.0f)));
+        const float unstable = AiMaxAbs3(aiVector3D(
+            fixedProbe.scale.x - fixed0.scale.x,
+            fixedProbe.scale.y - fixed0.scale.y,
+            fixedProbe.scale.z - fixed0.scale.z));
+        const float legacyScaleDelta = std::max(
+            AiMaxAbs3(aiVector3D(fixed0.scale.x - legS0.x, fixed0.scale.y - legS0.y, fixed0.scale.z - legS0.z)),
+            AiMaxAbs3(aiVector3D(fixedProbe.scale.x - legS1.x, fixedProbe.scale.y - legS1.y, fixedProbe.scale.z - legS1.z)));
+        const float legacyPosDelta = std::max(
+            AiMaxAbs3(aiVector3D(fixed0.translation.x - legT0.x, fixed0.translation.y - legT0.y, fixed0.translation.z - legT0.z)),
+            AiMaxAbs3(aiVector3D(fixedProbe.translation.x - legT1.x, fixedProbe.translation.y - legT1.y, fixedProbe.translation.z - legT1.z)));
+        const float legacyRotDeg = std::max(
+            AiQuatAngularDeltaDeg(fixed0.rotation, legR0),
+            AiQuatAngularDeltaDeg(fixedProbe.rotation, legR1));
+
+        if (nonUnit > epsScale) nonUnitScale++;
+        if (unstable > epsScale) unstableScale++;
+        if (legacyScaleDelta > epsScale) legacyScaleMismatch++;
+        if (legacyPosDelta > epsPos) legacyPosMismatch++;
+        if (legacyRotDeg > epsRotDeg) legacyRotMismatch++;
+        if (fixed0.hasChannel && fixed0.sclKeys == 0 && fixed0.usedBindScale) missingScaleKeysUsingBind++;
+
+        bool interesting = false;
+        interesting = interesting || (legacyScaleDelta > epsScale);
+        interesting = interesting || (legacyPosDelta > epsPos);
+        interesting = interesting || (legacyRotDeg > epsRotDeg);
+        interesting = interesting || (unstable > epsScale);
+        interesting = interesting || (fixed0.sclKeys == 0 && fixed0.hasChannel);
+        if (interesting && printed < 20)
+        {
+            aiMatrix4x4 g0Fixed;
+            aiMatrix4x4 g1Fixed;
+            aiMatrix4x4 g0Legacy;
+            aiMatrix4x4 g1Legacy;
+            AiFindNodeGlobal(scene->mRootNode, anim, time0, identity, bn, g0Fixed);
+            AiFindNodeGlobal(scene->mRootNode, anim, timeProbe, identity, bn, g1Fixed);
+            AiFindNodeGlobalLegacy(scene->mRootNode, anim, time0, identity, bn, g0Legacy);
+            AiFindNodeGlobalLegacy(scene->mRootNode, anim, timeProbe, identity, bn, g1Legacy);
+            aiVector3D gtf0, gsf0, gtf1, gsf1, gtl0, gsl0, gtl1, gsl1;
+            aiQuaternion grf0, grf1, grl0, grl1;
+            AiTryDecomposeTrs(g0Fixed, gtf0, grf0, gsf0);
+            AiTryDecomposeTrs(g1Fixed, gtf1, grf1, gsf1);
+            AiTryDecomposeTrs(g0Legacy, gtl0, grl0, gsl0);
+            AiTryDecomposeTrs(g1Legacy, gtl1, grl1, gsl1);
+
+            printf("[AnimDiagBone] bone=%s ch=%d keys[p=%u r=%u s=%u] bindS=(%.6f,%.6f,%.6f) "
+                "localS0=(%.6f,%.6f,%.6f) localS1=(%.6f,%.6f,%.6f) legacyS0=(%.6f,%.6f,%.6f) legacyS1=(%.6f,%.6f,%.6f) "
+                "legacyPosDelta=%.6f legacyRotDeltaDeg=%.6f unstableScale=%.6f\n",
+                (bn->mName.length > 0) ? bn->mName.C_Str() : "<unnamed>",
+                fixed0.hasChannel ? 1 : 0,
+                fixed0.posKeys, fixed0.rotKeys, fixed0.sclKeys,
+                fixed0.bindScale.x, fixed0.bindScale.y, fixed0.bindScale.z,
+                fixed0.scale.x, fixed0.scale.y, fixed0.scale.z,
+                fixedProbe.scale.x, fixedProbe.scale.y, fixedProbe.scale.z,
+                legS0.x, legS0.y, legS0.z,
+                legS1.x, legS1.y, legS1.z,
+                legacyPosDelta, legacyRotDeg, unstable);
+            printf("[AnimDiagGlobal] bone=%s fixedGScale0=(%.6f,%.6f,%.6f) fixedGScale1=(%.6f,%.6f,%.6f) "
+                "legacyGScale0=(%.6f,%.6f,%.6f) legacyGScale1=(%.6f,%.6f,%.6f)\n",
+                (bn->mName.length > 0) ? bn->mName.C_Str() : "<unnamed>",
+                gsf0.x, gsf0.y, gsf0.z,
+                gsf1.x, gsf1.y, gsf1.z,
+                gsl0.x, gsl0.y, gsl0.z,
+                gsl1.x, gsl1.y, gsl1.z);
+            printed++;
+        }
+    }
+
+    printf("[AnimDiagSummary] nonUnitScaleBones=%d unstableScaleBones=%d missingScaleKeysUsingBind=%d "
+        "legacyScaleMismatch=%d legacyPosMismatch=%d legacyRotMismatch=%d\n",
+        nonUnitScale, unstableScale, missingScaleKeysUsingBind,
+        legacyScaleMismatch, legacyPosMismatch, legacyRotMismatch);
 }
 
 static std::string SanitizeName(const std::string& name)

@@ -29,6 +29,7 @@ struct StaticMesh3DNode
     float scaleY = 1.0f;
     float scaleZ = 1.0f;
     bool collisionSource = false;
+    bool runtimeTest = false;
 };
 
 struct Camera3DNode

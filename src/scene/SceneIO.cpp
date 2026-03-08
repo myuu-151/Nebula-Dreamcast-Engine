@@ -240,6 +240,7 @@ namespace NebulaScene
             out << " " << EncodeSceneToken(n.parent);
             out << " " << (n.collisionSource ? 1 : 0);
             out << " " << EncodeSceneToken(n.vtxAnim);
+            out << " " << (n.runtimeTest ? 1 : 0);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -358,6 +359,9 @@ namespace NebulaScene
                     n.vtxAnim = extra[animIdx];
                     DecodeSceneToken(n.vtxAnim);
                 }
+                size_t runtimeTestIdx = animIdx + 1;
+                if (runtimeTestIdx < extra.size())
+                    n.runtimeTest = (atoi(extra[runtimeTestIdx].c_str()) != 0);
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;
                 outScene.staticMeshes.push_back(n);

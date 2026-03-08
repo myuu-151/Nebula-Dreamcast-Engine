@@ -302,6 +302,7 @@ static std::string gImportWarning;
 static std::string gImportBaseNebMeshPath;
 static bool gImportUseProvenanceMapping = true;
 static bool gImportDeltaCompress = false;
+static bool gImportDoubleSampleRate = false;
 static int gImportBasisMode = 1; // 0=None(raw), 1=Blender(-Z Forward, Y Up), 2=Maya(+Z Forward, Y Up)
 static std::vector<std::string> gPendingDroppedImports;
 
@@ -7101,7 +7102,7 @@ static uint32_t HashNebMeshLayoutCrc32(const NebMesh& mesh)
     return ~crc;
 }
 
-static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, const std::filesystem::path& outPath, std::string& warning, bool deltaCompress, uint32_t forcedVertexCount = 0, const NebMesh* forcedTargetMesh = nullptr, const std::vector<uint32_t>* forcedMapIndices = nullptr)
+static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, const std::filesystem::path& outPath, std::string& warning, bool deltaCompress, uint32_t forcedVertexCount = 0, const NebMesh* forcedTargetMesh = nullptr, const std::vector<uint32_t>* forcedMapIndices = nullptr, float sampleRateMultiplier = 1.0f)
 {
     if (!scene || !anim || scene->mNumMeshes == 0 || meshIndices.empty()) return false;
 
@@ -7156,7 +7157,7 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     double tps = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 24.0;
     double durationTicks = anim->mDuration;
     double durationSec = (tps > 0.0) ? (durationTicks / tps) : 0.0;
-    const float fps = 12.0f;
+    const float fps = 12.0f * std::max(1.0f, sampleRateMultiplier);
     unsigned int frameCount = (unsigned int)std::max(1.0, std::floor(durationSec * fps + 0.5) + 1.0);
 
     const uint32_t maxVerts = 2048;
@@ -9518,8 +9519,17 @@ int main(int, char**)
                     if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.vertexCount == mesh->positions.size() && !it->second.frames.empty())
                     {
                         int frame = 0;
-                        if (i == gStaticAnimPreviewNode)
+                        if (gPlayMode && s.runtimeTest)
+                        {
+                            const float fps = std::max(1.0f, it->second.fps);
+                            int f = (int)std::floor((float)glfwGetTime() * fps);
+                            if (it->second.frameCount > 0)
+                                frame = f % (int)it->second.frameCount;
+                        }
+                        else if (i == gStaticAnimPreviewNode)
+                        {
                             frame = std::max(0, std::min(gStaticAnimPreviewFrame, (int)it->second.frameCount - 1));
+                        }
                         frame = std::max(0, std::min(frame, (int)it->second.frames.size() - 1));
                         staticAnimPosed = it->second.frames[(size_t)frame];
                         if (staticAnimPosed.size() == mesh->positions.size())
@@ -14797,10 +14807,11 @@ RenderImGuiOnly:
                         ImGui::TreePop();
                     }
                     ImGui::Checkbox("Delta compress (store frame deltas)", &gImportDeltaCompress);
+                    ImGui::Checkbox("Duplicate sample rate (2x)", &gImportDoubleSampleRate);
                     ImGui::Checkbox("Include animation provenance mapping", &gImportUseProvenanceMapping);
                     if (!gImportBaseNebMeshPath.empty())
                         ImGui::Text("Target mesh: %s", gImportBaseNebMeshPath.c_str());
-                    ImGui::Text("Export: .nebanim BE, 16.16 fixed, 12 fps (pos only)");
+                    ImGui::Text("Export: .nebanim BE, 16.16 fixed, %.0f fps (pos only)", gImportDoubleSampleRate ? 24.0f : 12.0f);
                     ImGui::Text("Mesh import: .nebmesh BE, 8.8 fixed, indexed (UV0 if present)");
                     if (gImportDeltaCompress)
                         ImGui::Text("Delta: int16 8.8 per component (smaller)");
@@ -14914,7 +14925,7 @@ RenderImGuiOnly:
                                 if (!gImportWarning.empty()) gImportWarning += " | ";
                                 gImportWarning += animName + ": exact provenance map unavailable; using direct index order";
                             }
-                            if (ExportNebAnimation(gImportScene, anim, meshIndices, outPath, warn, gImportDeltaCompress, targetNebMeshVerts, targetNebMesh.valid ? &targetNebMesh : nullptr, forcedMap))
+                            if (ExportNebAnimation(gImportScene, anim, meshIndices, outPath, warn, gImportDeltaCompress, targetNebMeshVerts, targetNebMesh.valid ? &targetNebMesh : nullptr, forcedMap, gImportDoubleSampleRate ? 2.0f : 1.0f))
                             {
                                 exported++;
                                 if (!warn.empty())
@@ -15455,6 +15466,8 @@ RenderImGuiOnly:
                     if (it != gStaticAnimClipCache.end() && it->second.valid)
                         previewClip = &it->second;
                 }
+
+                ImGui::Checkbox("Runtime test", &n.runtimeTest);
 
                 if (previewClip && previewClip->frameCount > 0)
                 {

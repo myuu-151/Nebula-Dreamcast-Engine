@@ -7049,6 +7049,8 @@ static void ImportAssetsToCurrentFolder(const std::vector<std::string>& pickedLi
                 std::error_code ec;
                 std::filesystem::path meshesDir = targetDir / "mesh";
                 std::filesystem::create_directories(meshesDir, ec);
+                std::filesystem::path animDir = targetDir / "anim";
+                std::filesystem::create_directories(animDir, ec);
                 std::filesystem::path meshOut = meshesDir / inPath.filename();
                 meshOut.replace_extension(".nebmesh");
                 std::vector<uint32_t> provMesh;
@@ -14321,6 +14323,40 @@ RenderImGuiOnly:
                         std::string base = inPath.stem().string();
                         std::filesystem::path dir = inPath.parent_path();
 
+                        // Default to source-near anim/ folder.
+                        std::filesystem::path animDir = dir / "anim";
+
+                        // If conversion is launched from NebMesh inspector, place output alongside
+                        // imported asset folders (mesh/mat/tex/anim) for that asset root.
+                        if (!gImportBaseNebMeshPath.empty())
+                        {
+                            std::filesystem::path nebPath = std::filesystem::path(gImportBaseNebMeshPath);
+                            if (nebPath.is_relative())
+                            {
+                                if (!gProjectDir.empty()) nebPath = std::filesystem::path(gProjectDir) / nebPath;
+                                else nebPath = dir / nebPath;
+                            }
+                            std::filesystem::path meshDir = nebPath.parent_path();
+                            if (!meshDir.empty())
+                            {
+                                std::string leaf = meshDir.filename().string();
+                                std::transform(leaf.begin(), leaf.end(), leaf.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                                if (leaf == "mesh")
+                                    animDir = meshDir.parent_path() / "anim";
+                                else
+                                    animDir = meshDir / "anim";
+                            }
+                        }
+
+                        std::error_code animEc;
+                        std::filesystem::create_directories(animDir, animEc);
+                        if (!std::filesystem::exists(animDir))
+                        {
+                            if (!gImportWarning.empty()) gImportWarning += " | ";
+                            gImportWarning += "Failed to create anim/ folder; exporting beside source";
+                            animDir = dir;
+                        }
+
                         uint32_t targetNebMeshVerts = 0;
                         NebMesh targetNebMesh;
                         NebMeshEmbeddedAnimMeta targetMeta;
@@ -14370,7 +14406,7 @@ RenderImGuiOnly:
                                 continue;
                             }
 
-                            std::filesystem::path outPath = dir / (base + "_" + animName + ".nebanim");
+                            std::filesystem::path outPath = animDir / (base + "_" + animName + ".nebanim");
                             std::string warn;
                             const std::vector<uint32_t>* forcedMap = nullptr;
                             if (gImportUseProvenanceMapping && targetMetaLoaded && targetMeta.mappingQuality == "exact" &&

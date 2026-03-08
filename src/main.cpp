@@ -2107,6 +2107,10 @@ struct NebAnimClip
     uint32_t frameCount = 0;
     float fps = 12.0f;
     uint32_t deltaFracBits = 8;
+    uint32_t targetMeshVertexCount = 0;
+    uint32_t targetMeshHash = 0;
+    bool hasEmbeddedMap = false;
+    std::vector<uint32_t> embeddedMapIndices;
     bool valid = false;
     std::vector<std::vector<Vec3>> frames;
 };
@@ -5628,7 +5632,7 @@ static bool LoadNebAnimClip(const std::filesystem::path& path, NebAnimClip& outC
     uint32_t frameCount = 0;
     uint32_t fpsFixed = 0;
     uint32_t deltaFracBits = 8;
-    if (!ReadU32BE(in, version) || (version < 2 || version > 3))
+    if (!ReadU32BE(in, version) || (version < 2 || version > 4))
     {
         outError = "Unsupported .nebanim version";
         return false;
@@ -5696,6 +5700,36 @@ static bool LoadNebAnimClip(const std::filesystem::path& path, NebAnimClip& outC
 
             outClip.frames[f][v] = value;
             prev[v] = value;
+        }
+    }
+
+    if (version >= 4)
+    {
+        if (!ReadU32BE(in, outClip.targetMeshVertexCount) || !ReadU32BE(in, outClip.targetMeshHash))
+        {
+            outError = "Corrupt .nebanim v4 trailer";
+            return false;
+        }
+
+        const bool hasMap = (flags & 2u) != 0;
+        outClip.hasEmbeddedMap = hasMap;
+        if (hasMap)
+        {
+            uint32_t mapCount = 0;
+            if (!ReadU32BE(in, mapCount) || mapCount == 0 || mapCount > 65536)
+            {
+                outError = "Corrupt .nebanim map header";
+                return false;
+            }
+            outClip.embeddedMapIndices.resize(mapCount);
+            for (uint32_t i = 0; i < mapCount; ++i)
+            {
+                if (!ReadU32BE(in, outClip.embeddedMapIndices[i]))
+                {
+                    outError = "Corrupt .nebanim map payload";
+                    return false;
+                }
+            }
         }
     }
 
@@ -6562,6 +6596,45 @@ static bool EnsureDefaultCubeNebmesh(const std::filesystem::path& projectDir)
 }
 */
 
+static uint32_t HashNebMeshLayoutCrc32(const NebMesh& mesh)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    auto feedByte = [&](uint8_t b)
+    {
+        crc ^= b;
+        for (int i = 0; i < 8; ++i)
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)-(int32_t)(crc & 1u));
+    };
+
+    auto feedU32 = [&](uint32_t v)
+    {
+        feedByte((uint8_t)(v & 0xFFu));
+        feedByte((uint8_t)((v >> 8) & 0xFFu));
+        feedByte((uint8_t)((v >> 16) & 0xFFu));
+        feedByte((uint8_t)((v >> 24) & 0xFFu));
+    };
+
+    feedU32((uint32_t)mesh.positions.size());
+    for (const Vec3& p : mesh.positions)
+    {
+        uint32_t bx = 0, by = 0, bz = 0;
+        static_assert(sizeof(float) == sizeof(uint32_t), "float size mismatch");
+        memcpy(&bx, &p.x, sizeof(uint32_t));
+        memcpy(&by, &p.y, sizeof(uint32_t));
+        memcpy(&bz, &p.z, sizeof(uint32_t));
+        feedU32(bx); feedU32(by); feedU32(bz);
+    }
+
+    feedU32((uint32_t)mesh.indices.size());
+    for (uint16_t idx : mesh.indices)
+    {
+        feedByte((uint8_t)(idx & 0xFFu));
+        feedByte((uint8_t)((idx >> 8) & 0xFFu));
+    }
+
+    return ~crc;
+}
+
 static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, const std::filesystem::path& outPath, std::string& warning, bool deltaCompress, uint32_t forcedVertexCount = 0, const NebMesh* forcedTargetMesh = nullptr, const std::vector<uint32_t>* forcedMapIndices = nullptr)
 {
     if (!scene || !anim || scene->mNumMeshes == 0 || meshIndices.empty()) return false;
@@ -6634,9 +6707,16 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     if (!out.is_open()) return false;
 
     const char magic[4] = { 'N','E','B','0' };
-    uint32_t version = deltaCompress ? 3 : 2;
-    uint32_t flags = deltaCompress ? 1u : 0u;
+    uint32_t version = 4;
     uint32_t vertexCount = (forcedVertexCount > 0) ? forcedVertexCount : totalVerts;
+
+    // Optional deterministic remap (e.g. provenance/exact map from target .nebmesh meta).
+    std::vector<uint32_t> sourceIndexForOutput;
+    if (forcedMapIndices && forcedMapIndices->size() == vertexCount)
+        sourceIndexForOutput = *forcedMapIndices;
+
+    const bool hasEmbeddedMap = !sourceIndexForOutput.empty() && sourceIndexForOutput.size() == vertexCount;
+    uint32_t flags = (deltaCompress ? 1u : 0u) | (hasEmbeddedMap ? 2u : 0u);
     uint32_t frames = frameCount;
     uint32_t fpsFixed = ToFixed16_16(fps);
     const uint32_t deltaFracBits = 8;
@@ -6652,11 +6732,6 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     aiMatrix4x4 identity;
     std::vector<aiVector3D> prev;
     prev.resize(vertexCount);
-
-    // Optional deterministic remap (e.g. provenance/exact map from target .nebmesh meta).
-    std::vector<uint32_t> sourceIndexForOutput;
-    if (forcedMapIndices && forcedMapIndices->size() == vertexCount)
-        sourceIndexForOutput = *forcedMapIndices;
 
     bool anyDeltaClamp = false;
 
@@ -6750,6 +6825,28 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
             }
             prev[vi] = ta;
         }
+    }
+
+    // v4 trailer: optional mesh safety info + optional embedded map payload.
+    uint32_t targetMeshVertexCount = 0;
+    uint32_t targetMeshHash = 0;
+    if (forcedTargetMesh && forcedTargetMesh->valid)
+    {
+        targetMeshVertexCount = (uint32_t)forcedTargetMesh->positions.size();
+        targetMeshHash = HashNebMeshLayoutCrc32(*forcedTargetMesh);
+    }
+    else if (forcedVertexCount > 0)
+    {
+        targetMeshVertexCount = forcedVertexCount;
+    }
+    WriteU32BE(out, targetMeshVertexCount);
+    WriteU32BE(out, targetMeshHash);
+
+    if (hasEmbeddedMap)
+    {
+        WriteU32BE(out, (uint32_t)sourceIndexForOutput.size());
+        for (uint32_t idx : sourceIndexForOutput)
+            WriteU32BE(out, idx);
     }
 
     if (anyDeltaClamp)

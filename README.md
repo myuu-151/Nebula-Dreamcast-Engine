@@ -47,7 +47,7 @@ where kos-cc
   - `build_dreamcast/cd_root/data/meshes`
   - `build_dreamcast/cd_root/data/scenes`
   - `build_dreamcast/cd_root/data/textures`
-  - `build_dreamcast/cd_root/data/anim`
+  - `build_dreamcast/cd_root/data/animations`
   - `build_dreamcast/cd_root/data/vmu`
 - Scene/mesh/texture staging uses short deterministic names:
   - Scenes: `Sxxxxx.*`

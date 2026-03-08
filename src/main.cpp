@@ -11076,17 +11076,20 @@ RenderImGuiOnly:
                             std::filesystem::path cdMeshesDir = cdDataDir / "meshes";
                             std::filesystem::path cdTexturesDir = cdDataDir / "textures";
                             std::filesystem::path cdMatDir = cdDataDir / "materials";
+                            std::filesystem::path cdAnimDir = cdDataDir / "animations";
                             std::filesystem::path cdVmuDir = cdDataDir / "vmu";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);
                             std::filesystem::remove_all(cdTexturesDir, stageEc);
                             std::filesystem::remove_all(cdMatDir, stageEc);
+                            std::filesystem::remove_all(cdAnimDir, stageEc);
                             std::filesystem::remove_all(cdVmuDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
                             std::filesystem::create_directories(cdMatDir);
+                            std::filesystem::create_directories(cdAnimDir);
                             std::filesystem::create_directories(cdVmuDir);
 
                             auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
@@ -11245,8 +11248,10 @@ RenderImGuiOnly:
                             std::set<std::string> sortedMeshAbs;
                             std::set<std::string> sortedTexAbs;
                             std::set<std::string> sortedMatAbs;
+                            std::set<std::string> sortedAnimAbs;
                             std::unordered_map<std::string, std::string> meshLogicalByAbs;
                             std::unordered_map<std::string, std::string> texLogicalByAbs;
+                            std::unordered_map<std::string, std::string> animLogicalByAbs;
                             printf("[DreamcastBuild] loadedScenes count: %d\n", (int)loadedScenes.size());
                             for (const auto& ls : loadedScenes)
                             {
@@ -11268,6 +11273,21 @@ RenderImGuiOnly:
                                                 std::string logical = std::filesystem::path(sm.mesh).filename().string();
                                                 if (logical.empty()) logical = std::filesystem::path(key).filename().string();
                                                 meshLogicalByAbs[key] = logical;
+                                            }
+                                        }
+                                    }
+                                    if (!sm.vtxAnim.empty())
+                                    {
+                                        std::filesystem::path animAbs = std::filesystem::path(gProjectDir) / sm.vtxAnim;
+                                        if (std::filesystem::exists(animAbs))
+                                        {
+                                            std::string akey = normalizeAbsKey(animAbs);
+                                            sortedAnimAbs.insert(akey);
+                                            if (animLogicalByAbs.find(akey) == animLogicalByAbs.end())
+                                            {
+                                                std::string logical = std::filesystem::path(sm.vtxAnim).filename().string();
+                                                if (logical.empty()) logical = std::filesystem::path(akey).filename().string();
+                                                animLogicalByAbs[akey] = logical;
                                             }
                                         }
                                     }
@@ -11311,6 +11331,7 @@ RenderImGuiOnly:
 
                             std::unordered_map<std::string, std::string> stagedMeshByAbs;
                             std::unordered_map<std::string, std::string> stagedTexByAbs;
+                            std::unordered_map<std::string, std::string> stagedAnimByAbs;
                             std::unordered_map<std::string, std::string> stagedSceneByAbs;
                             std::vector<std::pair<std::string, std::string>> meshRefMapEntries;
                             std::vector<std::pair<std::string, std::string>> texRefMapEntries;
@@ -11381,6 +11402,28 @@ RenderImGuiOnly:
                                         std::error_code ec;
                                         std::filesystem::copy_file(std::filesystem::path(key), cdMatDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
                                         if (ec) continue;
+                                    }
+                                }
+                                if (!stagingNameCollision)
+                                {
+                                    std::unordered_map<std::string, std::string> animAbsByOutName;
+                                    int animOrdinal = 1;
+                                    for (const auto& key : sortedAnimAbs)
+                                    {
+                                        std::string outName = stageShortDiskNameFromAbsKey(key, "A", animOrdinal++);
+                                        auto hit = animAbsByOutName.find(outName);
+                                        if (hit != animAbsByOutName.end() && hit->second != key)
+                                        {
+                                            stagingNameCollision = true;
+                                            stagingNameCollisionMessage = std::string("[DreamcastBuild] ERROR: animation staging filename collision: ") + outName +
+                                                " <= " + hit->second + " | " + key;
+                                            break;
+                                        }
+                                        animAbsByOutName[outName] = key;
+                                        std::error_code ec;
+                                        std::filesystem::copy_file(std::filesystem::path(key), cdAnimDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
+                                        if (ec) continue;
+                                        stagedAnimByAbs[key] = outName;
                                     }
                                 }
                                 if (!stagingNameCollision)
@@ -11874,7 +11917,12 @@ RenderImGuiOnly:
                                 for (size_t si = 0; si < exportStatics.size() && si < 64; ++si)
                                 {
                                     std::string animDisk;
-                                    if (!exportStatics[si].vtxAnim.empty()) animDisk = std::filesystem::path(exportStatics[si].vtxAnim).filename().string();
+                                    if (!exportStatics[si].vtxAnim.empty())
+                                    {
+                                        std::string akey = normalizeAbsKey(std::filesystem::path(gProjectDir) / exportStatics[si].vtxAnim);
+                                        auto ait = stagedAnimByAbs.find(akey);
+                                        if (ait != stagedAnimByAbs.end()) animDisk = ait->second;
+                                    }
                                     mc << "\"" << animDisk << "\"";
                                     if (si + 1 < exportStatics.size() && si + 1 < 64) mc << ",";
                                 }
@@ -12029,7 +12077,7 @@ RenderImGuiOnly:
                                 mc << "  memset(meshRt, 0, sizeof(meshRt));\n";
                                 mc << "  static const uint16_t kFallbackWhite2x2[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };\n";
                                 mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=1; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
-                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded) continue; if(!sm->runtimeTest || !sm->animDisk[0]) continue; char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/anim/%s\",sm->animDisk); if(runtime_anim_load(ap,&rm->anim) && rm->anim.vertCount==rm->kVertCount){ dbgio_printf(\"[NEBULA][DC] runtimeTest anim loaded mesh=%d frames=%d fps=%.2f\\n\",mi,rm->anim.frameCount,rm->anim.fps); } else { runtime_anim_free(&rm->anim); } }\n";
+                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded) continue; if(!sm->runtimeTest || !sm->animDisk[0]) continue; char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); if(runtime_anim_load(ap,&rm->anim) && rm->anim.vertCount==rm->kVertCount){ dbgio_printf(\"[NEBULA][DC] runtimeTest anim loaded mesh=%d frames=%d fps=%.2f\\n\",mi,rm->anim.frameCount,rm->anim.fps); } else { runtime_anim_free(&rm->anim); } }\n";
                                 mc << "  int maxVertCount=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>maxVertCount) maxVertCount=meshRt[mi].kVertCount; }\n";
                                 mc << "  SV* gSv=NULL; uint8_t* gOk=NULL; V3* gCs=NULL;\n";
                                 mc << "  if(maxVertCount>0){ gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs){ free(gSv); free(gOk); free(gCs); gSv=NULL; gOk=NULL; gCs=NULL; maxVertCount=0; } }\n";
@@ -12196,7 +12244,7 @@ RenderImGuiOnly:
                                 mc << "      sceneReady = 0;\n";
                                 mc << "      for(int mi=0; mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; for(int s=0;s<MAX_SLOT;++s){ if(rm->slotTx[s]){ pvr_mem_free(rm->slotTx[s]); rm->slotTx[s]=0; } dc_free_tex(&rm->diskTex[s]); } if(rm->trisFlipped){ free(rm->trisFlipped); rm->trisFlipped=0; } if(rm->triUvFlipped){ free(rm->triUvFlipped); rm->triUvFlipped=0; } runtime_anim_free(&rm->anim); dc_free_mesh(&rm->diskMesh); memset(rm,0,sizeof(*rm)); }\n";
                                 mc << "      if (!metaOk) { dbgio_printf(\"[NEBULA][DC] Scene metadata switch failed\\n\"); }\n";
-                                mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=1; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded) continue; if(!sm->runtimeTest || !sm->animDisk[0]) continue; char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/anim/%s\",sm->animDisk); if(!(runtime_anim_load(ap,&rm->anim) && rm->anim.vertCount==rm->kVertCount)){ runtime_anim_free(&rm->anim); } } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs){ free(gSv); free(gOk); free(gCs); gSv=NULL; gOk=NULL; gCs=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_Game_OnSceneSwitch(gSceneName); } }\n";
+                                mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=1; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded) continue; if(!sm->runtimeTest || !sm->animDisk[0]) continue; char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); if(!(runtime_anim_load(ap,&rm->anim) && rm->anim.vertCount==rm->kVertCount)){ runtime_anim_free(&rm->anim); } } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs){ free(gSv); free(gOk); free(gCs); gSv=NULL; gOk=NULL; gCs=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_Game_OnSceneSwitch(gSceneName); } }\n";
                                 mc << "    }\n";
                                 mc << "    if (!sceneReady) {\n";
                                 mc << "      pvr_wait_ready(); pvr_scene_begin(); pvr_list_begin(PVR_LIST_OP_POLY); pvr_list_finish(); pvr_scene_finish(); thd_sleep(16); continue;\n";
@@ -16870,3 +16918,4 @@ RenderImGuiOnly:
     glfwTerminate();
     return 0;
 }
+

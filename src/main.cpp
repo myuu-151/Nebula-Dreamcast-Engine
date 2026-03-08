@@ -83,6 +83,8 @@ struct AnimBakeDiagnostics
 };
 static bool SampleMergedFbxVertices(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, double timeTicks, std::vector<Vec3>& outVerts, AnimBakeDiagnostics* outDiag = nullptr);
 static bool ComputeEmbeddedClipDiagnostics(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, float sampleFps, AnimBakeDiagnostics& outDiag);
+static const aiNode* ResolveSceneNodeByNameRobust(const aiScene* scene, const aiString& rawName);
+static const aiNodeAnim* AiFindChannel(const aiAnimation* anim, const aiString& name);
 static void DrawNebMeshMiniPreview(const struct NebMesh& mesh, const std::vector<Vec3>* posedVertices, const ImVec2& previewSize);
 static const struct NebMesh* GetNebMesh(const std::filesystem::path& path);
 static void CleanupNebMeshTopology(struct NebMesh& mesh, std::vector<uint32_t>* outProvMeshIndices = nullptr, std::vector<uint32_t>* outProvVertexIndices = nullptr);
@@ -3228,6 +3230,67 @@ static void DrawNebMeshInspectorWindow(float deltaTime)
         const AnimBakeDiagnostics& d = st.inspectorPlayback.diagnostics.skinning;
         ImGui::Text("Bones matched: %d/%d  unmatched: %d  channels: %d",
             d.matchedBones, d.totalBones, d.unmatchedBones, d.channelsFound);
+
+        if (st.embeddedScene && ImGui::CollapsingHeader("Bone match hierarchy", ImGuiTreeNodeFlags_None))
+        {
+            std::unordered_set<const aiNode*> matchedBones;
+            std::unordered_set<const aiNode*> visibleNodes;
+            for (unsigned int mi : st.embeddedMeta.meshIndices)
+            {
+                if (mi >= st.embeddedScene->mNumMeshes || !st.embeddedScene->mMeshes[mi]) continue;
+                const aiMesh* m = st.embeddedScene->mMeshes[mi];
+                for (unsigned int bi = 0; bi < m->mNumBones; ++bi)
+                {
+                    const aiBone* b = m->mBones[bi];
+                    if (!b) continue;
+                    const aiNode* bn = ResolveSceneNodeByNameRobust(st.embeddedScene, b->mName);
+                    if (!bn) continue;
+                    matchedBones.insert(bn);
+                    for (const aiNode* p = bn; p; p = p->mParent)
+                        visibleNodes.insert(p);
+                }
+            }
+
+            std::function<void(const aiNode*)> drawNode = [&](const aiNode* n)
+            {
+                if (!n || visibleNodes.find(n) == visibleNodes.end()) return;
+
+                bool hasVisibleChild = false;
+                for (unsigned int ci = 0; ci < n->mNumChildren; ++ci)
+                {
+                    if (visibleNodes.find(n->mChildren[ci]) != visibleNodes.end())
+                    {
+                        hasVisibleChild = true;
+                        break;
+                    }
+                }
+
+                const bool isMatchedBone = matchedBones.find(n) != matchedBones.end();
+                const bool hasChannel = (selectedEmbeddedAnim && AiFindChannel(selectedEmbeddedAnim, n->mName));
+                std::string label = n->mName.length > 0 ? n->mName.C_Str() : "<unnamed>";
+                if (isMatchedBone)
+                    label += hasChannel ? "  [bone|ch]" : "  [bone]";
+
+                ImGuiTreeNodeFlags flags = hasVisibleChild ? 0 : (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+                bool open = ImGui::TreeNodeEx((void*)n, flags, "%s", label.c_str());
+                if (hasVisibleChild && open)
+                {
+                    for (unsigned int ci = 0; ci < n->mNumChildren; ++ci)
+                        drawNode(n->mChildren[ci]);
+                    ImGui::TreePop();
+                }
+            };
+
+            if (!matchedBones.empty())
+            {
+                drawNode(st.embeddedScene->mRootNode);
+                ImGui::TextDisabled("[bone] matched bone, [bone|ch] matched with animation channel");
+            }
+            else
+            {
+                ImGui::TextDisabled("No matched bones found for selected embedded mesh set.");
+            }
+        }
     }
     if (!previewApplied)
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.45f, 1.0f), "%s", previewReason.c_str());

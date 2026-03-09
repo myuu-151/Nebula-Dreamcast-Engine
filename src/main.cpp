@@ -2125,6 +2125,7 @@ struct NebAnimClip
     uint32_t targetMeshVertexCount = 0;
     uint32_t targetMeshHash = 0;
     bool hasEmbeddedMap = false;
+    bool meshAligned = false;
     std::vector<uint32_t> embeddedMapIndices;
     bool valid = false;
     std::vector<std::vector<Vec3>> frames;
@@ -4929,11 +4930,21 @@ static bool ExportNebMesh(
         {
             aiVector3D p = mesh->mVertices[v];
             Vec3 pv{ p.x, p.y, p.z };
-            exportMesh.positions.push_back(ApplyImportBasis(pv));
+            Vec3 bp = ApplyImportBasis(pv);
+            // Pre-quantize to S16 8.8 grid so CleanupNebMeshTopology operates on
+            // the same precision as the stored format. This prevents LoadNebMesh's
+            // second cleanup from finding new merges and changing vertex order.
+            exportMesh.positions.push_back(Vec3{
+                (float)ToS16Fixed8_8(bp.x) / 256.0f,
+                (float)ToS16Fixed8_8(bp.y) / 256.0f,
+                (float)ToS16Fixed8_8(bp.z) / 256.0f });
             if (exportMesh.hasUv)
             {
                 aiVector3D uv = meshHasUv ? mesh->mTextureCoords[uvCh][v] : aiVector3D(0, 0, 0);
-                exportMesh.uvs.push_back(Vec3{ uv.x, uv.y, 0.0f });
+                exportMesh.uvs.push_back(Vec3{
+                    (float)ToS16Fixed8_8(uv.x) / 256.0f,
+                    (float)ToS16Fixed8_8(uv.y) / 256.0f,
+                    0.0f });
             }
             provenanceMeshIndices.push_back((uint32_t)m);
             provenanceVertexIndices.push_back((uint32_t)v);
@@ -6155,6 +6166,7 @@ static bool LoadNebAnimClip(const std::filesystem::path& path, NebAnimClip& outC
 
         const bool hasMap = (flags & 2u) != 0;
         outClip.hasEmbeddedMap = hasMap;
+        outClip.meshAligned = (flags & 4u) != 0;
         if (hasMap)
         {
             uint32_t mapCount = 0;
@@ -7102,7 +7114,7 @@ static uint32_t HashNebMeshLayoutCrc32(const NebMesh& mesh)
     return ~crc;
 }
 
-static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, const std::filesystem::path& outPath, std::string& warning, bool deltaCompress, uint32_t forcedVertexCount = 0, const NebMesh* forcedTargetMesh = nullptr, const std::vector<uint32_t>* forcedMapIndices = nullptr, float sampleRateMultiplier = 1.0f)
+static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, const std::vector<unsigned int>& meshIndices, const std::filesystem::path& outPath, std::string& warning, bool deltaCompress, uint32_t forcedVertexCount = 0, const NebMesh* forcedTargetMesh = nullptr, const std::vector<uint32_t>* forcedMapIndices = nullptr, float sampleRateMultiplier = 1.0f, bool meshLocalSpace = false)
 {
     if (!scene || !anim || scene->mNumMeshes == 0 || meshIndices.empty()) return false;
 
@@ -7154,6 +7166,86 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     }
     if (refs.empty() || totalVerts == 0) return false;
 
+    // Rebuild the exact vertex array that ExportNebMesh + LoadNebMesh produces,
+    // using the same UV channel selection, S16 quantization, and cleanup. The cleanup's
+    // provenance tracking gives us the guaranteed-correct FBX-to-nebmesh mapping.
+    auto s16snap = [](float v) -> float {
+        float scaled = v * 256.0f;
+        if (scaled > 32767.0f) scaled = 32767.0f;
+        if (scaled < -32768.0f) scaled = -32768.0f;
+        return (float)((int16_t)std::lround(scaled)) / 256.0f;
+    };
+
+    // Select best UV channel per mesh (same logic as ExportNebMesh).
+    std::vector<int> meshUvChannel(scene->mNumMeshes, -1);
+    bool anyUv = false;
+    for (unsigned int mi : meshIndices)
+    {
+        if (mi >= scene->mNumMeshes) continue;
+        const aiMesh* mesh = scene->mMeshes[mi];
+        if (!mesh) continue;
+        int bestCh = -1;
+        float bestSpan = -1.0f;
+        for (int ch = 0; ch < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++ch)
+        {
+            if (!(mesh->HasTextureCoords(ch) && mesh->mNumUVComponents[ch] >= 2)) continue;
+            float minU = mesh->mTextureCoords[ch][0].x, maxU = minU;
+            float minV = mesh->mTextureCoords[ch][0].y, maxV = minV;
+            for (unsigned int v = 1; v < mesh->mNumVertices; ++v)
+            {
+                aiVector3D uv = mesh->mTextureCoords[ch][v];
+                minU = std::min(minU, uv.x); maxU = std::max(maxU, uv.x);
+                minV = std::min(minV, uv.y); maxV = std::max(maxV, uv.y);
+            }
+            float span = (maxU - minU) + (maxV - minV);
+            if (span > bestSpan) { bestSpan = span; bestCh = ch; }
+        }
+        meshUvChannel[mi] = bestCh;
+        if (bestCh >= 0) anyUv = true;
+    }
+
+    // Build virtual nebmesh with S16-snapped positions + UVs and provenance.
+    NebMesh virtualMesh;
+    virtualMesh.hasUv = anyUv;
+    std::vector<uint32_t> provMeshIdx, provVertIdx;
+    std::vector<uint32_t> meshStartInFlat;
+    {
+        uint32_t flatStart = 0;
+        size_t refI = 0;
+        for (unsigned int mi : meshIndices)
+        {
+            if (mi >= scene->mNumMeshes) continue;
+            const aiMesh* mesh = scene->mMeshes[mi];
+            if (!mesh) continue;
+            meshStartInFlat.push_back(flatStart);
+            int uvCh = meshUvChannel[mi];
+            bool meshHasUv = (uvCh >= 0 && mesh->HasTextureCoords(uvCh) && mesh->mNumUVComponents[uvCh] >= 2);
+            for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+            {
+                aiVector3D p = mesh->mVertices[v];
+                Vec3 bp = ApplyImportBasis(Vec3{ p.x, p.y, p.z });
+                virtualMesh.positions.push_back(Vec3{ s16snap(bp.x), s16snap(bp.y), s16snap(bp.z) });
+                if (anyUv)
+                {
+                    if (meshHasUv)
+                    {
+                        aiVector3D uv = mesh->mTextureCoords[uvCh][v];
+                        virtualMesh.uvs.push_back(Vec3{ s16snap(uv.x), s16snap(uv.y), 0.0f });
+                    }
+                    else
+                        virtualMesh.uvs.push_back(Vec3{ 0.0f, 0.0f, 0.0f });
+                }
+                provMeshIdx.push_back(refI);
+                provVertIdx.push_back(v);
+            }
+            flatStart += mesh->mNumVertices;
+            ++refI;
+        }
+    }
+
+    // Run the same cleanup as ExportNebMesh + LoadNebMesh to get deduplicated vertex order.
+    CleanupNebMeshTopology(virtualMesh, &provMeshIdx, &provVertIdx);
+
     double tps = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 24.0;
     double durationTicks = anim->mDuration;
     double durationSec = (tps > 0.0) ? (durationTicks / tps) : 0.0;
@@ -7177,13 +7269,57 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     uint32_t version = 4;
     uint32_t vertexCount = (forcedVertexCount > 0) ? forcedVertexCount : totalVerts;
 
-    // Optional deterministic remap (e.g. provenance/exact map from target .nebmesh meta).
+    // Use the virtual mesh rebuild + provenance to compute the exact FBX->nebmesh mapping.
+    // This is guaranteed correct because it uses the same code path as ExportNebMesh.
     std::vector<uint32_t> sourceIndexForOutput;
-    if (forcedMapIndices && forcedMapIndices->size() == vertexCount)
+    if (!virtualMesh.positions.empty() && !provMeshIdx.empty() &&
+        provMeshIdx.size() == virtualMesh.positions.size())
+    {
+        // Convert provenance (ref index + local vertex) to flat FBX bind-pose index.
+        sourceIndexForOutput.resize(virtualMesh.positions.size());
+        for (uint32_t i = 0; i < (uint32_t)virtualMesh.positions.size(); ++i)
+        {
+            uint32_t ri = provMeshIdx[i];
+            uint32_t vi = provVertIdx[i];
+            uint32_t flatIdx = (ri < meshStartInFlat.size()) ? (meshStartInFlat[ri] + vi) : vi;
+            sourceIndexForOutput[i] = flatIdx;
+        }
+        vertexCount = (uint32_t)virtualMesh.positions.size();
+        // Don't set meshLocalSpace — invMeshGlobal rotation causes orientation
+        // mismatch in both editor and DC. The embedded map provides correct
+        // vertex ordering; BB normalization handles the rest.
+        printf("[AnimExport] Rebuild-provenance: %u vertices mapped (from %u FBX verts)\n",
+               vertexCount, totalVerts);
+    }
+
+    // Fallback: use explicit map indices if rebuild didn't succeed.
+    if (sourceIndexForOutput.empty() && forcedMapIndices && forcedMapIndices->size() == vertexCount)
         sourceIndexForOutput = *forcedMapIndices;
 
     const bool hasEmbeddedMap = !sourceIndexForOutput.empty() && sourceIndexForOutput.size() == vertexCount;
-    uint32_t flags = (deltaCompress ? 1u : 0u) | (hasEmbeddedMap ? 2u : 0u);
+
+    aiMatrix4x4 identity;
+
+    std::vector<aiMatrix4x4> invMeshGlobalStatic(refs.size());
+    if (meshLocalSpace)
+    {
+        for (size_t ri = 0; ri < refs.size(); ++ri)
+        {
+            aiMatrix4x4 mg;
+            if (AiFindNodeGlobal(scene->mRootNode, anim, 0.0, identity, refs[ri].node, mg))
+            {
+                if (std::fabs(mg.Determinant()) < 1e-8f)
+                {
+                    meshLocalSpace = false;
+                    break;
+                }
+                invMeshGlobalStatic[ri] = mg;
+                invMeshGlobalStatic[ri].Inverse();
+            }
+        }
+    }
+
+    uint32_t flags = (deltaCompress ? 1u : 0u) | (hasEmbeddedMap ? 2u : 0u) | (meshLocalSpace ? 4u : 0u);
     uint32_t frames = frameCount;
     uint32_t fpsFixed = ToFixed16_16(fps);
     const uint32_t deltaFracBits = 8;
@@ -7196,7 +7332,6 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     WriteU32BE(out, fpsFixed);
     if (version >= 3) WriteU32BE(out, deltaFracBits);
 
-    aiMatrix4x4 identity;
     std::vector<aiVector3D> prev;
     prev.resize(vertexCount);
 
@@ -7211,8 +7346,9 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
         std::vector<aiVector3D> frameVerts;
         frameVerts.reserve(totalVerts);
 
-        for (const auto& r : refs)
+        for (size_t refIdx = 0; refIdx < refs.size(); ++refIdx)
         {
+            const auto& r = refs[refIdx];
             aiMatrix4x4 meshGlobal;
             AiFindNodeGlobal(scene->mRootNode, anim, timeTicks, identity, r.node, meshGlobal);
 
@@ -7253,6 +7389,7 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
                     tp = AiTransformPoint(meshGlobal, p);
                 }
 
+                if (meshLocalSpace) tp = AiTransformPoint(invMeshGlobalStatic[refIdx], tp);
                 Vec3 tv = ApplyImportBasis(Vec3{ tp.x, tp.y, tp.z });
                 frameVerts.push_back(aiVector3D(tv.x, tv.y, tv.z));
             }
@@ -7323,6 +7460,268 @@ static bool ExportNebAnimation(const aiScene* scene, const aiAnimation* anim, co
     }
 
     return true;
+}
+
+// Write a .nebanim with frame data remapped to mesh vertex order for Dreamcast.
+// remap[meshVi] = animVi (-1 if unmatched, uses fallback).
+static bool WriteRemappedNebAnim(
+    const std::filesystem::path& outPath,
+    const NebAnimClip& clip,
+    const std::vector<int>& remap,
+    uint32_t newVertexCount)
+{
+    if (!clip.valid || clip.frames.empty() || newVertexCount == 0) return false;
+    std::ofstream out(outPath, std::ios::binary | std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+
+    const bool deltaCompress = (clip.flags & 1u) != 0;
+    const uint32_t deltaFracBits = std::min<uint32_t>(clip.deltaFracBits, 15u);
+    const char magic[4] = { 'N','E','B','0' };
+    uint32_t version = 4;
+    uint32_t flags = deltaCompress ? 1u : 0u; // no embedded map needed — already in mesh order
+    uint32_t frameCount = clip.frameCount;
+    uint32_t fpsFixed = ToFixed16_16(clip.fps);
+
+    out.write(magic, 4);
+    WriteU32BE(out, version);
+    WriteU32BE(out, flags);
+    WriteU32BE(out, newVertexCount);
+    WriteU32BE(out, frameCount);
+    WriteU32BE(out, fpsFixed);
+    WriteU32BE(out, deltaFracBits);
+
+    std::vector<Vec3> prev(newVertexCount, Vec3{0,0,0});
+    for (uint32_t f = 0; f < frameCount; ++f)
+    {
+        const std::vector<Vec3>& srcFrame = (f < clip.frames.size()) ? clip.frames[f] : clip.frames[0];
+        for (uint32_t vi = 0; vi < newVertexCount; ++vi)
+        {
+            Vec3 pos = {0,0,0};
+            int srcIdx = (vi < remap.size()) ? remap[vi] : -1;
+            if (srcIdx >= 0 && srcIdx < (int)srcFrame.size())
+                pos = srcFrame[srcIdx];
+            else if (!srcFrame.empty())
+                pos = srcFrame[0];
+
+            if (!deltaCompress || f == 0)
+            {
+                WriteS32BE(out, ToFixed16_16(pos.x));
+                WriteS32BE(out, ToFixed16_16(pos.y));
+                WriteS32BE(out, ToFixed16_16(pos.z));
+            }
+            else
+            {
+                float dx = pos.x - prev[vi].x;
+                float dy = pos.y - prev[vi].y;
+                float dz = pos.z - prev[vi].z;
+                float scale = (float)(1u << deltaFracBits);
+                auto toDelta = [&](float val) -> int16_t {
+                    float scaled = val * scale;
+                    if (scaled > 32767.0f) scaled = 32767.0f;
+                    if (scaled < -32768.0f) scaled = -32768.0f;
+                    return (int16_t)std::lround(scaled);
+                };
+                WriteS16BE(out, toDelta(dx));
+                WriteS16BE(out, toDelta(dy));
+                WriteS16BE(out, toDelta(dz));
+            }
+            prev[vi] = pos;
+        }
+    }
+
+    // v4 trailer (no embedded map)
+    WriteU32BE(out, newVertexCount);
+    WriteU32BE(out, 0u);
+    return true;
+}
+
+// Stage a .nebanim remapped to match the target .nebmesh vertex order.
+// Uses the .nebanim v4 embedded map (animVi -> FBX source index) to align
+// the animation's FBX-source-ordered vertices with the mesh's dedup-ordered
+// vertices. Both sequences are sorted subsets of {0..N-1} with different gaps.
+static bool StageRemappedNebAnim(
+    const std::filesystem::path& srcAnimPath,
+    const std::filesystem::path& dstAnimPath,
+    const std::filesystem::path& meshAbsPath)
+{
+    NebAnimClip clip;
+    std::string err;
+    if (!LoadNebAnimClip(srcAnimPath, clip, err) || !clip.valid || clip.frames.empty())
+        return false;
+
+    if (clip.meshAligned)
+    {
+        printf("[DreamcastBuild]   anim remap: mesh-aligned (no remap needed)\n");
+        return false; // plain copy is fine — already in mesh-local space + vertex order
+    }
+
+    NebMesh mesh;
+    if (!LoadNebMesh(meshAbsPath, mesh) || !mesh.valid || mesh.positions.empty())
+        return false;
+
+    uint32_t meshVC = (uint32_t)mesh.positions.size();
+    uint32_t animVC = clip.vertexCount;
+    if (animVC == 0 || meshVC == 0)
+        return false;
+
+    // If counts match, identity remap (no change needed).
+    if (meshVC == animVC)
+    {
+        printf("[DreamcastBuild]   anim remap: identity (mesh==anim==%d)\n", (int)meshVC);
+        return false; // plain copy is fine
+    }
+
+    // Need the v4 embedded map to do provenance-based alignment.
+    if (!clip.hasEmbeddedMap || clip.embeddedMapIndices.size() != animVC)
+    {
+        printf("[DreamcastBuild]   anim remap: no embedded map, falling back to copy\n");
+        return false;
+    }
+
+    // Build inverse map: FBX source index -> anim vertex index
+    // anim_fbx[ai] = embeddedMapIndices[ai] (FBX source for each anim vertex)
+    const std::vector<uint32_t>& animFbx = clip.embeddedMapIndices;
+    uint32_t maxFbxSrc = 0;
+    for (uint32_t ai = 0; ai < animVC; ++ai)
+        if (animFbx[ai] > maxFbxSrc) maxFbxSrc = animFbx[ai];
+    const uint32_t totalFbxVerts = maxFbxSrc + 1;
+
+    std::vector<int> fbxToAnim(totalFbxVerts, -1);
+    for (uint32_t ai = 0; ai < animVC; ++ai)
+        fbxToAnim[animFbx[ai]] = (int)ai;
+
+    // Find the FBX source indices that the ANIMATION excludes (its gaps).
+    std::vector<uint32_t> animGaps;
+    for (uint32_t s = 0; s < totalFbxVerts; ++s)
+        if (fbxToAnim[s] < 0) animGaps.push_back(s);
+
+    // The mesh has meshVC vertices from totalFbxVerts FBX sources.
+    // meshVC = totalFbxVerts - meshGapCount, so meshGapCount = totalFbxVerts - meshVC.
+    uint32_t meshGapCount = totalFbxVerts - meshVC;
+    if (meshGapCount > animGaps.size() + 10)
+    {
+        printf("[DreamcastBuild]   anim remap: gap count mismatch (meshGaps=%d animGaps=%zu), falling back\n",
+            (int)meshGapCount, animGaps.size());
+        return false;
+    }
+
+    // The mesh gaps are a SUBSET of the animation gaps (mesh keeps some vertices
+    // that the anim doesn't have). Try all combinations of which animGaps are
+    // also mesh gaps. For small gap counts this is tractable.
+    // meshGapCount gaps must be chosen from totalFbxVerts possibilities.
+    // But we expect meshGapCount to be close to animGaps.size() (usually 1 fewer).
+    // Optimization: if meshGapCount == animGaps.size() - 1, we try removing each
+    // animGap one at a time. If meshGapCount == animGaps.size(), it's identity.
+
+    auto buildRemap = [&](const std::set<uint32_t>& meshGapSet) -> std::vector<int>
+    {
+        // Build mesh FBX source sequence (sorted, gaps removed)
+        // Then align with animation FBX source sequence using two-pointer.
+        std::vector<int> remap(meshVC, -1);
+        uint32_t mi = 0, ai = 0;
+        for (uint32_t fbxSrc = 0; fbxSrc < totalFbxVerts && mi < meshVC; ++fbxSrc)
+        {
+            bool inMesh = (meshGapSet.find(fbxSrc) == meshGapSet.end());
+            bool inAnim = (fbxToAnim[fbxSrc] >= 0);
+            if (inMesh && inAnim)
+            {
+                remap[mi] = fbxToAnim[fbxSrc];
+                ++mi;
+                ++ai;
+            }
+            else if (inMesh && !inAnim)
+            {
+                // Mesh has this vertex but animation doesn't — extra mesh vertex.
+                // Map to nearest valid anim index (previous or next).
+                remap[mi] = (ai > 0) ? (int)(ai - 1) : 0;
+                ++mi;
+            }
+            else if (!inMesh && inAnim)
+            {
+                // Animation has this but mesh doesn't — skip in anim.
+                ++ai;
+            }
+            // else: neither has it — skip
+        }
+        return remap;
+    };
+
+    auto countIdentity = [](const std::vector<int>& remap) -> int
+    {
+        int c = 0;
+        for (size_t i = 0; i < remap.size(); ++i)
+            if (remap[i] == (int)i) ++c;
+        return c;
+    };
+
+    std::vector<int> bestRemap;
+    int bestIdentity = -1;
+    uint32_t bestExtra = UINT32_MAX;
+
+    if (meshGapCount == animGaps.size())
+    {
+        // Same gap count — mesh and anim have the same FBX source set.
+        // This shouldn't happen (they'd have the same vertex count), but handle it.
+        std::set<uint32_t> gapSet(animGaps.begin(), animGaps.end());
+        bestRemap = buildRemap(gapSet);
+        bestIdentity = countIdentity(bestRemap);
+    }
+    else if (meshGapCount < animGaps.size())
+    {
+        // Mesh has FEWER gaps than anim — mesh keeps some extra FBX vertices.
+        // The mesh gaps are a subset of the anim gaps. Try removing each
+        // combination of (animGaps.size() - meshGapCount) gaps from the anim gap set.
+        uint32_t extraCount = (uint32_t)(animGaps.size() - meshGapCount);
+        if (extraCount <= 3 && animGaps.size() <= 20)
+        {
+            // Try each combination — for small counts, enumerate.
+            // Most common case: extraCount == 1, animGaps.size() == 2.
+            for (size_t skip = 0; skip < animGaps.size(); ++skip)
+            {
+                if (extraCount == 1)
+                {
+                    // Remove one gap from the anim gaps to get the mesh gaps.
+                    std::set<uint32_t> meshGapSet;
+                    for (size_t g = 0; g < animGaps.size(); ++g)
+                        if (g != skip) meshGapSet.insert(animGaps[g]);
+                    auto remap = buildRemap(meshGapSet);
+                    int identity = countIdentity(remap);
+                    if (identity > bestIdentity)
+                    {
+                        bestRemap = remap;
+                        bestIdentity = identity;
+                        bestExtra = animGaps[skip];
+                    }
+                }
+            }
+        }
+        if (bestRemap.empty())
+        {
+            // Fallback: assume mesh gaps = first meshGapCount entries of animGaps.
+            std::set<uint32_t> meshGapSet(animGaps.begin(), animGaps.begin() + meshGapCount);
+            bestRemap = buildRemap(meshGapSet);
+            bestIdentity = countIdentity(bestRemap);
+        }
+    }
+    else
+    {
+        // Mesh has MORE gaps than anim — mesh excludes vertices the anim includes.
+        // This is unusual. Fall back to trying animGaps as the mesh gap set,
+        // plus additional gaps chosen to fill the remaining count.
+        printf("[DreamcastBuild]   anim remap: mesh has more gaps than anim, falling back\n");
+        return false;
+    }
+
+    if (bestRemap.empty() || bestRemap.size() != meshVC)
+    {
+        printf("[DreamcastBuild]   anim remap: failed to build remap\n");
+        return false;
+    }
+
+    printf("[DreamcastBuild]   anim remap: provenance-aligned mesh=%d anim=%d identity=%d/%d extra_fbx=%u\n",
+        (int)meshVC, (int)animVC, bestIdentity, (int)meshVC, bestExtra);
+
+    return WriteRemappedNebAnim(dstAnimPath, clip, bestRemap, meshVC);
 }
 
 static Mat4 Mat4Perspective(float fovyRadians, float aspect, float znear, float zfar)
@@ -9516,7 +9915,7 @@ int main(int, char**)
                         if (LoadNebAnimClip(animPath, clip, err))
                             it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
                     }
-                    if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.vertexCount == mesh->positions.size() && !it->second.frames.empty())
+                    if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.vertexCount <= mesh->positions.size() && !it->second.frames.empty())
                     {
                         int frame = 0;
                         if (gPlayMode && s.runtimeTest)
@@ -9534,38 +9933,49 @@ int main(int, char**)
 
                         const std::vector<Vec3>& f0 = it->second.frames[0];
                         const std::vector<Vec3>& ff = it->second.frames[(size_t)frame];
-                        if (f0.size() == mesh->positions.size() && ff.size() == mesh->positions.size())
+                        const size_t nv = std::min(f0.size(), std::min(ff.size(), mesh->positions.size()));
+                        if (nv > 0)
                         {
-                            Vec3 bMin = mesh->positions[0], bMax = mesh->positions[0], bC = {0,0,0};
-                            Vec3 aMin = f0[0], aMax = f0[0], aC = {0,0,0};
-                            for (size_t vi = 0; vi < mesh->positions.size(); ++vi)
-                            {
-                                const Vec3& bp = mesh->positions[vi];
-                                const Vec3& ap = f0[vi];
-                                bC.x += bp.x; bC.y += bp.y; bC.z += bp.z;
-                                aC.x += ap.x; aC.y += ap.y; aC.z += ap.z;
-                                bMin.x = std::min(bMin.x, bp.x); bMin.y = std::min(bMin.y, bp.y); bMin.z = std::min(bMin.z, bp.z);
-                                bMax.x = std::max(bMax.x, bp.x); bMax.y = std::max(bMax.y, bp.y); bMax.z = std::max(bMax.z, bp.z);
-                                aMin.x = std::min(aMin.x, ap.x); aMin.y = std::min(aMin.y, ap.y); aMin.z = std::min(aMin.z, ap.z);
-                                aMax.x = std::max(aMax.x, ap.x); aMax.y = std::max(aMax.y, ap.y); aMax.z = std::max(aMax.z, ap.z);
-                            }
-                            const float invN = 1.0f / (float)mesh->positions.size();
-                            bC.x *= invN; bC.y *= invN; bC.z *= invN;
-                            aC.x *= invN; aC.y *= invN; aC.z *= invN;
-
-                            const float bDiag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
-                            const float aDiag = sqrtf((aMax.x-aMin.x)*(aMax.x-aMin.x) + (aMax.y-aMin.y)*(aMax.y-aMin.y) + (aMax.z-aMin.z)*(aMax.z-aMin.z));
-                            float absScale = 1.0f;
-                            if (aDiag > 1e-6f && bDiag > 1e-6f)
-                                absScale = bDiag / aDiag;
-
                             staticAnimPosed.resize(mesh->positions.size());
-                            for (size_t vi = 0; vi < mesh->positions.size(); ++vi)
+                            if (it->second.meshAligned)
                             {
-                                staticAnimPosed[vi].x = bC.x + (ff[vi].x - aC.x) * absScale;
-                                staticAnimPosed[vi].y = bC.y + (ff[vi].y - aC.y) * absScale;
-                                staticAnimPosed[vi].z = bC.z + (ff[vi].z - aC.z) * absScale;
+                                for (size_t vi = 0; vi < nv; ++vi)
+                                    staticAnimPosed[vi] = ff[vi];
                             }
+                            else
+                            {
+                                Vec3 bMin = mesh->positions[0], bMax = mesh->positions[0], bC = {0,0,0};
+                                Vec3 aMin = f0[0], aMax = f0[0], aC = {0,0,0};
+                                for (size_t vi = 0; vi < nv; ++vi)
+                                {
+                                    const Vec3& bp = mesh->positions[vi];
+                                    const Vec3& ap = f0[vi];
+                                    bC.x += bp.x; bC.y += bp.y; bC.z += bp.z;
+                                    aC.x += ap.x; aC.y += ap.y; aC.z += ap.z;
+                                    bMin.x = std::min(bMin.x, bp.x); bMin.y = std::min(bMin.y, bp.y); bMin.z = std::min(bMin.z, bp.z);
+                                    bMax.x = std::max(bMax.x, bp.x); bMax.y = std::max(bMax.y, bp.y); bMax.z = std::max(bMax.z, bp.z);
+                                    aMin.x = std::min(aMin.x, ap.x); aMin.y = std::min(aMin.y, ap.y); aMin.z = std::min(aMin.z, ap.z);
+                                    aMax.x = std::max(aMax.x, ap.x); aMax.y = std::max(aMax.y, ap.y); aMax.z = std::max(aMax.z, ap.z);
+                                }
+                                const float invN = 1.0f / (float)nv;
+                                bC.x *= invN; bC.y *= invN; bC.z *= invN;
+                                aC.x *= invN; aC.y *= invN; aC.z *= invN;
+
+                                const float bDiag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
+                                const float aDiag = sqrtf((aMax.x-aMin.x)*(aMax.x-aMin.x) + (aMax.y-aMin.y)*(aMax.y-aMin.y) + (aMax.z-aMin.z)*(aMax.z-aMin.z));
+                                float absScale = 1.0f;
+                                if (aDiag > 1e-6f && bDiag > 1e-6f)
+                                    absScale = bDiag / aDiag;
+
+                                for (size_t vi = 0; vi < nv; ++vi)
+                                {
+                                    staticAnimPosed[vi].x = bC.x + (ff[vi].x - aC.x) * absScale;
+                                    staticAnimPosed[vi].y = bC.y + (ff[vi].y - aC.y) * absScale;
+                                    staticAnimPosed[vi].z = bC.z + (ff[vi].z - aC.z) * absScale;
+                                }
+                            }
+                            for (size_t vi = nv; vi < mesh->positions.size(); ++vi)
+                                staticAnimPosed[vi] = mesh->positions[vi];
                             renderPositions = &staticAnimPosed;
                         }
                     }
@@ -11252,6 +11662,7 @@ RenderImGuiOnly:
                             std::unordered_map<std::string, std::string> meshLogicalByAbs;
                             std::unordered_map<std::string, std::string> texLogicalByAbs;
                             std::unordered_map<std::string, std::string> animLogicalByAbs;
+                            std::unordered_map<std::string, std::string> animMeshAbsByAnimAbs; // animKey -> meshKey
                             printf("[DreamcastBuild] loadedScenes count: %d\n", (int)loadedScenes.size());
                             for (const auto& ls : loadedScenes)
                             {
@@ -11283,6 +11694,12 @@ RenderImGuiOnly:
                                         {
                                             std::string akey = normalizeAbsKey(animAbs);
                                             sortedAnimAbs.insert(akey);
+                                            if (!sm.mesh.empty() && animMeshAbsByAnimAbs.find(akey) == animMeshAbsByAnimAbs.end())
+                                            {
+                                                std::filesystem::path mAbs = std::filesystem::path(gProjectDir) / sm.mesh;
+                                                if (std::filesystem::exists(mAbs))
+                                                    animMeshAbsByAnimAbs[akey] = normalizeAbsKey(mAbs);
+                                            }
                                             if (animLogicalByAbs.find(akey) == animLogicalByAbs.end())
                                             {
                                                 std::string logical = std::filesystem::path(sm.vtxAnim).filename().string();
@@ -11421,12 +11838,26 @@ RenderImGuiOnly:
                                             break;
                                         }
                                         animAbsByOutName[outName] = key;
-                                        std::error_code ec;
-                                        std::filesystem::copy_file(std::filesystem::path(key), cdAnimDir / outName, std::filesystem::copy_options::overwrite_existing, ec);
-                                        if (ec) continue;
+                                        std::filesystem::path dstPath = cdAnimDir / outName;
+                                        bool remapped = false;
+                                        auto meshIt = animMeshAbsByAnimAbs.find(key);
+                                        if (meshIt != animMeshAbsByAnimAbs.end())
+                                        {
+                                            remapped = StageRemappedNebAnim(
+                                                std::filesystem::path(key), dstPath,
+                                                std::filesystem::path(meshIt->second));
+                                            if (remapped)
+                                                printf("[DreamcastBuild]   staged anim (remapped): %s -> %s\n", key.c_str(), outName.c_str());
+                                        }
+                                        if (!remapped)
+                                        {
+                                            std::error_code ec;
+                                            std::filesystem::copy_file(std::filesystem::path(key), dstPath, std::filesystem::copy_options::overwrite_existing, ec);
+                                            if (ec) continue;
+                                            printf("[DreamcastBuild]   staged anim (copy): %s -> %s\n", key.c_str(), outName.c_str());
+                                        }
                                         stagedAnimByAbs[key] = outName;
                                         animStageMapEntries.push_back({ key, outName });
-                                        printf("[DreamcastBuild]   staged anim: %s -> %s\n", key.c_str(), outName.c_str());
                                     }
                                 }
                                 if (!stagingNameCollision)
@@ -12042,12 +12473,12 @@ RenderImGuiOnly:
                                 mc << "  v.flags = PVR_CMD_VERTEX; v.x=b.x; v.y=b.y; v.z=b.z; v.u=b.u; v.v=b.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
                                 mc << "  v.flags = PVR_CMD_VERTEX_EOL; v.x=c.x; v.y=c.y; v.z=c.z; v.u=c.u; v.v=c.v; v.argb=argb; v.oargb=0; pvr_prim(&v,sizeof(v));\n";
                                 mc << "}\n";
-                                mc << "typedef struct { int loaded; int vertCount; int frameCount; float fps; V3* frames; V3* posed; } RuntimeAnimClip;\n";
+                                mc << "typedef struct { int loaded; int vertCount; int frameCount; float fps; V3* frames; V3* posed; int16_t* remap; int remapCount; int meshAligned; } RuntimeAnimClip;\n";
                                 mc << "static int rd_u32be(FILE* f, uint32_t* out){ uint8_t b[4]; if(fread(b,1,4,f)!=4) return 0; *out=((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|((uint32_t)b[2]<<8)|(uint32_t)b[3]; return 1; }\n";
                                 mc << "static int rd_s32be(FILE* f, int32_t* out){ uint32_t u=0; if(!rd_u32be(f,&u)) return 0; *out=(int32_t)u; return 1; }\n";
                                 mc << "static int rd_s16be(FILE* f, int16_t* out){ uint8_t b[2]; if(fread(b,1,2,f)!=2) return 0; *out=(int16_t)(((uint16_t)b[0]<<8)|(uint16_t)b[1]); return 1; }\n";
-                                mc << "static void runtime_anim_free(RuntimeAnimClip* a){ if(!a) return; if(a->frames){ free(a->frames); a->frames=0; } if(a->posed){ free(a->posed); a->posed=0; } a->loaded=0; a->vertCount=0; a->frameCount=0; a->fps=0.0f; }\n";
-                                mc << "static int runtime_anim_load(const char* path, RuntimeAnimClip* out){ if(!path||!path[0]||!out) return 0; FILE* f=fopen(path,\"rb\"); if(!f) return 0; char m[4]; if(fread(m,1,4,f)!=4 || m[0]!='N'||m[1]!='E'||m[2]!='B'||m[3]!='0'){ fclose(f); return 0; } uint32_t ver=0,flags=0,vc=0,fc=0,fpsFx=0,frac=8; if(!rd_u32be(f,&ver)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&flags)){ fclose(f); return 0; } } if(!rd_u32be(f,&vc)||!rd_u32be(f,&fc)||!rd_u32be(f,&fpsFx)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&frac)){ fclose(f); return 0; } } if(vc==0||fc==0||vc>65535||fc>4096){ fclose(f); return 0; } V3* frames=(V3*)malloc((size_t)vc*(size_t)fc*sizeof(V3)); V3* posed=(V3*)malloc((size_t)vc*sizeof(V3)); if(!frames||!posed){ if(frames) free(frames); if(posed) free(posed); fclose(f); return 0; } const float inv16=1.0f/65536.0f; const float dinv=1.0f/(float)(1u<<(frac>24?24:frac)); int denc=(flags&1u)?1:0; for(uint32_t fr=0; fr<fc; ++fr){ for(uint32_t i=0;i<vc;++i){ V3 v={0,0,0}; if(!denc||fr==0){ int32_t x=0,y=0,z=0; if(!rd_s32be(f,&x)||!rd_s32be(f,&y)||!rd_s32be(f,&z)){ free(frames); free(posed); fclose(f); return 0; } v.x=(float)x*inv16; v.y=(float)y*inv16; v.z=(float)z*inv16; } else { int16_t dx=0,dy=0,dz=0; if(!rd_s16be(f,&dx)||!rd_s16be(f,&dy)||!rd_s16be(f,&dz)){ free(frames); free(posed); fclose(f); return 0; } V3 p=frames[(size_t)(fr-1u)*(size_t)vc+(size_t)i]; v.x=p.x+(float)dx*dinv; v.y=p.y+(float)dy*dinv; v.z=p.z+(float)dz*dinv; } frames[(size_t)fr*(size_t)vc+(size_t)i]=v; } } fclose(f); out->loaded=1; out->vertCount=(int)vc; out->frameCount=(int)fc; out->fps=(fpsFx>0)?((float)(int32_t)fpsFx*inv16):12.0f; if(out->fps<=0.001f) out->fps=12.0f; out->frames=frames; out->posed=posed; memcpy(out->posed, out->frames, (size_t)vc*sizeof(V3)); return 1; }\n";
+                                mc << "static void runtime_anim_free(RuntimeAnimClip* a){ if(!a) return; if(a->frames){ free(a->frames); a->frames=0; } if(a->posed){ free(a->posed); a->posed=0; } if(a->remap){ free(a->remap); a->remap=0; } a->loaded=0; a->vertCount=0; a->frameCount=0; a->fps=0.0f; a->remapCount=0; a->meshAligned=0; }\n";
+                                mc << "static int runtime_anim_load(const char* path, RuntimeAnimClip* out){ if(!path||!path[0]||!out) return 0; FILE* f=fopen(path,\"rb\"); if(!f) return 0; char m[4]; if(fread(m,1,4,f)!=4 || m[0]!='N'||m[1]!='E'||m[2]!='B'||m[3]!='0'){ fclose(f); return 0; } uint32_t ver=0,flags=0,vc=0,fc=0,fpsFx=0,frac=8; if(!rd_u32be(f,&ver)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&flags)){ fclose(f); return 0; } } if(!rd_u32be(f,&vc)||!rd_u32be(f,&fc)||!rd_u32be(f,&fpsFx)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&frac)){ fclose(f); return 0; } } if(vc==0||fc==0||vc>65535||fc>4096){ fclose(f); return 0; } V3* frames=(V3*)malloc((size_t)vc*(size_t)fc*sizeof(V3)); V3* posed=(V3*)malloc((size_t)vc*sizeof(V3)); if(!frames||!posed){ if(frames) free(frames); if(posed) free(posed); fclose(f); return 0; } const float inv16=1.0f/65536.0f; const float dinv=1.0f/(float)(1u<<(frac>24?24:frac)); int denc=(flags&1u)?1:0; for(uint32_t fr=0; fr<fc; ++fr){ for(uint32_t i=0;i<vc;++i){ V3 v={0,0,0}; if(!denc||fr==0){ int32_t x=0,y=0,z=0; if(!rd_s32be(f,&x)||!rd_s32be(f,&y)||!rd_s32be(f,&z)){ free(frames); free(posed); fclose(f); return 0; } v.x=(float)x*inv16; v.y=(float)y*inv16; v.z=(float)z*inv16; } else { int16_t dx=0,dy=0,dz=0; if(!rd_s16be(f,&dx)||!rd_s16be(f,&dy)||!rd_s16be(f,&dz)){ free(frames); free(posed); fclose(f); return 0; } V3 p=frames[(size_t)(fr-1u)*(size_t)vc+(size_t)i]; v.x=p.x+(float)dx*dinv; v.y=p.y+(float)dy*dinv; v.z=p.z+(float)dz*dinv; } frames[(size_t)fr*(size_t)vc+(size_t)i]=v; } } fclose(f); out->loaded=1; out->vertCount=(int)vc; out->frameCount=(int)fc; out->fps=(fpsFx>0)?((float)(int32_t)fpsFx*inv16):12.0f; if(out->fps<=0.001f) out->fps=12.0f; out->frames=frames; out->posed=posed; memcpy(out->posed, out->frames, (size_t)vc*sizeof(V3)); out->meshAligned=(flags&4u)?1:0; return 1; }\n";
                                 mc << "\n";
                                 mc << "int main(int argc, char **argv) {\n";
                                 mc << "  (void)argc; (void)argv;\n";
@@ -12297,7 +12728,7 @@ RenderImGuiOnly:
                                 mc << "      float rxr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
                                 mc << "      float ryr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[1]) : deg2rad(smRot[0]);\n";
                                 mc << "      float rzr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[2]) : deg2rad(smRot[1]);\n";
-                                mc << "      const V3* srcBase = rm->base; if(sm->runtimeTest && rm->anim.loaded && rm->anim.frames && rm->anim.posed && rm->anim.frameCount>0){ int af=(int)floorf(sRuntimeClock * rm->anim.fps); if(rm->anim.frameCount>0) af%=rm->anim.frameCount; if(af<0) af=0; const V3* f0=&rm->anim.frames[0]; const V3* fr=&rm->anim.frames[(size_t)af*(size_t)rm->anim.vertCount]; V3 bmin=rm->base[0], bmax=rm->base[0], bcen={0,0,0}, amin=f0[0], amax=f0[0], acen={0,0,0}; for(int vi=0; vi<rm->anim.vertCount; ++vi){ V3 bp=rm->base[vi], ap=f0[vi]; bcen.x+=bp.x; bcen.y+=bp.y; bcen.z+=bp.z; acen.x+=ap.x; acen.y+=ap.y; acen.z+=ap.z; if(bp.x<bmin.x)bmin.x=bp.x; if(bp.y<bmin.y)bmin.y=bp.y; if(bp.z<bmin.z)bmin.z=bp.z; if(bp.x>bmax.x)bmax.x=bp.x; if(bp.y>bmax.y)bmax.y=bp.y; if(bp.z>bmax.z)bmax.z=bp.z; if(ap.x<amin.x)amin.x=ap.x; if(ap.y<amin.y)amin.y=ap.y; if(ap.z<amin.z)amin.z=ap.z; if(ap.x>amax.x)amax.x=ap.x; if(ap.y>amax.y)amax.y=ap.y; if(ap.z>amax.z)amax.z=ap.z; } if(rm->anim.vertCount>0){ float inv=1.0f/(float)rm->anim.vertCount; bcen.x*=inv; bcen.y*=inv; bcen.z*=inv; acen.x*=inv; acen.y*=inv; acen.z*=inv; } float bd=sqrtf((bmax.x-bmin.x)*(bmax.x-bmin.x)+(bmax.y-bmin.y)*(bmax.y-bmin.y)+(bmax.z-bmin.z)*(bmax.z-bmin.z)); float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z)); float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f; for(int vi=0; vi<rm->anim.vertCount; ++vi){ rm->anim.posed[vi].x = bcen.x + (fr[vi].x - acen.x)*ds; rm->anim.posed[vi].y = bcen.y + (fr[vi].y - acen.y)*ds; rm->anim.posed[vi].z = bcen.z + (fr[vi].z - acen.z)*ds; } srcBase=rm->anim.posed; }\n";
+                                mc << "      const V3* srcBase = rm->base; if(sm->runtimeTest && rm->anim.loaded && rm->anim.frames && rm->anim.posed && rm->anim.frameCount>0){ int af=(int)floorf(sRuntimeClock * rm->anim.fps); if(rm->anim.frameCount>0) af%=rm->anim.frameCount; if(af<0) af=0; const V3* fr=&rm->anim.frames[(size_t)af*(size_t)rm->anim.vertCount]; int nv=rm->anim.vertCount; if(rm->anim.meshAligned){ for(int vi=0;vi<nv;++vi) rm->anim.posed[vi]=fr[vi]; } else { const V3* f0=&rm->anim.frames[0]; V3 bmin=rm->base[0], bmax=rm->base[0], bcen={0,0,0}, amin=f0[0], amax=f0[0], acen={0,0,0}; for(int vi=0; vi<nv; ++vi){ V3 bp=rm->base[vi], ap=f0[vi]; bcen.x+=bp.x; bcen.y+=bp.y; bcen.z+=bp.z; acen.x+=ap.x; acen.y+=ap.y; acen.z+=ap.z; if(bp.x<bmin.x)bmin.x=bp.x; if(bp.y<bmin.y)bmin.y=bp.y; if(bp.z<bmin.z)bmin.z=bp.z; if(bp.x>bmax.x)bmax.x=bp.x; if(bp.y>bmax.y)bmax.y=bp.y; if(bp.z>bmax.z)bmax.z=bp.z; if(ap.x<amin.x)amin.x=ap.x; if(ap.y<amin.y)amin.y=ap.y; if(ap.z<amin.z)amin.z=ap.z; if(ap.x>amax.x)amax.x=ap.x; if(ap.y>amax.y)amax.y=ap.y; if(ap.z>amax.z)amax.z=ap.z; } if(nv>0){ float inv=1.0f/(float)nv; bcen.x*=inv; bcen.y*=inv; bcen.z*=inv; acen.x*=inv; acen.y*=inv; acen.z*=inv; } float bd=sqrtf((bmax.x-bmin.x)*(bmax.x-bmin.x)+(bmax.y-bmin.y)*(bmax.y-bmin.y)+(bmax.z-bmin.z)*(bmax.z-bmin.z)); float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z)); float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f; for(int vi=0; vi<nv; ++vi){ rm->anim.posed[vi].x = bcen.x + (fr[vi].x - acen.x)*ds; rm->anim.posed[vi].y = bcen.y + (fr[vi].y - acen.y)*ds; rm->anim.posed[vi].z = bcen.z + (fr[vi].z - acen.z)*ds; } } for(int vi=nv;vi<rm->kVertCount;++vi) rm->anim.posed[vi]=rm->base[vi]; srcBase=rm->anim.posed; }\n";
                                 mc << "      for (int i=0;i<rm->kVertCount;++i){ V3 v = srcBase[i]; v.x *= sm->scale[0] * (float)gMirrorX; v.y *= sm->scale[1] * (float)gMirrorY; v.z *= sm->scale[2] * (float)gMirrorZ; v = rot_xyz(v, rxr, ryr, rzr); v.x += smPos[0]; v.y += smPos[1]; v.z += smPos[2]; cs[i] = w2c(v); ok[i] = proj_cs(cs[i], &sv[i]) ? 1 : 0; }\n";
                                 mc << "      float mirrorDet = (sm->scale[0] * (float)gMirrorX) * (sm->scale[1] * (float)gMirrorY) * (sm->scale[2] * (float)gMirrorZ);\n";
                                 mc << "      const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
@@ -15004,8 +15435,6 @@ RenderImGuiOnly:
 
                         uint32_t targetNebMeshVerts = 0;
                         NebMesh targetNebMesh;
-                        NebMeshEmbeddedAnimMeta targetMeta;
-                        bool targetMetaLoaded = false;
                         if (!gImportBaseNebMeshPath.empty())
                         {
                             std::filesystem::path nebPath = std::filesystem::path(gImportBaseNebMeshPath);
@@ -15017,7 +15446,6 @@ RenderImGuiOnly:
                             if (LoadNebMesh(nebPath, targetNebMesh) && targetNebMesh.valid)
                             {
                                 targetNebMeshVerts = (uint32_t)targetNebMesh.positions.size();
-                                targetMetaLoaded = LoadNebMeshEmbeddedMeta(nebPath, targetMeta);
                             }
                             else
                             {
@@ -15053,18 +15481,10 @@ RenderImGuiOnly:
 
                             std::filesystem::path outPath = animDir / (base + "_" + animName + ".nebanim");
                             std::string warn;
-                            const std::vector<uint32_t>* forcedMap = nullptr;
-                            if (gImportUseProvenanceMapping && targetMetaLoaded && targetMeta.mappingQuality == "exact" &&
-                                targetMeta.mapIndices.size() == targetNebMeshVerts)
-                            {
-                                forcedMap = &targetMeta.mapIndices;
-                            }
-                            else if (gImportUseProvenanceMapping && targetNebMeshVerts > 0)
-                            {
-                                if (!gImportWarning.empty()) gImportWarning += " | ";
-                                gImportWarning += animName + ": exact provenance map unavailable; using direct index order";
-                            }
-                            if (ExportNebAnimation(gImportScene, anim, meshIndices, outPath, warn, gImportDeltaCompress, targetNebMeshVerts, targetNebMesh.valid ? &targetNebMesh : nullptr, forcedMap, gImportDoubleSampleRate ? 2.0f : 1.0f))
+                            if (ExportNebAnimation(gImportScene, anim, meshIndices, outPath, warn,
+                                gImportDeltaCompress, targetNebMeshVerts,
+                                targetNebMesh.valid ? &targetNebMesh : nullptr, nullptr,
+                                gImportDoubleSampleRate ? 2.0f : 1.0f, false))
                             {
                                 exported++;
                                 if (!warn.empty())

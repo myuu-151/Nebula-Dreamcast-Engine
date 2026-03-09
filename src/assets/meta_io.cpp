@@ -130,12 +130,7 @@ namespace NebulaAssets
         return LoadMaterialFloatField(matPath, "shadow_intensity", 1.0f);
     }
 
-    int LoadMaterialShadingUv(const std::filesystem::path& matPath)
-    {
-        return LoadMaterialIntField(matPath, "shading_uv", -1);
-    }
-
-    bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity, int shadingUv)
+    bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity)
     {
         std::ofstream out(matPath, std::ios::out | std::ios::trunc);
         if (!out.is_open()) return false;
@@ -152,7 +147,6 @@ namespace NebulaAssets
         out << "light_pitch=" << lightPitch << "\n";
         out << "light_roll=" << lightRoll << "\n";
         out << "shadow_intensity=" << shadowIntensity << "\n";
-        out << "shading_uv=" << shadingUv << "\n";
         return true;
     }
 
@@ -164,7 +158,6 @@ namespace NebulaAssets
         float su = 1.0f, sv = 1.0f, ou = 0.0f, ov = 0.0f, rotDeg = 0.0f;
         int shadingMode = 0;
         float lightRotation = 0.0f, lightPitch = 0.0f, lightRoll = 0.0f, shadowIntensity = 1.0f;
-        int shadingUv = -1;
     };
     static MatFields ReadAllMatFields(const std::filesystem::path& matPath)
     {
@@ -178,68 +171,61 @@ namespace NebulaAssets
         f.lightPitch = LoadMaterialLightPitch(matPath);
         f.lightRoll = LoadMaterialLightRoll(matPath);
         f.shadowIntensity = LoadMaterialShadowIntensity(matPath);
-        f.shadingUv = LoadMaterialShadingUv(matPath);
         return f;
     }
 
     bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialUvScale(const std::filesystem::path& matPath, float uvScale)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool allowUvRepeat)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialUvTransform(const std::filesystem::path& matPath, float su, float sv, float ou, float ov, float rotDeg)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, su, sv, ou, ov, rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, su, sv, ou, ov, rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialShadingMode(const std::filesystem::path& matPath, int mode)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, mode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, mode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialLightRotation(const std::filesystem::path& matPath, float rotation)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, rotation, f.lightPitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, rotation, f.lightPitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialLightPitch(const std::filesystem::path& matPath, float pitch)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, pitch, f.lightRoll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, pitch, f.lightRoll, f.shadowIntensity);
     }
 
     bool SaveMaterialLightRoll(const std::filesystem::path& matPath, float roll)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, roll, f.shadowIntensity, f.shadingUv);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, roll, f.shadowIntensity);
     }
 
     bool SaveMaterialShadowIntensity(const std::filesystem::path& matPath, float intensity)
     {
         auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, intensity, f.shadingUv);
-    }
-
-    bool SaveMaterialShadingUv(const std::filesystem::path& matPath, int uvIndex)
-    {
-        auto f = ReadAllMatFields(matPath);
-        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, f.shadowIntensity, uvIndex);
+        return SaveMaterialAllFields(matPath, f.tex, f.uvScale, f.allowUvRepeat, f.su, f.sv, f.ou, f.ov, f.rotDeg, f.shadingMode, f.lightRotation, f.lightPitch, f.lightRoll, intensity);
     }
 
     std::filesystem::path GetNebSlotsPathForMesh(const std::filesystem::path& absMeshPath)

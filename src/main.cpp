@@ -12726,7 +12726,7 @@ RenderImGuiOnly:
                                         const auto& sm = exportStatics[i];
                                         for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
                                         {
-                                            std::string matRef = GetStaticMeshMaterialByIndex(sm, si);
+                                            std::string matRef = (si >= 0 && si < kStaticMeshMaterialSlots) ? sm.materialSlots[si] : std::string();
                                             if (matRef.empty() && si == 0) matRef = sm.material;
                                             if (matRef.empty()) continue;
                                             std::filesystem::path matPath = std::filesystem::path(gProjectDir) / matRef;
@@ -12994,6 +12994,8 @@ RenderImGuiOnly:
                                 mc << "      const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
                                 mc << "      const uint16_t *tris = (mirroredWinding && rm->trisFlipped) ? rm->trisFlipped : rm->trisNormal;\n";
                                 mc << "      const V3 *triUv = (mirroredWinding && rm->triUvFlipped) ? rm->triUvFlipped : rm->triUvNormal;\n";
+                                mc << "      int meshShadeMode = 0; float meshShadeYaw = 0.0f, meshShadePitch = 35.0f, meshShadeShadow = 1.0f;\n";
+                                mc << "      if (mi < MAX_MESHES) { for (int ss=0; ss<MAX_SLOT; ++ss) { if (kMeshMatShadeMode[mi][ss]) { meshShadeMode = 1; meshShadeYaw = kMeshMatLightYaw[mi][ss]; meshShadePitch = kMeshMatLightPitch[mi][ss]; meshShadeShadow = kMeshMatShadowIntensity[mi][ss]; break; } } }\n";
                                 mc << "      for (int t=0;t<rm->kTriCount;++t){ int ia=tris[t*3+0], ib=tris[t*3+1], ic=tris[t*3+2]; if(ia<0||ib<0||ic<0||ia>=rm->kVertCount||ib>=rm->kVertCount||ic>=rm->kVertCount) continue; V3 a=cs[ia], b=cs[ib], c=cs[ic]; V3 e1=(V3){b.x-a.x,b.y-a.y,b.z-a.z}; V3 e2=(V3){c.x-a.x,c.y-a.y,c.z-a.z}; V3 fn=norm3(cross3(e1,e2)); nrm[ia].x+=fn.x; nrm[ia].y+=fn.y; nrm[ia].z+=fn.z; nrm[ib].x+=fn.x; nrm[ib].y+=fn.y; nrm[ib].z+=fn.z; nrm[ic].x+=fn.x; nrm[ic].y+=fn.y; nrm[ic].z+=fn.z; }\n";
                                 mc << "      for (int i=0;i<rm->kVertCount;++i) nrm[i]=norm3(nrm[i]);\n";
                                 mc << "      for (int t=0;t<rm->kTriCount;++t){\n";
@@ -13001,11 +13003,11 @@ RenderImGuiOnly:
                                 mc << "        int sid = (int)rm->triMatNormal[t]; if (sid < 0 || sid >= rm->slotCount) sid = 0; if (!rm->slotReady[sid]) continue;\n";
                                 mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
                                 mc << "        uint32 col = 0xFFFFFFFF, colA = 0xFFFFFFFF, colB = 0xFFFFFFFF, colC = 0xFFFFFFFF;\n";
-                                mc << "        if (mi < MAX_MESHES && sid < MAX_SLOT && kMeshMatShadeMode[mi][sid]) {\n";
-                                mc << "          float yaw = deg2rad(kMeshMatLightYaw[mi][sid]);\n";
-                                mc << "          float pit = deg2rad(kMeshMatLightPitch[mi][sid]);\n";
+                                mc << "        if (meshShadeMode) {\n";
+                                mc << "          float yaw = deg2rad(meshShadeYaw);\n";
+                                mc << "          float pit = deg2rad(meshShadePitch);\n";
                                 mc << "          V3 l = norm3((V3){ sinf(yaw)*cosf(pit), sinf(pit), cosf(yaw)*cosf(pit) });\n";
-                                mc << "          float sh = kMeshMatShadowIntensity[mi][sid]; if (sh < 0.0f) sh = 0.0f; if (sh > 2.0f) sh = 2.0f;\n";
+                                mc << "          float sh = meshShadeShadow; if (sh < 0.0f) sh = 0.0f; if (sh > 2.0f) sh = 2.0f;\n";
                                 mc << "          float amb = 0.35f;\n";
                                 mc << "          V3 na=nrm[ia], nb=nrm[ib], nc=nrm[ic];\n";
                                 mc << "          float nA = dot3(na,l); if(nA<0.0f)nA=0.0f; float litA=amb + nA*(0.9f-0.25f*sh) - ((na.y<0.0f)?(-na.y*0.25f*sh):0.0f) + (1.0f-fabsf(na.z))*0.12f;\n";
@@ -13501,7 +13503,7 @@ RenderImGuiOnly:
 
                             for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
                             {
-                                std::string matRef = GetStaticMeshMaterialByIndex(sm, si);
+                                std::string matRef = (si >= 0 && si < kStaticMeshMaterialSlots) ? sm.materialSlots[si] : std::string();
                                 if (matRef.empty() && si == 0) matRef = sm.material; // legacy scene fallback
                                 if (matRef.empty()) continue;
                                 std::filesystem::path matPath = std::filesystem::path(gProjectDir) / matRef;

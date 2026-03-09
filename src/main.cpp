@@ -2282,6 +2282,8 @@ struct NebMesh
     std::vector<NebFaceRecord> faceRecords; // canonical authored face stream (v5+)
     bool hasUv = false;
     bool hasUv2 = false;
+    std::string uvName0;
+    std::string uvName1;
     bool hasFaceMaterial = false;
     bool hasFaceTopology = false;
     bool hasFaceRecords = false;
@@ -4980,9 +4982,30 @@ static bool ExportNebMesh(
         if (secondBestUvChannel >= 0) hasUv1 = true;
     }
 
+    // Capture UV channel names from Assimp
+    std::string capturedUvName0, capturedUvName1;
+    for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
+    {
+        const aiMesh* mesh = scene->mMeshes[m];
+        if (!mesh) continue;
+        if (capturedUvName0.empty() && meshUvChannel[m] >= 0)
+        {
+            const aiString* name = mesh->GetTextureCoordsName((unsigned int)meshUvChannel[m]);
+            if (name && name->length > 0) capturedUvName0 = name->C_Str();
+        }
+        if (capturedUvName1.empty() && meshUvChannel2[m] >= 0)
+        {
+            const aiString* name = mesh->GetTextureCoordsName((unsigned int)meshUvChannel2[m]);
+            if (name && name->length > 0) capturedUvName1 = name->C_Str();
+        }
+        if (!capturedUvName0.empty() && !capturedUvName1.empty()) break;
+    }
+
     NebMesh exportMesh;
     exportMesh.hasUv = hasUv0;
     exportMesh.hasUv2 = hasUv1;
+    exportMesh.uvName0 = capturedUvName0;
+    exportMesh.uvName1 = capturedUvName1;
     exportMesh.hasFaceMaterial = true;
     exportMesh.hasFaceTopology = true;
     exportMesh.hasFaceRecords = true;
@@ -5206,6 +5229,7 @@ static bool ExportNebMesh(
     flags |= 2u; // bit1 = face material index stream
     flags |= 4u; // bit2 = original face topology stream (vertex count per face)
     flags |= 8u; // bit3 = canonical face records stream
+    if (!exportMesh.uvName0.empty() || !exportMesh.uvName1.empty()) flags |= 32u; // bit5 = UV channel names
     uint32_t posFracBits = 8; // 8.8 fixed
 
     out.write(magic, 4);
@@ -5274,6 +5298,18 @@ static bool ExportNebMesh(
             WriteS16BE(out, ToS16Fixed8_8(fr.uvs[ci].x));
             WriteS16BE(out, ToS16Fixed8_8(fr.uvs[ci].y));
         }
+    }
+
+    // Write UV channel names (bit5)
+    if ((flags & 32u) != 0)
+    {
+        auto writeStr = [&](const std::string& s) {
+            uint16_t len = (uint16_t)std::min(s.size(), (size_t)255);
+            WriteU16BE(out, len);
+            if (len > 0) out.write(s.data(), len);
+        };
+        writeStr(exportMesh.uvName0);
+        writeStr(exportMesh.uvName1);
     }
 
     if (clampWarn)
@@ -5683,6 +5719,21 @@ static bool LoadNebMesh(const std::filesystem::path& path, NebMesh& outMesh)
         }
     }
 
+    // Read UV channel names (bit5)
+    if ((flags & 32u) != 0 && in.peek() != EOF)
+    {
+        auto readStr = [&](std::string& s) -> bool {
+            uint16_t len = 0;
+            if (!ReadU16BE(in, len)) return false;
+            if (len > 255) len = 255;
+            s.resize(len);
+            if (len > 0 && !in.read(s.data(), len)) { s.clear(); return false; }
+            return true;
+        };
+        readStr(outMesh.uvName0);
+        readStr(outMesh.uvName1);
+    }
+
     CleanupNebMeshTopology(outMesh);
 
     outMesh.valid = true;
@@ -5702,6 +5753,29 @@ static const NebMesh* GetNebMesh(const std::filesystem::path& path)
     }
     gNebMeshCache[key] = std::move(mesh);
     return &gNebMeshCache[key];
+}
+
+static void GetUvNamesForMaterial(const std::filesystem::path& matPath, std::string& uvName0, std::string& uvName1)
+{
+    uvName0.clear();
+    uvName1.clear();
+    // Materials live in mat/ subdirectory next to the mesh. Go up from mat/ to find .nebmesh files.
+    std::filesystem::path matDir = matPath.parent_path(); // mat/
+    std::filesystem::path meshDir = matDir.parent_path(); // mesh directory
+    std::error_code ec;
+    if (!std::filesystem::exists(meshDir, ec) || !std::filesystem::is_directory(meshDir, ec)) return;
+    for (const auto& e : std::filesystem::directory_iterator(meshDir, ec))
+    {
+        if (!e.is_regular_file()) continue;
+        if (e.path().extension() != ".nebmesh") continue;
+        const NebMesh* mesh = GetNebMesh(e.path());
+        if (mesh && mesh->valid)
+        {
+            uvName0 = mesh->uvName0;
+            uvName1 = mesh->uvName1;
+            return;
+        }
+    }
 }
 
 static std::filesystem::path ResolveProjectAssetPath(const std::string& relOrAbs)
@@ -16845,7 +16919,11 @@ RenderImGuiOnly:
                         SaveMaterialShadowIntensity(gMaterialInspectorPath, shadInt);
                     int shadingUv = LoadMaterialShadingUv(gMaterialInspectorPath);
                     int shadingUvCombo = shadingUv + 1; // -1->0 (None), 0->1 (UV0), 1->2 (UV1)
-                    const char* shadingUvOptions[] = { "None", "UV0", "UV1" };
+                    std::string uvN0, uvN1;
+                    GetUvNamesForMaterial(gMaterialInspectorPath, uvN0, uvN1);
+                    std::string lbl0 = uvN0.empty() ? "UV0" : uvN0;
+                    std::string lbl1 = uvN1.empty() ? "UV1" : uvN1;
+                    const char* shadingUvOptions[] = { "None", lbl0.c_str(), lbl1.c_str() };
                     if (ImGui::Combo("Vertex Shading UV", &shadingUvCombo, shadingUvOptions, IM_ARRAYSIZE(shadingUvOptions)))
                         SaveMaterialShadingUv(gMaterialInspectorPath, shadingUvCombo - 1);
                 }
@@ -17000,7 +17078,11 @@ RenderImGuiOnly:
                         SaveMaterialShadowIntensity(gMaterialInspectorPath2, shadInt);
                     int shadingUv = LoadMaterialShadingUv(gMaterialInspectorPath2);
                     int shadingUvCombo = shadingUv + 1;
-                    const char* shadingUvOptions[] = { "None", "UV0", "UV1" };
+                    std::string uvN0b, uvN1b;
+                    GetUvNamesForMaterial(gMaterialInspectorPath2, uvN0b, uvN1b);
+                    std::string lbl0b = uvN0b.empty() ? "UV0" : uvN0b;
+                    std::string lbl1b = uvN1b.empty() ? "UV1" : uvN1b;
+                    const char* shadingUvOptions[] = { "None", lbl0b.c_str(), lbl1b.c_str() };
                     if (ImGui::Combo("Vertex Shading UV##B", &shadingUvCombo, shadingUvOptions, IM_ARRAYSIZE(shadingUvOptions)))
                         SaveMaterialShadingUv(gMaterialInspectorPath2, shadingUvCombo - 1);
                 }

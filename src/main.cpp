@@ -1465,9 +1465,19 @@ static float LoadMaterialShadowIntensity(const std::filesystem::path& matPath)
     return NebulaAssets::LoadMaterialShadowIntensity(matPath);
 }
 
-static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity)
+static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity, int shadingUv)
 {
-    return NebulaAssets::SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg, shadingMode, lightRotation, lightPitch, lightRoll, shadowIntensity);
+    return NebulaAssets::SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg, shadingMode, lightRotation, lightPitch, lightRoll, shadowIntensity, shadingUv);
+}
+
+static int LoadMaterialShadingUv(const std::filesystem::path& matPath)
+{
+    return NebulaAssets::LoadMaterialShadingUv(matPath);
+}
+
+static bool SaveMaterialShadingUv(const std::filesystem::path& matPath, int uvIndex)
+{
+    return NebulaAssets::SaveMaterialShadingUv(matPath, uvIndex);
 }
 
 static bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
@@ -2265,11 +2275,13 @@ struct NebMesh
 {
     std::vector<Vec3> positions;
     std::vector<Vec3> uvs;
+    std::vector<Vec3> uvs2;
     std::vector<uint16_t> indices;
     std::vector<uint16_t> faceMaterial; // per-triangle material index
     std::vector<uint8_t> faceVertexCounts; // original polygon arity per source face (v4+)
     std::vector<NebFaceRecord> faceRecords; // canonical authored face stream (v5+)
     bool hasUv = false;
+    bool hasUv2 = false;
     bool hasFaceMaterial = false;
     bool hasFaceTopology = false;
     bool hasFaceRecords = false;
@@ -4904,6 +4916,8 @@ static bool ExportNebMesh(
 
     bool hasUv0 = false;
     std::vector<int> meshUvChannel(scene->mNumMeshes, -1);
+    std::vector<int> meshUvChannel2(scene->mNumMeshes, -1);
+    bool hasUv1 = false;
     uint32_t srcVertexCount = 0;
     uint32_t srcIndexCount = 0;
     for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
@@ -4939,15 +4953,42 @@ static bool ExportNebMesh(
         }
         meshUvChannel[m] = bestUvChannel;
         if (bestUvChannel >= 0) hasUv0 = true;
+
+        // Find second-best UV channel (different from bestUvChannel, next largest span)
+        int secondBestUvChannel = -1;
+        float secondBestSpan = -1.0f;
+        for (int ch = 0; ch < AI_MAX_NUMBER_OF_TEXTURECOORDS; ++ch)
+        {
+            if (ch == bestUvChannel) continue;
+            if (!(mesh->HasTextureCoords(ch) && mesh->mNumUVComponents[ch] >= 2)) continue;
+            float minU = mesh->mTextureCoords[ch][0].x, maxU = minU;
+            float minV = mesh->mTextureCoords[ch][0].y, maxV = minV;
+            for (unsigned int v = 1; v < mesh->mNumVertices; ++v)
+            {
+                aiVector3D uv = mesh->mTextureCoords[ch][v];
+                minU = std::min(minU, uv.x); maxU = std::max(maxU, uv.x);
+                minV = std::min(minV, uv.y); maxV = std::max(maxV, uv.y);
+            }
+            float span = (maxU - minU) + (maxV - minV);
+            if (span > secondBestSpan)
+            {
+                secondBestSpan = span;
+                secondBestUvChannel = ch;
+            }
+        }
+        meshUvChannel2[m] = secondBestUvChannel;
+        if (secondBestUvChannel >= 0) hasUv1 = true;
     }
 
     NebMesh exportMesh;
     exportMesh.hasUv = hasUv0;
+    exportMesh.hasUv2 = hasUv1;
     exportMesh.hasFaceMaterial = true;
     exportMesh.hasFaceTopology = true;
     exportMesh.hasFaceRecords = true;
     exportMesh.positions.reserve(srcVertexCount);
     if (hasUv0) exportMesh.uvs.reserve(srcVertexCount);
+    if (hasUv1) exportMesh.uvs2.reserve(srcVertexCount);
     exportMesh.indices.reserve(srcIndexCount);
     exportMesh.faceMaterial.reserve(srcIndexCount / 3u);
     exportMesh.faceVertexCounts.reserve(srcIndexCount / 3u);
@@ -4980,6 +5021,8 @@ static bool ExportNebMesh(
 
         int uvCh = ((int)m < (int)meshUvChannel.size()) ? meshUvChannel[m] : -1;
         const bool meshHasUv = (uvCh >= 0 && mesh->HasTextureCoords(uvCh) && mesh->mNumUVComponents[uvCh] >= 2);
+        int uvCh2 = ((int)m < (int)meshUvChannel2.size()) ? meshUvChannel2[m] : -1;
+        const bool meshHasUv2 = (uvCh2 >= 0 && mesh->HasTextureCoords(uvCh2) && mesh->mNumUVComponents[uvCh2] >= 2);
 
         for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
         {
@@ -4999,6 +5042,14 @@ static bool ExportNebMesh(
                 exportMesh.uvs.push_back(Vec3{
                     (float)ToS16Fixed8_8(uv.x) / 256.0f,
                     (float)ToS16Fixed8_8(uv.y) / 256.0f,
+                    0.0f });
+            }
+            if (exportMesh.hasUv2)
+            {
+                aiVector3D uv2 = meshHasUv2 ? mesh->mTextureCoords[uvCh2][v] : aiVector3D(0, 0, 0);
+                exportMesh.uvs2.push_back(Vec3{
+                    (float)ToS16Fixed8_8(uv2.x) / 256.0f,
+                    (float)ToS16Fixed8_8(uv2.y) / 256.0f,
                     0.0f });
             }
             provenanceMeshIndices.push_back((uint32_t)m);
@@ -5151,6 +5202,7 @@ static bool ExportNebMesh(
     uint32_t version = 5; // v5 adds canonical authored face records stream (optional via flags)
     uint32_t flags = 0u;
     if (exportMesh.hasUv && exportMesh.uvs.size() == exportMesh.positions.size()) flags |= 1u; // bit0 = UV0
+    if (exportMesh.hasUv2 && exportMesh.uvs2.size() == exportMesh.positions.size()) flags |= 16u; // bit4 = UV1
     flags |= 2u; // bit1 = face material index stream
     flags |= 4u; // bit2 = original face topology stream (vertex count per face)
     flags |= 8u; // bit3 = canonical face records stream
@@ -5182,6 +5234,15 @@ static bool ExportNebMesh(
     if ((flags & 1u) != 0)
     {
         for (const Vec3& uv : exportMesh.uvs)
+        {
+            WriteS16BE(out, ToS16Fixed8_8(uv.x));
+            WriteS16BE(out, ToS16Fixed8_8(uv.y));
+        }
+    }
+
+    if ((flags & 16u) != 0)
+    {
+        for (const Vec3& uv : exportMesh.uvs2)
         {
             WriteS16BE(out, ToS16Fixed8_8(uv.x));
             WriteS16BE(out, ToS16Fixed8_8(uv.y));
@@ -5260,8 +5321,10 @@ static void CleanupNebMeshTopology(
 
     std::vector<Vec3> newPos;
     std::vector<Vec3> newUv;
+    std::vector<Vec3> newUv2;
     newPos.reserve(mesh.positions.size());
     if (mesh.hasUv && mesh.uvs.size() == mesh.positions.size()) newUv.reserve(mesh.uvs.size());
+    if (mesh.hasUv2 && mesh.uvs2.size() == mesh.positions.size()) newUv2.reserve(mesh.uvs2.size());
 
     std::vector<uint16_t> remap(mesh.positions.size(), 0);
 
@@ -5304,6 +5367,14 @@ static void CleanupNebMeshTopology(
                         continue;
                 }
 
+                if (mesh.hasUv2 && mesh.uvs2.size() == mesh.positions.size() && cand < newUv2.size())
+                {
+                    const Vec3& u0 = mesh.uvs2[i];
+                    const Vec3& u1 = newUv2[cand];
+                    if (std::fabs(u0.x - u1.x) > uvEps || std::fabs(u0.y - u1.y) > uvEps)
+                        continue;
+                }
+
                 chosen = cand;
                 break;
             }
@@ -5314,6 +5385,7 @@ static void CleanupNebMeshTopology(
             chosen = (uint16_t)newPos.size();
             newPos.push_back(p);
             if (mesh.hasUv && mesh.uvs.size() == mesh.positions.size()) newUv.push_back(mesh.uvs[i]);
+            if (mesh.hasUv2 && mesh.uvs2.size() == mesh.positions.size()) newUv2.push_back(mesh.uvs2[i]);
             buckets[key].push_back(chosen);
             if (trackProvenance)
             {
@@ -5329,6 +5401,7 @@ static void CleanupNebMeshTopology(
     {
         mesh.positions.swap(newPos);
         if (mesh.hasUv && mesh.uvs.size() == remap.size()) mesh.uvs.swap(newUv);
+        if (mesh.hasUv2 && mesh.uvs2.size() == remap.size()) mesh.uvs2.swap(newUv2);
     }
 
     if (trackProvenance)
@@ -5495,6 +5568,7 @@ static bool LoadNebMesh(const std::filesystem::path& path, NebMesh& outMesh)
     outMesh.faceVertexCounts.clear();
     outMesh.faceRecords.clear();
     outMesh.hasUv = (flags & 1u) != 0;
+    outMesh.hasUv2 = (flags & 16u) != 0;
     outMesh.hasFaceMaterial = (flags & 2u) != 0;
     outMesh.hasFaceTopology = (flags & 4u) != 0;
     outMesh.hasFaceRecords = (flags & 8u) != 0;
@@ -5516,6 +5590,18 @@ static bool LoadNebMesh(const std::filesystem::path& path, NebMesh& outMesh)
             int16_t u, vcoord;
             if (!ReadS16BE(in, u) || !ReadS16BE(in, vcoord)) return false;
             outMesh.uvs[v] = { u * uvInv, vcoord * uvInv, 0.0f };
+        }
+    }
+
+    if (outMesh.hasUv2)
+    {
+        outMesh.uvs2.resize(vertexCount);
+        const float uvInv = 1.0f / 256.0f;
+        for (uint32_t v = 0; v < vertexCount; ++v)
+        {
+            int16_t u, vcoord;
+            if (!ReadS16BE(in, u) || !ReadS16BE(in, vcoord)) return false;
+            outMesh.uvs2[v] = { u * uvInv, vcoord * uvInv, 0.0f };
         }
     }
 
@@ -10037,7 +10123,7 @@ int main(int, char**)
                 }
             }
 
-            struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; int shadingMode = 0; float lightRotation = 0.0f; float lightPitch = 0.0f; float lightRoll = 0.0f; float shadowIntensity = 1.0f; };
+            struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; int shadingMode = 0; float lightRotation = 0.0f; float lightPitch = 0.0f; float lightRoll = 0.0f; float shadowIntensity = 1.0f; int shadingUv = -1; };
             std::unordered_map<int, MatState> matState;
             auto getMatState = [&](int matIndex) -> MatState {
                 auto it = matState.find(matIndex);
@@ -10069,6 +10155,7 @@ int main(int, char**)
                         st.lightPitch = LoadMaterialLightPitch(matPath);
                         st.lightRoll = LoadMaterialLightRoll(matPath);
                         st.shadowIntensity = LoadMaterialShadowIntensity(matPath);
+                        st.shadingUv = LoadMaterialShadingUv(matPath);
                         std::string texPath;
                         if (LoadMaterialTexture(matPath, texPath) && !texPath.empty())
                         {
@@ -10111,7 +10198,7 @@ int main(int, char**)
 
             // Check if any material slot uses lit shading
             bool anyLit = false;
-            for (auto& kv : matState) { if (kv.second.shadingMode == 1) { anyLit = true; break; } }
+            for (auto& kv : matState) { if (kv.second.shadingMode == 1 || kv.second.shadingUv >= 0) { anyLit = true; break; } }
 
             // Compute smooth vertex normals by position so shading is
             // always smooth across the entire geometry, even across
@@ -10136,7 +10223,7 @@ int main(int, char**)
                     if (p.z < bMin.z) bMin.z = p.z; if (p.z > bMax.z) bMax.z = p.z;
                 }
                 float diag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
-                const float weldDist = std::max(0.01f, diag * 0.005f); // 0.5% of bounding box
+                const float weldDist = std::max(0.01f, diag * 0.05f); // 5% of bounding box
                 const float weldDist2 = weldDist * weldDist;
                 std::vector<size_t> vertToGroup(vertCount, (size_t)-1);
                 std::vector<Vec3> groupNormalAccum;
@@ -10195,10 +10282,6 @@ int main(int, char**)
                 for (size_t vi = 0; vi < vertCount; ++vi)
                     smoothNormals[vi] = groupNormalAccum[vertToGroup[vi]];
 
-                // DEBUG: print weld stats once per mesh per frame
-                static int dbgFrame = 0;
-                if (dbgFrame++ < 5)
-                    fprintf(stderr, "[SMOOTH] verts=%zu groups=%zu weldDist=%.6f diag=%.4f\n", vertCount, numGroups, weldDist, diag);
             }
 
             // Set up GL lighting if any material is lit
@@ -10309,10 +10392,14 @@ int main(int, char**)
                 // Force first triangle to bind from its own face material slot.
                 GLuint boundTex = 0xFFFFFFFFu;
                 int curLit = -1; // -1 = uninitialized
+                int curShadingUv = -2; // -2 = uninitialized
                 float curLightRot = -999.0f;
                 float curLightPit = -999.0f;
                 float curLightRol = -999.0f;
                 float curShadowInt = -999.0f;
+                // Precomputed software vertex color params (for shadingUv >= 0)
+                float swLx = 0.0f, swLy = -1.0f, swLz = 0.0f;
+                float swAmb = 1.0f, swDif = 0.0f;
                 for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
                 {
                     uint16_t i0 = mesh->indices[idx + 0];
@@ -10329,17 +10416,22 @@ int main(int, char**)
                     if (gWireframePreview) setWireColorForMat(faceMat);
                     else glColor3f(1.0f, 1.0f, 1.0f);
                     int triLit = triState.shadingMode;
-                    bool needRestart = (triState.tex != boundTex) || (triLit != curLit) || (triLit == 1 && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol || triState.shadowIntensity != curShadowInt));
+                    bool needRestart = (triState.tex != boundTex) || (triLit != curLit) || (triState.shadingUv != curShadingUv) || (triLit == 1 && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol || triState.shadowIntensity != curShadowInt));
                     if (needRestart)
                     {
                         glEnd();
-                        if (triLit != curLit)
+                        if (triLit != curLit || triState.shadingUv != curShadingUv)
                         {
-                            if (triLit == 1) glEnable(GL_LIGHTING);
-                            else glDisable(GL_LIGHTING);
+                            if (triState.shadingUv >= 0)
+                                glDisable(GL_LIGHTING);
+                            else if (triLit == 1)
+                                glEnable(GL_LIGHTING);
+                            else
+                                glDisable(GL_LIGHTING);
                             curLit = triLit;
+                            curShadingUv = triState.shadingUv;
                         }
-                        if (triLit == 1 && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol))
+                        if ((triLit == 1 || triState.shadingUv >= 0) && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol))
                         {
                             float yRad = triState.lightRotation * 3.14159265f / 180.0f;
                             float xRad = triState.lightPitch * 3.14159265f / 180.0f;
@@ -10357,22 +10449,40 @@ int main(int, char**)
                             float fx = px * cosf(zRad) - py * sinf(zRad);
                             float fy = px * sinf(zRad) + py * cosf(zRad);
                             float fz = pz;
-                            GLfloat lightDir[] = { fx, fy, fz, 0.0f };
-                            glLightfv(GL_LIGHT0, GL_POSITION, lightDir);
+                            if (triState.shadingUv >= 0)
+                            {
+                                // Precompute normalized light direction for software vertex colors
+                                float len = sqrtf(fx * fx + fy * fy + fz * fz);
+                                if (len > 1e-8f) { swLx = fx / len; swLy = fy / len; swLz = fz / len; }
+                                else { swLx = 0.0f; swLy = -1.0f; swLz = 0.0f; }
+                            }
+                            else
+                            {
+                                GLfloat lightDir[] = { fx, fy, fz, 0.0f };
+                                glLightfv(GL_LIGHT0, GL_POSITION, lightDir);
+                            }
                             curLightRot = triState.lightRotation;
                             curLightPit = triState.lightPitch;
                             curLightRol = triState.lightRoll;
                         }
-                        if (triLit == 1 && triState.shadowIntensity != curShadowInt)
+                        if ((triLit == 1 || triState.shadingUv >= 0) && triState.shadowIntensity != curShadowInt)
                         {
                             float si = triState.shadowIntensity;
                             if (si < 0.0f) si = 0.0f; if (si > 1.0f) si = 1.0f;
                             float amb = 1.0f - si * 0.65f;   // 1.0 at si=0, 0.35 at si=1
                             float dif = si * 0.75f;          // 0.0 at si=0, 0.75 at si=1
-                            GLfloat lightAmb[] = { amb, amb, amb, 1.0f };
-                            GLfloat lightDif[] = { dif, dif, dif, 1.0f };
-                            glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
-                            glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDif);
+                            if (triState.shadingUv >= 0)
+                            {
+                                swAmb = amb;
+                                swDif = dif;
+                            }
+                            else
+                            {
+                                GLfloat lightAmb[] = { amb, amb, amb, 1.0f };
+                                GLfloat lightDif[] = { dif, dif, dif, 1.0f };
+                                glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
+                                glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDif);
+                            }
                             curShadowInt = triState.shadowIntensity;
                         }
                         if (triState.tex != 0 && mesh->hasUv) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, triState.tex); }
@@ -10382,15 +10492,18 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if (triState.shadingUv >= 0 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    else if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if (triState.shadingUv >= 0 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    else if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if (triState.shadingUv >= 0 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    else if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);
                 }
@@ -16730,6 +16843,11 @@ RenderImGuiOnly:
                     float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath);
                     if (ImGui::SliderFloat("Shadow Intensity", &shadInt, 0.0f, 1.0f, "%.2f"))
                         SaveMaterialShadowIntensity(gMaterialInspectorPath, shadInt);
+                    int shadingUv = LoadMaterialShadingUv(gMaterialInspectorPath);
+                    int shadingUvCombo = shadingUv + 1; // -1->0 (None), 0->1 (UV0), 1->2 (UV1)
+                    const char* shadingUvOptions[] = { "None", "UV0", "UV1" };
+                    if (ImGui::Combo("Vertex Shading UV", &shadingUvCombo, shadingUvOptions, IM_ARRAYSIZE(shadingUvOptions)))
+                        SaveMaterialShadingUv(gMaterialInspectorPath, shadingUvCombo - 1);
                 }
                 bool texOk = false;
                 if (!texPath.empty())
@@ -16880,6 +16998,11 @@ RenderImGuiOnly:
                     float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath2);
                     if (ImGui::SliderFloat("Shadow Intensity##B", &shadInt, 0.0f, 1.0f, "%.2f"))
                         SaveMaterialShadowIntensity(gMaterialInspectorPath2, shadInt);
+                    int shadingUv = LoadMaterialShadingUv(gMaterialInspectorPath2);
+                    int shadingUvCombo = shadingUv + 1;
+                    const char* shadingUvOptions[] = { "None", "UV0", "UV1" };
+                    if (ImGui::Combo("Vertex Shading UV##B", &shadingUvCombo, shadingUvOptions, IM_ARRAYSIZE(shadingUvOptions)))
+                        SaveMaterialShadingUv(gMaterialInspectorPath2, shadingUvCombo - 1);
                 }
                 bool texOk = false;
                 if (!texPath.empty())

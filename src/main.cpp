@@ -10194,6 +10194,11 @@ int main(int, char**)
                 smoothNormals.resize(vertCount);
                 for (size_t vi = 0; vi < vertCount; ++vi)
                     smoothNormals[vi] = groupNormalAccum[vertToGroup[vi]];
+
+                // DEBUG: print weld stats once per mesh per frame
+                static int dbgFrame = 0;
+                if (dbgFrame++ < 5)
+                    fprintf(stderr, "[SMOOTH] verts=%zu groups=%zu weldDist=%.6f diag=%.4f\n", vertCount, numGroups, weldDist, diag);
             }
 
             // Set up GL lighting if any material is lit

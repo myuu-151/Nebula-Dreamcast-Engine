@@ -10113,17 +10113,60 @@ int main(int, char**)
             bool anyLit = false;
             for (auto& kv : matState) { if (kv.second.shadingMode == 1) { anyLit = true; break; } }
 
-            // Compute smooth vertex normals if any material is lit
+            // Compute smooth vertex normals by position so shading is
+            // always smooth across the entire geometry, even across
+            // material/UV seam splits where vertices are duplicated.
+            // Groups by original (rest-pose) mesh positions for stable
+            // welding even under animation, computes normals from rendered
+            // positions for correct lighting.
             std::vector<Vec3> smoothNormals;
             if (anyLit && renderPositions && !mesh->indices.empty())
             {
-                smoothNormals.resize(renderPositions->size(), {0.0f, 0.0f, 0.0f});
+                const size_t vertCount = renderPositions->size();
+                const std::vector<Vec3>& basePos = mesh->positions; // rest-pose for grouping
+
+                // Compute adaptive weld distance from bounding box diagonal
+                // so it works regardless of model scale.
+                Vec3 bMin = basePos[0], bMax = basePos[0];
+                for (size_t vi = 1; vi < vertCount && vi < basePos.size(); ++vi)
+                {
+                    const Vec3& p = basePos[vi];
+                    if (p.x < bMin.x) bMin.x = p.x; if (p.x > bMax.x) bMax.x = p.x;
+                    if (p.y < bMin.y) bMin.y = p.y; if (p.y > bMax.y) bMax.y = p.y;
+                    if (p.z < bMin.z) bMin.z = p.z; if (p.z > bMax.z) bMax.z = p.z;
+                }
+                float diag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
+                const float weldDist = std::max(0.01f, diag * 0.005f); // 0.5% of bounding box
+                const float weldDist2 = weldDist * weldDist;
+                std::vector<size_t> vertToGroup(vertCount, (size_t)-1);
+                std::vector<Vec3> groupNormalAccum;
+                size_t numGroups = 0;
+
+                for (size_t vi = 0; vi < vertCount; ++vi)
+                {
+                    if (vertToGroup[vi] != (size_t)-1) continue;
+                    const Vec3& pa = (vi < basePos.size()) ? basePos[vi] : (*renderPositions)[vi];
+                    size_t gi = numGroups++;
+                    vertToGroup[vi] = gi;
+                    groupNormalAccum.push_back({0.0f, 0.0f, 0.0f});
+                    // Find all other unassigned verts at the same position
+                    for (size_t vj = vi + 1; vj < vertCount; ++vj)
+                    {
+                        if (vertToGroup[vj] != (size_t)-1) continue;
+                        const Vec3& pb = (vj < basePos.size()) ? basePos[vj] : (*renderPositions)[vj];
+                        float dx = pa.x - pb.x, dy = pa.y - pb.y, dz = pa.z - pb.z;
+                        if (dx*dx + dy*dy + dz*dz <= weldDist2)
+                            vertToGroup[vj] = gi;
+                    }
+                }
+
+                // Accumulate face normals per position group
                 for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
                 {
                     uint16_t i0 = mesh->indices[idx + 0];
                     uint16_t i1 = mesh->indices[idx + 1];
                     uint16_t i2 = mesh->indices[idx + 2];
-                    if (i0 >= renderPositions->size() || i1 >= renderPositions->size() || i2 >= renderPositions->size())
+                    if (i0 >= vertCount || i1 >= vertCount || i2 >= vertCount)
                         continue;
                     const Vec3& p0 = (*renderPositions)[i0];
                     const Vec3& p1 = (*renderPositions)[i1];
@@ -10133,16 +10176,24 @@ int main(int, char**)
                     float nx = ey * fz - ez * fy;
                     float ny = ez * fx - ex * fz;
                     float nz = ex * fy - ey * fx;
-                    smoothNormals[i0].x += nx; smoothNormals[i0].y += ny; smoothNormals[i0].z += nz;
-                    smoothNormals[i1].x += nx; smoothNormals[i1].y += ny; smoothNormals[i1].z += nz;
-                    smoothNormals[i2].x += nx; smoothNormals[i2].y += ny; smoothNormals[i2].z += nz;
+                    size_t g0 = vertToGroup[i0], g1 = vertToGroup[i1], g2 = vertToGroup[i2];
+                    groupNormalAccum[g0].x += nx; groupNormalAccum[g0].y += ny; groupNormalAccum[g0].z += nz;
+                    groupNormalAccum[g1].x += nx; groupNormalAccum[g1].y += ny; groupNormalAccum[g1].z += nz;
+                    groupNormalAccum[g2].x += nx; groupNormalAccum[g2].y += ny; groupNormalAccum[g2].z += nz;
                 }
-                for (auto& n : smoothNormals)
+
+                // Normalize group normals
+                for (auto& n : groupNormalAccum)
                 {
                     float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
                     if (len > 1e-8f) { n.x /= len; n.y /= len; n.z /= len; }
                     else { n.x = 0.0f; n.y = 1.0f; n.z = 0.0f; }
                 }
+
+                // Assign the shared group normal to every vertex index
+                smoothNormals.resize(vertCount);
+                for (size_t vi = 0; vi < vertCount; ++vi)
+                    smoothNormals[vi] = groupNormalAccum[vertToGroup[vi]];
             }
 
             // Set up GL lighting if any material is lit
@@ -10151,6 +10202,7 @@ int main(int, char**)
                 glEnable(GL_LIGHTING);
                 glEnable(GL_LIGHT0);
                 glEnable(GL_COLOR_MATERIAL);
+                glEnable(GL_NORMALIZE); // renormalize after modelview scale
                 glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
                 glShadeModel(GL_SMOOTH);
             }
@@ -10346,6 +10398,7 @@ int main(int, char**)
                 glDisable(GL_LIGHTING);
                 glDisable(GL_LIGHT0);
                 glDisable(GL_COLOR_MATERIAL);
+                glDisable(GL_NORMALIZE);
                 glShadeModel(GL_FLAT);
             }
 

@@ -1411,6 +1411,11 @@ static std::filesystem::path CreateMaterialAsset(const std::filesystem::path& as
         out << "uv_offset_u=0\n";
         out << "uv_offset_v=0\n";
         out << "uv_rotate_deg=0\n";
+        out << "shading_mode=0\n";
+        out << "light_rotation=0\n";
+        out << "light_pitch=0\n";
+        out << "light_roll=0\n";
+        out << "shadow_intensity=1\n";
     }
     return matPath;
 }
@@ -1435,9 +1440,34 @@ static void LoadMaterialUvTransform(const std::filesystem::path& matPath, float&
     NebulaAssets::LoadMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
 }
 
-static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg)
+static int LoadMaterialShadingMode(const std::filesystem::path& matPath)
 {
-    return NebulaAssets::SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg);
+    return NebulaAssets::LoadMaterialShadingMode(matPath);
+}
+
+static float LoadMaterialLightRotation(const std::filesystem::path& matPath)
+{
+    return NebulaAssets::LoadMaterialLightRotation(matPath);
+}
+
+static float LoadMaterialLightPitch(const std::filesystem::path& matPath)
+{
+    return NebulaAssets::LoadMaterialLightPitch(matPath);
+}
+
+static float LoadMaterialLightRoll(const std::filesystem::path& matPath)
+{
+    return NebulaAssets::LoadMaterialLightRoll(matPath);
+}
+
+static float LoadMaterialShadowIntensity(const std::filesystem::path& matPath)
+{
+    return NebulaAssets::LoadMaterialShadowIntensity(matPath);
+}
+
+static bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity)
+{
+    return NebulaAssets::SaveMaterialAllFields(matPath, tex, uvScale, allowUvRepeat, su, sv, ou, ov, rotDeg, shadingMode, lightRotation, lightPitch, lightRoll, shadowIntensity);
 }
 
 static bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex)
@@ -1458,6 +1488,31 @@ static bool SaveMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool
 static bool SaveMaterialUvTransform(const std::filesystem::path& matPath, float su, float sv, float ou, float ov, float rotDeg)
 {
     return NebulaAssets::SaveMaterialUvTransform(matPath, su, sv, ou, ov, rotDeg);
+}
+
+static bool SaveMaterialShadingMode(const std::filesystem::path& matPath, int mode)
+{
+    return NebulaAssets::SaveMaterialShadingMode(matPath, mode);
+}
+
+static bool SaveMaterialLightRotation(const std::filesystem::path& matPath, float rotation)
+{
+    return NebulaAssets::SaveMaterialLightRotation(matPath, rotation);
+}
+
+static bool SaveMaterialLightPitch(const std::filesystem::path& matPath, float pitch)
+{
+    return NebulaAssets::SaveMaterialLightPitch(matPath, pitch);
+}
+
+static bool SaveMaterialLightRoll(const std::filesystem::path& matPath, float roll)
+{
+    return NebulaAssets::SaveMaterialLightRoll(matPath, roll);
+}
+
+static bool SaveMaterialShadowIntensity(const std::filesystem::path& matPath, float intensity)
+{
+    return NebulaAssets::SaveMaterialShadowIntensity(matPath, intensity);
 }
 
 static std::string GetStaticMeshPrimaryMaterial(const StaticMesh3DNode& n)
@@ -9982,7 +10037,7 @@ int main(int, char**)
                 }
             }
 
-            struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; };
+            struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; int shadingMode = 0; float lightRotation = 0.0f; float lightPitch = 0.0f; float lightRoll = 0.0f; float shadowIntensity = 1.0f; };
             std::unordered_map<int, MatState> matState;
             auto getMatState = [&](int matIndex) -> MatState {
                 auto it = matState.find(matIndex);
@@ -10009,6 +10064,11 @@ int main(int, char**)
                     else
                     {
                         LoadMaterialUvScale(matPath, st.uvScale);
+                        st.shadingMode = LoadMaterialShadingMode(matPath);
+                        st.lightRotation = LoadMaterialLightRotation(matPath);
+                        st.lightPitch = LoadMaterialLightPitch(matPath);
+                        st.lightRoll = LoadMaterialLightRoll(matPath);
+                        st.shadowIntensity = LoadMaterialShadowIntensity(matPath);
                         std::string texPath;
                         if (LoadMaterialTexture(matPath, texPath) && !texPath.empty())
                         {
@@ -10048,6 +10108,52 @@ int main(int, char**)
 
             // Warm all slot material states up-front so slot visibility is not dependent on draw order.
             for (int si = 0; si < kStaticMeshMaterialSlots; ++si) (void)getMatState(si);
+
+            // Check if any material slot uses lit shading
+            bool anyLit = false;
+            for (auto& kv : matState) { if (kv.second.shadingMode == 1) { anyLit = true; break; } }
+
+            // Compute smooth vertex normals if any material is lit
+            std::vector<Vec3> smoothNormals;
+            if (anyLit && renderPositions && !mesh->indices.empty())
+            {
+                smoothNormals.resize(renderPositions->size(), {0.0f, 0.0f, 0.0f});
+                for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
+                {
+                    uint16_t i0 = mesh->indices[idx + 0];
+                    uint16_t i1 = mesh->indices[idx + 1];
+                    uint16_t i2 = mesh->indices[idx + 2];
+                    if (i0 >= renderPositions->size() || i1 >= renderPositions->size() || i2 >= renderPositions->size())
+                        continue;
+                    const Vec3& p0 = (*renderPositions)[i0];
+                    const Vec3& p1 = (*renderPositions)[i1];
+                    const Vec3& p2 = (*renderPositions)[i2];
+                    float ex = p1.x - p0.x, ey = p1.y - p0.y, ez = p1.z - p0.z;
+                    float fx = p2.x - p0.x, fy = p2.y - p0.y, fz = p2.z - p0.z;
+                    float nx = ey * fz - ez * fy;
+                    float ny = ez * fx - ex * fz;
+                    float nz = ex * fy - ey * fx;
+                    smoothNormals[i0].x += nx; smoothNormals[i0].y += ny; smoothNormals[i0].z += nz;
+                    smoothNormals[i1].x += nx; smoothNormals[i1].y += ny; smoothNormals[i1].z += nz;
+                    smoothNormals[i2].x += nx; smoothNormals[i2].y += ny; smoothNormals[i2].z += nz;
+                }
+                for (auto& n : smoothNormals)
+                {
+                    float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+                    if (len > 1e-8f) { n.x /= len; n.y /= len; n.z /= len; }
+                    else { n.x = 0.0f; n.y = 1.0f; n.z = 0.0f; }
+                }
+            }
+
+            // Set up GL lighting if any material is lit
+            if (anyLit)
+            {
+                glEnable(GL_LIGHTING);
+                glEnable(GL_LIGHT0);
+                glEnable(GL_COLOR_MATERIAL);
+                glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+                glShadeModel(GL_SMOOTH);
+            }
 
             MatState primaryState = getMatState(seedMatIndex);
             if (primaryState.tex != 0 && mesh->hasUv)
@@ -10140,9 +10246,16 @@ int main(int, char**)
             else
             {
                 if (gWireframePreview) glDisable(GL_TEXTURE_2D);
+                // If no material is lit, disable lighting for this mesh's triangles
+                if (!anyLit) glDisable(GL_LIGHTING);
                 glBegin(GL_TRIANGLES);
                 // Force first triangle to bind from its own face material slot.
                 GLuint boundTex = 0xFFFFFFFFu;
+                int curLit = -1; // -1 = uninitialized
+                float curLightRot = -999.0f;
+                float curLightPit = -999.0f;
+                float curLightRol = -999.0f;
+                float curShadowInt = -999.0f;
                 for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
                 {
                     uint16_t i0 = mesh->indices[idx + 0];
@@ -10158,9 +10271,53 @@ int main(int, char**)
                     MatState triState = getMatState(faceMat);
                     if (gWireframePreview) setWireColorForMat(faceMat);
                     else glColor3f(1.0f, 1.0f, 1.0f);
-                    if (triState.tex != boundTex)
+                    int triLit = triState.shadingMode;
+                    bool needRestart = (triState.tex != boundTex) || (triLit != curLit) || (triLit == 1 && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol || triState.shadowIntensity != curShadowInt));
+                    if (needRestart)
                     {
                         glEnd();
+                        if (triLit != curLit)
+                        {
+                            if (triLit == 1) glEnable(GL_LIGHTING);
+                            else glDisable(GL_LIGHTING);
+                            curLit = triLit;
+                        }
+                        if (triLit == 1 && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol))
+                        {
+                            float yRad = triState.lightRotation * 3.14159265f / 180.0f;
+                            float xRad = triState.lightPitch * 3.14159265f / 180.0f;
+                            float zRad = triState.lightRoll * 3.14159265f / 180.0f;
+                            float bx = 0.3f, by = -1.0f, bz = 0.4f;
+                            // Y-axis rotation
+                            float rx = bx * cosf(yRad) + bz * sinf(yRad);
+                            float ry = by;
+                            float rz = -bx * sinf(yRad) + bz * cosf(yRad);
+                            // X-axis rotation (pitch)
+                            float px = rx;
+                            float py = ry * cosf(xRad) - rz * sinf(xRad);
+                            float pz = ry * sinf(xRad) + rz * cosf(xRad);
+                            // Z-axis rotation (roll)
+                            float fx = px * cosf(zRad) - py * sinf(zRad);
+                            float fy = px * sinf(zRad) + py * cosf(zRad);
+                            float fz = pz;
+                            GLfloat lightDir[] = { fx, fy, fz, 0.0f };
+                            glLightfv(GL_LIGHT0, GL_POSITION, lightDir);
+                            curLightRot = triState.lightRotation;
+                            curLightPit = triState.lightPitch;
+                            curLightRol = triState.lightRoll;
+                        }
+                        if (triLit == 1 && triState.shadowIntensity != curShadowInt)
+                        {
+                            float si = triState.shadowIntensity;
+                            if (si < 0.0f) si = 0.0f; if (si > 1.0f) si = 1.0f;
+                            float amb = 1.0f - si * 0.65f;   // 1.0 at si=0, 0.35 at si=1
+                            float dif = si * 0.75f;          // 0.0 at si=0, 0.75 at si=1
+                            GLfloat lightAmb[] = { amb, amb, amb, 1.0f };
+                            GLfloat lightDif[] = { dif, dif, dif, 1.0f };
+                            glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
+                            glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDif);
+                            curShadowInt = triState.shadowIntensity;
+                        }
                         if (triState.tex != 0 && mesh->hasUv) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, triState.tex); }
                         else glDisable(GL_TEXTURE_2D);
                         glBegin(GL_TRIANGLES);
@@ -10168,16 +10325,28 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
+                    if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
+                    if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
+                    if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);
                 }
                 glEnd();
+            }
+
+            // Restore lighting state after mesh rendering
+            if (anyLit)
+            {
+                glDisable(GL_LIGHTING);
+                glDisable(GL_LIGHT0);
+                glDisable(GL_COLOR_MATERIAL);
+                glShadeModel(GL_FLAT);
             }
 
             // Selected checker overlay: fullscreen texture masked by selected mesh shape
@@ -12534,6 +12703,90 @@ RenderImGuiOnly:
                                     if (ii + 1 < runtimeIndices.size()) mc << ",";
                                 }
                                 mc << "};\n";
+
+                                std::vector<std::array<int, kStaticMeshMaterialSlots>> dcShadeMode(std::max(1, (int)exportStatics.size()));
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcLightYaw(std::max(1, (int)exportStatics.size()));
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcLightPitch(std::max(1, (int)exportStatics.size()));
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcShadowIntensity(std::max(1, (int)exportStatics.size()));
+                                for (auto& arr : dcShadeMode) arr.fill(0);
+                                for (auto& arr : dcLightYaw) arr.fill(0.0f);
+                                for (auto& arr : dcLightPitch) arr.fill(35.0f);
+                                for (auto& arr : dcShadowIntensity) arr.fill(1.0f);
+                                if (!gProjectDir.empty())
+                                {
+                                    for (size_t i = 0; i < exportStatics.size(); ++i)
+                                    {
+                                        const auto& sm = exportStatics[i];
+                                        for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                        {
+                                            std::string matRef = GetStaticMeshMaterialByIndex(sm, si);
+                                            if (matRef.empty() && si == 0) matRef = sm.material;
+                                            if (matRef.empty()) continue;
+                                            std::filesystem::path matPath = std::filesystem::path(gProjectDir) / matRef;
+                                            dcShadeMode[i][si] = LoadMaterialShadingMode(matPath);
+                                            dcLightYaw[i][si] = LoadMaterialLightRotation(matPath);
+                                            dcLightPitch[i][si] = LoadMaterialLightPitch(matPath);
+                                            dcShadowIntensity[i][si] = LoadMaterialShadowIntensity(matPath);
+                                        }
+                                    }
+                                }
+
+                                mc << "  static const uint8_t kMeshMatShadeMode[MAX_MESHES][MAX_SLOT] = {\n";
+                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
+                                {
+                                    mc << "    {";
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        mc << (dcShadeMode[mi][si] != 0 ? "1" : "0");
+                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
+                                mc << "  static const float kMeshMatLightYaw[MAX_MESHES][MAX_SLOT] = {\n";
+                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
+                                {
+                                    mc << "    {";
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        mc << fstr(dcLightYaw[mi][si]);
+                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
+                                mc << "  static const float kMeshMatLightPitch[MAX_MESHES][MAX_SLOT] = {\n";
+                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
+                                {
+                                    mc << "    {";
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        mc << fstr(dcLightPitch[mi][si]);
+                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
+                                mc << "  static const float kMeshMatShadowIntensity[MAX_MESHES][MAX_SLOT] = {\n";
+                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
+                                {
+                                    mc << "    {";
+                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                    {
+                                        mc << fstr(dcShadowIntensity[mi][si]);
+                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "  };\n";
                                 mc << "  typedef struct { RuntimeMesh diskMesh; RuntimeMesh activeMesh; int kVertCount; int kTriCount; V3* base; uint16_t* trisNormal; V3* triUvNormal; uint16_t* triMatNormal; uint16_t* trisFlipped; V3* triUvFlipped; pvr_poly_hdr_t hdrSlot[MAX_SLOT]; pvr_ptr_t slotTx[MAX_SLOT]; RuntimeTex diskTex[MAX_SLOT]; uint16_t slotW[MAX_SLOT]; uint16_t slotH[MAX_SLOT]; float slotUS[MAX_SLOT]; float slotVS[MAX_SLOT]; float slotHalfU[MAX_SLOT]; float slotHalfV[MAX_SLOT]; uint8_t slotFilter[MAX_SLOT]; uint8_t slotReady[MAX_SLOT]; int slotCount; int loaded; RuntimeAnimClip anim; } RuntimeSceneMesh;\n";
                                 mc << "  static RuntimeSceneMesh meshRt[MAX_MESHES];\n";
                                 mc << "  memset(meshRt, 0, sizeof(meshRt));\n";
@@ -12739,6 +12992,26 @@ RenderImGuiOnly:
                                 mc << "        int sid = (int)rm->triMatNormal[t]; if (sid < 0 || sid >= rm->slotCount) sid = 0; if (!rm->slotReady[sid]) continue;\n";
                                 mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
                                 mc << "        uint32 col = 0xFFFFFFFF;\n";
+                                mc << "        if (mi < MAX_MESHES && sid < MAX_SLOT && kMeshMatShadeMode[mi][sid]) {\n";
+                                mc << "          V3 a = cs[ia], b = cs[ib], c = cs[ic];\n";
+                                mc << "          V3 e1 = (V3){ b.x-a.x, b.y-a.y, b.z-a.z };\n";
+                                mc << "          V3 e2 = (V3){ c.x-a.x, c.y-a.y, c.z-a.z };\n";
+                                mc << "          V3 n = norm3(cross3(e1,e2));\n";
+                                mc << "          float yaw = deg2rad(kMeshMatLightYaw[mi][sid]);\n";
+                                mc << "          float pit = deg2rad(kMeshMatLightPitch[mi][sid]);\n";
+                                mc << "          V3 l = norm3((V3){ sinf(yaw)*cosf(pit), sinf(pit), cosf(yaw)*cosf(pit) });\n";
+                                mc << "          float ndl = dot3(n, l); if (ndl < 0.0f) ndl = 0.0f;\n";
+                                mc << "          float amb = 0.35f;\n";
+                                mc << "          float sh = kMeshMatShadowIntensity[mi][sid]; if (sh < 0.0f) sh = 0.0f; if (sh > 2.0f) sh = 2.0f;\n";
+                                mc << "          float lit = amb + ndl * (0.9f - 0.25f * sh);\n";
+                                mc << "          float down = n.y < 0.0f ? (-n.y * 0.25f * sh) : 0.0f;\n";
+                                mc << "          lit -= down;\n";
+                                mc << "          float rim = 1.0f - fabsf(n.z); if (rim < 0.0f) rim = 0.0f; if (rim > 1.0f) rim = 1.0f;\n";
+                                mc << "          lit += rim * 0.12f;\n";
+                                mc << "          if (lit < 0.10f) lit = 0.10f; if (lit > 1.20f) lit = 1.20f;\n";
+                                mc << "          int ci = (int)(lit * 255.0f); if (ci < 0) ci = 0; if (ci > 255) ci = 255;\n";
+                                mc << "          col = 0xFF000000u | ((uint32)ci << 16) | ((uint32)ci << 8) | (uint32)ci;\n";
+                                mc << "        }\n";
                                 mc << "        /* Compute UV for each original vertex */\n";
                                 mc << "        float uv[3][2];\n";
                                 mc << "        for(int k=0;k<3;++k){ float u=triUv[t*3+k].x, v=1.0f-triUv[t*3+k].y; if(u<0.0f)u=0.0f; else if(u>1.0f)u=1.0f; if(v<0.0f)v=0.0f; else if(v>1.0f)v=1.0f; uv[k][0]=(u*(1.0f-2.0f*hu)+hu)*us; uv[k][1]=(v*(1.0f-2.0f*hv)+hv)*vs_; }\n";
@@ -13130,8 +13403,18 @@ RenderImGuiOnly:
                         std::vector<int> meshTexSlot(std::max(1, (int)exportStatics.size()), -1);
                         std::vector<std::array<int, kStaticMeshMaterialSlots>> meshMatTexSlot(std::max(1, (int)exportStatics.size()));
                         std::vector<std::array<int, kStaticMeshMaterialSlots>> meshMatUvRepeatPow(std::max(1, (int)exportStatics.size()));
+                        std::vector<std::array<int, kStaticMeshMaterialSlots>> meshMatShadeMode(std::max(1, (int)exportStatics.size()));
+                        std::vector<std::array<float, kStaticMeshMaterialSlots>> meshMatLightYaw(std::max(1, (int)exportStatics.size()));
+                        std::vector<std::array<float, kStaticMeshMaterialSlots>> meshMatLightPitch(std::max(1, (int)exportStatics.size()));
+                        std::vector<std::array<float, kStaticMeshMaterialSlots>> meshMatLightRoll(std::max(1, (int)exportStatics.size()));
+                        std::vector<std::array<float, kStaticMeshMaterialSlots>> meshMatShadowIntensity(std::max(1, (int)exportStatics.size()));
                         for (auto& arr : meshMatTexSlot) arr.fill(-1);
                         for (auto& arr : meshMatUvRepeatPow) arr.fill(0);
+                        for (auto& arr : meshMatShadeMode) arr.fill(0);
+                        for (auto& arr : meshMatLightYaw) arr.fill(0.0f);
+                        for (auto& arr : meshMatLightPitch) arr.fill(35.0f);
+                        for (auto& arr : meshMatLightRoll) arr.fill(0.0f);
+                        for (auto& arr : meshMatShadowIntensity) arr.fill(1.0f);
                         std::vector<std::string> slotFileName;
                         std::unordered_map<std::string, int> sourceToSlot;
 
@@ -13241,6 +13524,11 @@ RenderImGuiOnly:
                                     }
                                 }
                                 meshMatUvRepeatPow[i][si] = repeatPow;
+                                meshMatShadeMode[i][si] = LoadMaterialShadingMode(matPath);
+                                meshMatLightYaw[i][si] = LoadMaterialLightRotation(matPath);
+                                meshMatLightPitch[i][si] = LoadMaterialLightPitch(matPath);
+                                meshMatLightRoll[i][si] = LoadMaterialLightRoll(matPath);
+                                meshMatShadowIntensity[i][si] = LoadMaterialShadowIntensity(matPath);
 
                                 std::string texPathStr;
                                 if (!LoadMaterialTexture(matPath, texPathStr) || texPathStr.empty()) continue;
@@ -16358,6 +16646,25 @@ RenderImGuiOnly:
                 {
                     SaveMaterialAllowUvRepeat(gMaterialInspectorPath, allowUvRepeat);
                 }
+                int shadingMode = LoadMaterialShadingMode(gMaterialInspectorPath);
+                const char* shadingOptions[] = { "Unlit", "Lit" };
+                if (ImGui::Combo("Shading", &shadingMode, shadingOptions, IM_ARRAYSIZE(shadingOptions)))
+                    SaveMaterialShadingMode(gMaterialInspectorPath, shadingMode);
+                if (shadingMode == 1)
+                {
+                    float lightRot = LoadMaterialLightRotation(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Light Rotation", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightRotation(gMaterialInspectorPath, lightRot);
+                    float lightPit = LoadMaterialLightPitch(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Light Pitch", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightPitch(gMaterialInspectorPath, lightPit);
+                    float lightRol = LoadMaterialLightRoll(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Light Roll", &lightRol, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightRoll(gMaterialInspectorPath, lightRol);
+                    float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath);
+                    if (ImGui::SliderFloat("Shadow Intensity", &shadInt, 0.0f, 1.0f, "%.2f"))
+                        SaveMaterialShadowIntensity(gMaterialInspectorPath, shadInt);
+                }
                 bool texOk = false;
                 if (!texPath.empty())
                 {
@@ -16488,6 +16795,25 @@ RenderImGuiOnly:
                 if (ImGui::Checkbox("Extended UV (Saturn)##B", &allowUvRepeat))
                 {
                     SaveMaterialAllowUvRepeat(gMaterialInspectorPath2, allowUvRepeat);
+                }
+                int shadingMode = LoadMaterialShadingMode(gMaterialInspectorPath2);
+                const char* shadingOptions[] = { "Unlit", "Lit" };
+                if (ImGui::Combo("Shading##B", &shadingMode, shadingOptions, IM_ARRAYSIZE(shadingOptions)))
+                    SaveMaterialShadingMode(gMaterialInspectorPath2, shadingMode);
+                if (shadingMode == 1)
+                {
+                    float lightRot = LoadMaterialLightRotation(gMaterialInspectorPath2);
+                    if (ImGui::DragFloat("Light Rotation##B", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightRotation(gMaterialInspectorPath2, lightRot);
+                    float lightPit = LoadMaterialLightPitch(gMaterialInspectorPath2);
+                    if (ImGui::DragFloat("Light Pitch##B", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightPitch(gMaterialInspectorPath2, lightPit);
+                    float lightRol = LoadMaterialLightRoll(gMaterialInspectorPath2);
+                    if (ImGui::DragFloat("Light Roll##B", &lightRol, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                        SaveMaterialLightRoll(gMaterialInspectorPath2, lightRol);
+                    float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath2);
+                    if (ImGui::SliderFloat("Shadow Intensity##B", &shadInt, 0.0f, 1.0f, "%.2f"))
+                        SaveMaterialShadowIntensity(gMaterialInspectorPath2, shadInt);
                 }
                 bool texOk = false;
                 if (!texPath.empty())

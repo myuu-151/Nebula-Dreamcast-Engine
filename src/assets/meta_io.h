@@ -18,8 +18,9 @@ namespace NebulaAssets
     float LoadMaterialLightPitch(const std::filesystem::path& matPath);
     float LoadMaterialLightRoll(const std::filesystem::path& matPath);
     float LoadMaterialShadowIntensity(const std::filesystem::path& matPath);
+    int LoadMaterialShadingUv(const std::filesystem::path& matPath);
 
-    bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity);
+    bool SaveMaterialAllFields(const std::filesystem::path& matPath, const std::string& tex, float uvScale, bool allowUvRepeat, float su, float sv, float ou, float ov, float rotDeg, int shadingMode, float lightRotation, float lightPitch, float lightRoll, float shadowIntensity, int shadingUv);
     bool SaveMaterialTexture(const std::filesystem::path& matPath, const std::string& tex);
     bool SaveMaterialUvScale(const std::filesystem::path& matPath, float uvScale);
     bool SaveMaterialAllowUvRepeat(const std::filesystem::path& matPath, bool allowUvRepeat);
@@ -29,6 +30,7 @@ namespace NebulaAssets
     bool SaveMaterialLightPitch(const std::filesystem::path& matPath, float pitch);
     bool SaveMaterialLightRoll(const std::filesystem::path& matPath, float roll);
     bool SaveMaterialShadowIntensity(const std::filesystem::path& matPath, float intensity);
+    bool SaveMaterialShadingUv(const std::filesystem::path& matPath, int uvIndex);
 
     std::filesystem::path GetNebSlotsPathForMesh(const std::filesystem::path& absMeshPath);
     bool LoadNebSlotsManifestFile(const std::filesystem::path& slotFilePath, std::vector<std::string>& outSlots, const std::string& projectDir);

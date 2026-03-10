@@ -24,10 +24,12 @@ typedef struct NB_Vec3 {
 typedef struct NB_Mesh {
     NB_Vec3* pos;
     NB_Vec3* tri_uv;
+    NB_Vec3* tri_uv1;   /* second UV layer (v6+), NULL if absent */
     uint16_t* indices;
     uint16_t* tri_mat;
     int vert_count;
     int tri_count;
+    int uv_layer_count;  /* total UV layers present (0, 1, or 2) */
 } NB_Mesh;
 
 typedef struct NB_Texture {

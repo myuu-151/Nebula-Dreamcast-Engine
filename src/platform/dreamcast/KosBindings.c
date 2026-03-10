@@ -207,6 +207,7 @@ int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out) {
     }
 
     int hasUv = (flags & 1u) != 0;
+    int hasUv1 = (flags & 16u) != 0;
     NB_Vec3* uv = (NB_Vec3*)malloc(sizeof(NB_Vec3) * vc);
     if (!uv) {
         free(pos);
@@ -232,6 +233,33 @@ int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out) {
             }
             uv[i].x = (float)u / 256.0f;
             uv[i].y = (float)v / 256.0f;
+        }
+    }
+
+    NB_Vec3* uv1 = NULL;
+    if (hasUv1) {
+        uv1 = (NB_Vec3*)malloc(sizeof(NB_Vec3) * vc);
+        if (!uv1) {
+            free(uv);
+            free(pos);
+            free(idx);
+            fclose(f);
+            return 0;
+        }
+        for (uint32_t i = 0; i < vc; ++i) {
+            int16_t u = 0;
+            int16_t v = 0;
+            if (!NB_DC_ReadS16BE(f, &u) || !NB_DC_ReadS16BE(f, &v)) {
+                free(uv1);
+                free(uv);
+                free(pos);
+                free(idx);
+                fclose(f);
+                return 0;
+            }
+            uv1[i].x = (float)u / 256.0f;
+            uv1[i].y = (float)v / 256.0f;
+            uv1[i].z = 0.0f;
         }
     }
 
@@ -265,6 +293,7 @@ int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out) {
 
     NB_Vec3* triUv = (NB_Vec3*)malloc(sizeof(NB_Vec3) * ic);
     if (!triUv) {
+        free(uv1);
         free(uv);
         free(pos);
         free(idx);
@@ -283,15 +312,35 @@ int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out) {
         }
     }
 
+    NB_Vec3* triUv1 = NULL;
+    if (uv1) {
+        triUv1 = (NB_Vec3*)malloc(sizeof(NB_Vec3) * ic);
+        if (triUv1) {
+            for (uint32_t i = 0; i < ic; ++i) {
+                uint16_t vi = idx[i];
+                if (vi < vc)
+                    triUv1[i] = uv1[vi];
+                else {
+                    triUv1[i].x = 0.0f;
+                    triUv1[i].y = 0.0f;
+                    triUv1[i].z = 0.0f;
+                }
+            }
+        }
+        free(uv1);
+    }
+
     free(uv);
     fclose(f);
 
     out->pos = pos;
     out->indices = idx;
     out->tri_uv = triUv;
+    out->tri_uv1 = triUv1;
     out->tri_mat = triMat;
     out->vert_count = (int)vc;
     out->tri_count = (int)tc;
+    out->uv_layer_count = (hasUv ? 1 : 0) + (hasUv1 ? 1 : 0);
     return 1;
 }
 
@@ -370,6 +419,7 @@ void NB_DC_FreeMesh(NB_Mesh* m) {
     free(m->pos);
     free(m->indices);
     free(m->tri_uv);
+    free(m->tri_uv1);
     free(m->tri_mat);
     memset(m, 0, sizeof(*m));
 }

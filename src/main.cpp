@@ -13256,7 +13256,6 @@ RenderImGuiOnly:
                                 mc << "          for (int i=0;i<rm->kVertCount;++i) nrm[i]=gn[rm->weldGroups[i]];\n";
                                 mc << "          free(gn);\n";
                                 mc << "        }\n";
-                                mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "      for (int t=0;t<rm->kTriCount;++t){\n";
                                 mc << "        int ia=tris[t*3+0], ib=tris[t*3+1], ic=tris[t*3+2];\n";

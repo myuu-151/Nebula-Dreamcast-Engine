@@ -10500,34 +10500,22 @@ int main(int, char**)
                         }
                         if ((triLit == 1 || triState.shadingUv >= 0) && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol))
                         {
+                            // Match DC build light direction: spherical coords from yaw/pitch
                             float yRad = triState.lightRotation * 3.14159265f / 180.0f;
                             float xRad = triState.lightPitch * 3.14159265f / 180.0f;
-                            float zRad = triState.lightRoll * 3.14159265f / 180.0f;
-                            float bx = 0.3f, by = -1.0f, bz = 0.4f;
-                            float rx = bx * cosf(yRad) + bz * sinf(yRad);
-                            float ry = by;
-                            float rz = -bx * sinf(yRad) + bz * cosf(yRad);
-                            float px = rx;
-                            float py = ry * cosf(xRad) - rz * sinf(xRad);
-                            float pz = ry * sinf(xRad) + rz * cosf(xRad);
-                            float fx = px * cosf(zRad) - py * sinf(zRad);
-                            float fy = px * sinf(zRad) + py * cosf(zRad);
-                            float fz = pz;
+                            float dx = sinf(yRad) * cosf(xRad);
+                            float dy = sinf(xRad);
+                            float dz = cosf(yRad) * cosf(xRad);
+                            float len = sqrtf(dx * dx + dy * dy + dz * dz);
+                            if (len > 1e-8f) { dx /= len; dy /= len; dz /= len; }
+                            else { dx = 0.0f; dy = -1.0f; dz = 0.0f; }
                             if (triState.shadingUv >= 0)
                             {
-                                // Match DC build light direction: spherical coords from yaw/pitch
-                                float dcYaw = yRad;
-                                float dcPit = xRad;
-                                float dx = sinf(dcYaw) * cosf(dcPit);
-                                float dy = sinf(dcPit);
-                                float dz = cosf(dcYaw) * cosf(dcPit);
-                                float len = sqrtf(dx * dx + dy * dy + dz * dz);
-                                if (len > 1e-8f) { swLx = dx / len; swLy = dy / len; swLz = dz / len; }
-                                else { swLx = 0.0f; swLy = -1.0f; swLz = 0.0f; }
+                                swLx = dx; swLy = dy; swLz = dz;
                             }
                             else
                             {
-                                GLfloat lightDir[] = { fx, fy, fz, 0.0f };
+                                GLfloat lightDir[] = { dx, dy, dz, 0.0f };
                                 glLightfv(GL_LIGHT0, GL_POSITION, lightDir);
                             }
                             curLightRot = triState.lightRotation;

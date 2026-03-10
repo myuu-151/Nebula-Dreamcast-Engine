@@ -1243,6 +1243,55 @@ static std::string GetProjectDefaultScene(const std::filesystem::path& projectDi
     return "";
 }
 
+static std::string GetProjectVmuAnim(const std::filesystem::path& projectDir)
+{
+    if (projectDir.empty()) return "";
+    std::ifstream in(projectDir / "Config.ini");
+    if (!in.is_open()) return "";
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.rfind("vmuLinkedAnim=", 0) == 0)
+            return line.substr(14);
+    }
+    return "";
+}
+
+static bool SetProjectVmuAnim(const std::filesystem::path& projectDir, const std::string& animPath)
+{
+    if (projectDir.empty()) return false;
+    std::filesystem::path cfgPath = projectDir / "Config.ini";
+    std::vector<std::string> lines;
+    {
+        std::ifstream in(cfgPath);
+        std::string line;
+        while (std::getline(in, line)) lines.push_back(line);
+    }
+    std::string val = animPath;
+    // Store as relative path if possible
+    if (!animPath.empty())
+    {
+        std::error_code ec;
+        std::filesystem::path rel = std::filesystem::relative(animPath, projectDir, ec);
+        if (!ec && !rel.empty()) val = rel.generic_string();
+    }
+    std::string entry = "vmuLinkedAnim=" + val;
+    bool replaced = false;
+    for (auto& l : lines)
+    {
+        if (l.rfind("vmuLinkedAnim=", 0) == 0) { l = entry; replaced = true; break; }
+    }
+    if (!replaced) lines.push_back(entry);
+    std::ofstream out(cfgPath, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        out << lines[i];
+        if (i + 1 < lines.size()) out << "\n";
+    }
+    return true;
+}
+
 static bool SetProjectDefaultScene(const std::filesystem::path& projectDir, const std::filesystem::path& scenePath)
 {
     if (projectDir.empty() || scenePath.empty()) return false;
@@ -10940,6 +10989,21 @@ RenderImGuiOnly:
                     gUndoStack.clear();
                     gRedoStack.clear();
 
+                    // Auto-load linked VMU anim from project
+                    {
+                        std::string vmuAnim = GetProjectVmuAnim(std::filesystem::path(gProjectDir));
+                        if (!vmuAnim.empty())
+                        {
+                            std::filesystem::path vmuPath(vmuAnim);
+                            if (vmuPath.is_relative()) vmuPath = std::filesystem::path(gProjectDir) / vmuPath;
+                            if (std::filesystem::exists(vmuPath) && LoadVmuFrameData(vmuPath))
+                            {
+                                gVmuLinkedAnimPath = vmuPath.string();
+                                gShowVmuTool = true;
+                            }
+                        }
+                    }
+
                     AddRecentProject(gProjectFile);
                 }
             }
@@ -10992,6 +11056,21 @@ RenderImGuiOnly:
                             gAxisLock = 0;
                             gUndoStack.clear();
                             gRedoStack.clear();
+
+                            // Auto-load linked VMU anim from project
+                            {
+                                std::string vmuAnim = GetProjectVmuAnim(std::filesystem::path(gProjectDir));
+                                if (!vmuAnim.empty())
+                                {
+                                    std::filesystem::path vmuPath(vmuAnim);
+                                    if (vmuPath.is_relative()) vmuPath = std::filesystem::path(gProjectDir) / vmuPath;
+                                    if (std::filesystem::exists(vmuPath) && LoadVmuFrameData(vmuPath))
+                                    {
+                                        gVmuLinkedAnimPath = vmuPath.string();
+                                        gShowVmuTool = true;
+                                    }
+                                }
+                            }
 
                             AddRecentProject(gProjectFile);
                         }
@@ -17366,6 +17445,29 @@ RenderImGuiOnly:
                 }
                 gViewportToastUntil = glfwGetTime() + 1.8;
             }
+            // Drag-drop target: drop .vmuanim onto "Load Asset Linked" to link permanently
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("VMU_ANIM_ASSET"))
+                {
+                    std::string droppedPath((const char*)payload->Data);
+                    if (LoadVmuFrameData(droppedPath))
+                    {
+                        gVmuLinkedAnimPath = droppedPath;
+                        gVmuCurrentLoadedType = 2;
+                        // Persist to project Config.ini
+                        if (!gProjectDir.empty())
+                            SetProjectVmuAnim(std::filesystem::path(gProjectDir), droppedPath);
+                        gViewportToast = "VMU Tool: linked VMUAnim (saved to project)";
+                    }
+                    else
+                    {
+                        gViewportToast = "VMU Tool: failed to load dropped VMUAnim";
+                    }
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+                ImGui::EndDragDropTarget();
+            }
             ImGui::SameLine();
             if (ImGui::Button(gVmuDrawMode ? "Draw: ON" : "Draw"))
             {
@@ -17521,7 +17623,11 @@ RenderImGuiOnly:
                                         if (LoadVmuFrameData(p))
                                         {
                                             gVmuLinkedAnimPath = p.string();
-                                            gViewportToast = "VMU Tool: frame data loaded";
+                                            gVmuCurrentLoadedType = 2;
+                                            // Persist link to project
+                                            if (!gProjectDir.empty())
+                                                SetProjectVmuAnim(std::filesystem::path(gProjectDir), p.string());
+                                            gViewportToast = "VMU Tool: frame data loaded (linked)";
                                         }
                                         else gViewportToast = "VMU Tool: load framedata failed";
                                     }
@@ -17541,6 +17647,13 @@ RenderImGuiOnly:
                                 {
                                     std::string dragPath = p.string();
                                     ImGui::SetDragDropPayload("VMU_PNG_ASSET", dragPath.c_str(), dragPath.size() + 1);
+                                    ImGui::TextUnformatted(p.filename().string().c_str());
+                                    ImGui::EndDragDropSource();
+                                }
+                                if (ext == ".vmuanim" && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                                {
+                                    std::string dragPath = p.string();
+                                    ImGui::SetDragDropPayload("VMU_ANIM_ASSET", dragPath.c_str(), dragPath.size() + 1);
                                     ImGui::TextUnformatted(p.filename().string().c_str());
                                     ImGui::EndDragDropSource();
                                 }

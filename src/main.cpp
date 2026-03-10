@@ -10494,8 +10494,14 @@ int main(int, char**)
                             float fz = pz;
                             if (triState.shadingUv >= 0)
                             {
-                                float len = sqrtf(fx * fx + fy * fy + fz * fz);
-                                if (len > 1e-8f) { swLx = fx / len; swLy = fy / len; swLz = fz / len; }
+                                // Match DC build light direction: spherical coords from yaw/pitch
+                                float dcYaw = yRad;
+                                float dcPit = xRad;
+                                float dx = sinf(dcYaw) * cosf(dcPit);
+                                float dy = sinf(dcPit);
+                                float dz = cosf(dcYaw) * cosf(dcPit);
+                                float len = sqrtf(dx * dx + dy * dy + dz * dz);
+                                if (len > 1e-8f) { swLx = dx / len; swLy = dy / len; swLz = dz / len; }
                                 else { swLx = 0.0f; swLy = -1.0f; swLz = 0.0f; }
                             }
                             else

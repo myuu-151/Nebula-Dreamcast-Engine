@@ -10375,58 +10375,28 @@ int main(int, char**)
             glRotatef(szRot, 0.0f, 0.0f, 1.0f);
             glScalef(wsx, wsy, wsz);
 
-            // Transform smooth normals to camera space: model rotation + view rotation
-            // matching DC build which computes normals from cs[] (w2c(model(v))).
+            // Transform smooth normals by model rotation (Z->Y->X, matching DC build order)
             std::vector<Vec3> csNormals;
-            float viewUpper3x3[9] = {}; // store view rotation for light transform
             if (!smoothNormals.empty())
             {
-                float mv[16];
-                glGetFloatv(GL_MODELVIEW_MATRIX, mv);
-                // Extract just the view matrix (before model transforms) for light compensation
-                // We need view-only rotation: get it from the GL matrix BEFORE model transforms were applied
-                // modelview = View * Translate * RotX * RotY * RotZ * Scale
-                // We want just the View part, so compute View = modelview * inverse(model)
-                // But simpler: save the view matrix before model transforms, or reconstruct
-                // For light: we need inv(View) rotation to transform light to view space
-                // Actually, just use the full modelview for normals (camera-space)
-                csNormals.resize(smoothNormals.size());
-                for (size_t vi = 0; vi < smoothNormals.size(); ++vi)
-                {
-                    const Vec3& n = smoothNormals[vi];
-                    float tx = mv[0]*n.x + mv[4]*n.y + mv[8]*n.z;
-                    float ty = mv[1]*n.x + mv[5]*n.y + mv[9]*n.z;
-                    float tz = mv[2]*n.x + mv[6]*n.y + mv[10]*n.z;
-                    float len = sqrtf(tx*tx + ty*ty + tz*tz);
-                    if (len > 1e-8f) { csNormals[vi] = {tx/len, ty/len, tz/len}; }
-                    else { csNormals[vi] = {0.0f, 1.0f, 0.0f}; }
-                }
-                // Build model-only rotation matrix to extract view from modelview
                 float rxD = sxRot * 3.14159265f / 180.0f;
                 float ryD = syRot * 3.14159265f / 180.0f;
                 float rzD = szRot * 3.14159265f / 180.0f;
-                float srx = sinf(rxD), crx = cosf(rxD);
-                float sry = sinf(ryD), cry = cosf(ryD);
-                float srz = sinf(rzD), crz = cosf(rzD);
-                // Model rotation = RotX * RotY * RotZ (GL order: last applied first)
-                // M[0][0..2] = row 0, M[1][0..2] = row 1, M[2][0..2] = row 2
-                float m00 = cry*crz, m01 = -cry*srz, m02 = sry;
-                float m10 = srx*sry*crz + crx*srz, m11 = -srx*sry*srz + crx*crz, m12 = -srx*cry;
-                float m20 = -crx*sry*crz + srx*srz, m21 = crx*sry*srz + srx*crz, m22 = crx*cry;
-                // View = modelview * inv(model_with_scale)
-                // For normal/light transform we only need rotation, so ignore scale/translate
-                // inv(rotation) = transpose(rotation) for orthonormal matrices
-                // V_rot = MV_upper3x3 * transpose(M_rot)
-                // But we only need V_rot to transform the light direction
-                viewUpper3x3[0] = mv[0]*m00 + mv[4]*m10 + mv[8]*m20;
-                viewUpper3x3[1] = mv[0]*m01 + mv[4]*m11 + mv[8]*m21;
-                viewUpper3x3[2] = mv[0]*m02 + mv[4]*m12 + mv[8]*m22;
-                viewUpper3x3[3] = mv[1]*m00 + mv[5]*m10 + mv[9]*m20;
-                viewUpper3x3[4] = mv[1]*m01 + mv[5]*m11 + mv[9]*m21;
-                viewUpper3x3[5] = mv[1]*m02 + mv[5]*m12 + mv[9]*m22;
-                viewUpper3x3[6] = mv[2]*m00 + mv[6]*m10 + mv[10]*m20;
-                viewUpper3x3[7] = mv[2]*m01 + mv[6]*m11 + mv[10]*m21;
-                viewUpper3x3[8] = mv[2]*m02 + mv[6]*m12 + mv[10]*m22;
+                float sx = sinf(rxD), cx = cosf(rxD);
+                float sy = sinf(ryD), cy = cosf(ryD);
+                float sz = sinf(rzD), cz = cosf(rzD);
+                csNormals.resize(smoothNormals.size());
+                for (size_t vi = 0; vi < smoothNormals.size(); ++vi)
+                {
+                    Vec3 n = smoothNormals[vi];
+                    float t;
+                    t = n.x*cz - n.y*sz; n.y = n.x*sz + n.y*cz; n.x = t;
+                    t = n.x*cy + n.z*sy; n.z = -n.x*sy + n.z*cy; n.x = t;
+                    t = n.y*cx - n.z*sx; n.z = n.y*sx + n.z*cx; n.y = t;
+                    float len = sqrtf(n.x*n.x + n.y*n.y + n.z*n.z);
+                    if (len > 1e-8f) { csNormals[vi] = {n.x/len, n.y/len, n.z/len}; }
+                    else { csNormals[vi] = {0.0f, 1.0f, 0.0f}; }
+                }
             }
 
             auto setWireColorForMat = [&](int faceMat)
@@ -10538,12 +10508,7 @@ int main(int, char**)
                             float len = sqrtf(dx * dx + dy * dy + dz * dz);
                             if (len > 1e-8f) { dx /= len; dy /= len; dz /= len; }
                             else { dx = 0.0f; dy = -1.0f; dz = 0.0f; }
-                            // Transform light by view rotation so it matches camera-space normals
-                            // This keeps values matched to DC while normals are in camera space
-                            float vlx = viewUpper3x3[0]*dx + viewUpper3x3[1]*dy + viewUpper3x3[2]*dz;
-                            float vly = viewUpper3x3[3]*dx + viewUpper3x3[4]*dy + viewUpper3x3[5]*dz;
-                            float vlz = viewUpper3x3[6]*dx + viewUpper3x3[7]*dy + viewUpper3x3[8]*dz;
-                            swLx = vlx; swLy = vly; swLz = vlz;
+                            swLx = dx; swLy = dy; swLz = dz;
                             curLightRot = triState.lightRotation;
                             curLightPit = triState.lightPitch;
                             curLightRol = triState.lightRoll;

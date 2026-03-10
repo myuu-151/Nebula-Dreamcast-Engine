@@ -10466,7 +10466,7 @@ int main(int, char**)
                 float curLightRol = -999.0f;
                 float curShadowInt = -999.0f;
                 float swLx = 0.0f, swLy = -1.0f, swLz = 0.0f;
-                float swAmb = 1.0f, swDif = 0.0f;
+                float swAmb = 0.35f, swDif = 0.9f, swShQ = 0.0f;
                 for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
                 {
                     uint16_t i0 = mesh->indices[idx + 0];
@@ -10525,18 +10525,21 @@ int main(int, char**)
                         if ((triLit == 1 || triState.shadingUv >= 0) && triState.shadowIntensity != curShadowInt)
                         {
                             float si = triState.shadowIntensity;
-                            if (si < 0.0f) si = 0.0f; if (si > 1.0f) si = 1.0f;
-                            float amb = 1.0f - si * 0.65f;
-                            float dif = si * 0.75f;
+                            if (si < 0.0f) si = 0.0f; if (si > 2.0f) si = 2.0f;
+                            // Match DC build shading formula exactly
+                            float dcAmb = 0.35f;
+                            float dcDifScale = 0.9f - 0.25f * si;
+                            float dcShQ = 0.25f * si;
                             if (triState.shadingUv >= 0)
                             {
-                                swAmb = amb;
-                                swDif = dif;
+                                swAmb = dcAmb;
+                                swDif = dcDifScale;
+                                swShQ = dcShQ;
                             }
                             else
                             {
-                                GLfloat lightAmb[] = { amb, amb, amb, 1.0f };
-                                GLfloat lightDif[] = { dif, dif, dif, 1.0f };
+                                GLfloat lightAmb[] = { dcAmb, dcAmb, dcAmb, 1.0f };
+                                GLfloat lightDif[] = { dcDifScale, dcDifScale, dcDifScale, 1.0f };
                                 glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
                                 glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDif);
                             }
@@ -10549,17 +10552,17 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     else if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     else if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     else if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);

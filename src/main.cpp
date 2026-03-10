@@ -10498,8 +10498,9 @@ int main(int, char**)
                         if ((triLit == 1 || triState.shadingUv >= 0) && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol))
                         {
                             // Match DC build light direction: spherical coords from yaw/pitch
-                            float yRad = triState.lightRotation * 3.14159265f / 180.0f;
-                            float xRad = triState.lightPitch * 3.14159265f / 180.0f;
+                            // Offset compensates for editor camera-space vs DC camera-space difference
+                            float yRad = (triState.lightRotation - 173.0f) * 3.14159265f / 180.0f;
+                            float xRad = (triState.lightPitch - 11.0f) * 3.14159265f / 180.0f;
                             float dx = sinf(yRad) * cosf(xRad);
                             float dy = sinf(xRad);
                             float dz = cosf(yRad) * cosf(xRad);

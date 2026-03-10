@@ -1243,6 +1243,47 @@ static std::string GetProjectDefaultScene(const std::filesystem::path& projectDi
     return "";
 }
 
+static bool GetProjectVmuLoadOnBoot(const std::filesystem::path& projectDir)
+{
+    if (projectDir.empty()) return false;
+    std::ifstream in(projectDir / "Config.ini");
+    if (!in.is_open()) return false;
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.rfind("vmuLoadOnBoot=", 0) == 0)
+            return line.substr(14) == "1";
+    }
+    return false;
+}
+
+static bool SetProjectVmuLoadOnBoot(const std::filesystem::path& projectDir, bool enabled)
+{
+    if (projectDir.empty()) return false;
+    std::filesystem::path cfgPath = projectDir / "Config.ini";
+    std::vector<std::string> lines;
+    {
+        std::ifstream in(cfgPath);
+        std::string line;
+        while (std::getline(in, line)) lines.push_back(line);
+    }
+    std::string entry = std::string("vmuLoadOnBoot=") + (enabled ? "1" : "0");
+    bool replaced = false;
+    for (auto& l : lines)
+    {
+        if (l.rfind("vmuLoadOnBoot=", 0) == 0) { l = entry; replaced = true; break; }
+    }
+    if (!replaced) lines.push_back(entry);
+    std::ofstream out(cfgPath, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) return false;
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        out << lines[i];
+        if (i + 1 < lines.size()) out << "\n";
+    }
+    return true;
+}
+
 static std::string GetProjectVmuAnim(const std::filesystem::path& projectDir)
 {
     if (projectDir.empty()) return "";
@@ -10989,8 +11030,9 @@ RenderImGuiOnly:
                     gUndoStack.clear();
                     gRedoStack.clear();
 
-                    // Auto-load linked VMU anim from project
+                    // Auto-load linked VMU anim and load-on-boot from project
                     {
+                        gVmuLoadOnBoot = GetProjectVmuLoadOnBoot(std::filesystem::path(gProjectDir));
                         std::string vmuAnim = GetProjectVmuAnim(std::filesystem::path(gProjectDir));
                         if (!vmuAnim.empty())
                         {
@@ -11057,8 +11099,9 @@ RenderImGuiOnly:
                             gUndoStack.clear();
                             gRedoStack.clear();
 
-                            // Auto-load linked VMU anim from project
+                            // Auto-load linked VMU anim and load-on-boot from project
                             {
+                                gVmuLoadOnBoot = GetProjectVmuLoadOnBoot(std::filesystem::path(gProjectDir));
                                 std::string vmuAnim = GetProjectVmuAnim(std::filesystem::path(gProjectDir));
                                 if (!vmuAnim.empty())
                                 {
@@ -17380,6 +17423,8 @@ RenderImGuiOnly:
                 else
                 {
                     gVmuLoadOnBoot = !gVmuLoadOnBoot;
+                    if (!gProjectDir.empty())
+                        SetProjectVmuLoadOnBoot(std::filesystem::path(gProjectDir), gVmuLoadOnBoot);
                     gViewportToast = gVmuLoadOnBoot ? "VMU Tool: load-on-boot enabled" : "VMU Tool: load-on-boot disabled";
                 }
                 gViewportToastUntil = glfwGetTime() + 1.8;

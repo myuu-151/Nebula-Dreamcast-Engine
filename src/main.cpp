@@ -10375,23 +10375,29 @@ int main(int, char**)
             glRotatef(szRot, 0.0f, 0.0f, 1.0f);
             glScalef(wsx, wsy, wsz);
 
-            // Transform smooth normals to camera space to match DC build
-            // (DC computes normals from camera-space positions cs[])
+            // Transform smooth normals by model rotation only (not view/camera)
+            // to match DC build world-space orientation without editor camera offset.
+            // DC rotation order: Scale -> RotZ -> RotY -> RotX (same as editor GL order)
             std::vector<Vec3> csNormals;
             if (!smoothNormals.empty())
             {
-                float mv[16];
-                glGetFloatv(GL_MODELVIEW_MATRIX, mv);
+                float rxD = sxRot * 3.14159265f / 180.0f;
+                float ryD = syRot * 3.14159265f / 180.0f;
+                float rzD = szRot * 3.14159265f / 180.0f;
+                float sx = sinf(rxD), cx = cosf(rxD);
+                float sy = sinf(ryD), cy = cosf(ryD);
+                float sz = sinf(rzD), cz = cosf(rzD);
                 csNormals.resize(smoothNormals.size());
                 for (size_t vi = 0; vi < smoothNormals.size(); ++vi)
                 {
-                    const Vec3& n = smoothNormals[vi];
-                    // Multiply by upper-3x3 of modelview (rotation+scale part)
-                    float tx = mv[0]*n.x + mv[4]*n.y + mv[8]*n.z;
-                    float ty = mv[1]*n.x + mv[5]*n.y + mv[9]*n.z;
-                    float tz = mv[2]*n.x + mv[6]*n.y + mv[10]*n.z;
-                    float len = sqrtf(tx*tx + ty*ty + tz*tz);
-                    if (len > 1e-8f) { csNormals[vi] = {tx/len, ty/len, tz/len}; }
+                    Vec3 n = smoothNormals[vi];
+                    // Apply RotZ -> RotY -> RotX (same order as DC build)
+                    float t;
+                    t = n.x*cz - n.y*sz; n.y = n.x*sz + n.y*cz; n.x = t;
+                    t = n.x*cy + n.z*sy; n.z = -n.x*sy + n.z*cy; n.x = t;
+                    t = n.y*cx - n.z*sx; n.z = n.y*sx + n.z*cx; n.y = t;
+                    float len = sqrtf(n.x*n.x + n.y*n.y + n.z*n.z);
+                    if (len > 1e-8f) { csNormals[vi] = {n.x/len, n.y/len, n.z/len}; }
                     else { csNormals[vi] = {0.0f, 1.0f, 0.0f}; }
                 }
             }

@@ -12798,7 +12798,9 @@ RenderImGuiOnly:
                                 mc << "static float dot3(V3 a, V3 b){ return a.x*b.x + a.y*b.y + a.z*b.z; }\n";
                                 mc << "static V3 sub3(V3 a, V3 b){ V3 r={a.x-b.x,a.y-b.y,a.z-b.z}; return r; }\n";
                                 mc << "static V3 cross3(V3 a, V3 b){ V3 r={a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; return r; }\n";
-                                mc << "static V3 norm3(V3 v){ float m=sqrtf(v.x*v.x+v.y*v.y+v.z*v.z); if(m<1e-6f){V3 z={0,0,1}; return z;} V3 r={v.x/m,v.y/m,v.z/m}; return r; }\n";
+                                mc << "/* SH4 fsrra: single-cycle approximate 1/sqrt(x) — ~22-bit precision, plenty for normals */\n";
+                                mc << "static inline float sh4_rsqrt(float x){ __asm__ __volatile__(\"fsrra %0\" : \"+f\"(x)); return x; }\n";
+                                mc << "static V3 norm3(V3 v){ float d=v.x*v.x+v.y*v.y+v.z*v.z; if(d<1e-12f){V3 z={0,0,1}; return z;} float inv=sh4_rsqrt(d); V3 r={v.x*inv,v.y*inv,v.z*inv}; return r; }\n";
                                 mc << "\n";
                                 mc << "/* Camera basis (cached per frame) */\n";
                                 mc << "static V3 gBF,gBR,gBU,gBE;\n";

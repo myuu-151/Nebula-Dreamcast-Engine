@@ -17468,6 +17468,15 @@ RenderImGuiOnly:
                 }
                 ImGui::EndDragDropTarget();
             }
+            // Right-click to unlink
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !gVmuLinkedAnimPath.empty())
+            {
+                gVmuLinkedAnimPath.clear();
+                if (!gProjectDir.empty())
+                    SetProjectVmuAnim(std::filesystem::path(gProjectDir), "");
+                gViewportToast = "VMU Tool: unlinked VMUAnim";
+                gViewportToastUntil = glfwGetTime() + 1.8;
+            }
             ImGui::SameLine();
             if (ImGui::Button(gVmuDrawMode ? "Draw: ON" : "Draw"))
             {

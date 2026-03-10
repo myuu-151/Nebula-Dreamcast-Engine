@@ -10375,6 +10375,27 @@ int main(int, char**)
             glRotatef(szRot, 0.0f, 0.0f, 1.0f);
             glScalef(wsx, wsy, wsz);
 
+            // Transform smooth normals to camera space to match DC build
+            // (DC computes normals from camera-space positions cs[])
+            std::vector<Vec3> csNormals;
+            if (!smoothNormals.empty())
+            {
+                float mv[16];
+                glGetFloatv(GL_MODELVIEW_MATRIX, mv);
+                csNormals.resize(smoothNormals.size());
+                for (size_t vi = 0; vi < smoothNormals.size(); ++vi)
+                {
+                    const Vec3& n = smoothNormals[vi];
+                    // Multiply by upper-3x3 of modelview (rotation+scale part)
+                    float tx = mv[0]*n.x + mv[4]*n.y + mv[8]*n.z;
+                    float ty = mv[1]*n.x + mv[5]*n.y + mv[9]*n.z;
+                    float tz = mv[2]*n.x + mv[6]*n.y + mv[10]*n.z;
+                    float len = sqrtf(tx*tx + ty*ty + tz*tz);
+                    if (len > 1e-8f) { csNormals[vi] = {tx/len, ty/len, tz/len}; }
+                    else { csNormals[vi] = {0.0f, 1.0f, 0.0f}; }
+                }
+            }
+
             auto setWireColorForMat = [&](int faceMat)
             {
                 if (selected) { glColor3f(1.0f, 1.0f, 1.0f); return; }
@@ -10540,17 +10561,17 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
                     else if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
                     else if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
+                    if (triState.shadingUv >= 0 && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float dot = sn.x * swLx + sn.y * swLy + sn.z * swLz; float c = swAmb + swDif * std::max(0.0f, dot); glColor3f(c, c, c); }
                     else if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
                     const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);

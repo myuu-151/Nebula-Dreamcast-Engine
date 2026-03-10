@@ -10489,12 +10489,8 @@ int main(int, char**)
                         glEnd();
                         if (triLit != curLit || triState.shadingUv != curShadingUv)
                         {
-                            if (triState.shadingUv >= 0)
-                                glDisable(GL_LIGHTING);
-                            else if (triLit == 1)
-                                glEnable(GL_LIGHTING);
-                            else
-                                glDisable(GL_LIGHTING);
+                            // All shading now done in software to match DC build exactly
+                            glDisable(GL_LIGHTING);
                             curLit = triLit;
                             curShadingUv = triState.shadingUv;
                         }
@@ -10509,15 +10505,7 @@ int main(int, char**)
                             float len = sqrtf(dx * dx + dy * dy + dz * dz);
                             if (len > 1e-8f) { dx /= len; dy /= len; dz /= len; }
                             else { dx = 0.0f; dy = -1.0f; dz = 0.0f; }
-                            if (triState.shadingUv >= 0)
-                            {
-                                swLx = dx; swLy = dy; swLz = dz;
-                            }
-                            else
-                            {
-                                GLfloat lightDir[] = { dx, dy, dz, 0.0f };
-                                glLightfv(GL_LIGHT0, GL_POSITION, lightDir);
-                            }
+                            swLx = dx; swLy = dy; swLz = dz;
                             curLightRot = triState.lightRotation;
                             curLightPit = triState.lightPitch;
                             curLightRol = triState.lightRoll;
@@ -10526,23 +10514,9 @@ int main(int, char**)
                         {
                             float si = triState.shadowIntensity;
                             if (si < 0.0f) si = 0.0f; if (si > 2.0f) si = 2.0f;
-                            // Match DC build shading formula exactly
-                            float dcAmb = 0.35f;
-                            float dcDifScale = 0.9f - 0.25f * si;
-                            float dcShQ = 0.25f * si;
-                            if (triState.shadingUv >= 0)
-                            {
-                                swAmb = dcAmb;
-                                swDif = dcDifScale;
-                                swShQ = dcShQ;
-                            }
-                            else
-                            {
-                                GLfloat lightAmb[] = { dcAmb, dcAmb, dcAmb, 1.0f };
-                                GLfloat lightDif[] = { dcDifScale, dcDifScale, dcDifScale, 1.0f };
-                                glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmb);
-                                glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDif);
-                            }
+                            swAmb = 0.35f;
+                            swDif = 0.9f - 0.25f * si;
+                            swShQ = 0.25f * si;
                             curShadowInt = triState.shadowIntensity;
                         }
                         if (triState.tex != 0 && mesh->hasUv) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, triState.tex); }
@@ -10552,18 +10526,15 @@ int main(int, char**)
                     }
 
                     if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
-                    else if (triLit == 1 && i0 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i0]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if ((triState.shadingUv >= 0 || triLit == 1) && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     const Vec3& v0 = (*renderPositions)[i0];
                     glVertex3f(v0.x, v0.y, v0.z);
                     if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
-                    else if (triLit == 1 && i1 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i1]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if ((triState.shadingUv >= 0 || triLit == 1) && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     const Vec3& v1 = (*renderPositions)[i1];
                     glVertex3f(v1.x, v1.y, v1.z);
                     if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul; v *= uvMul; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                    if (triState.shadingUv >= 0 && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
-                    else if (triLit == 1 && i2 < smoothNormals.size()) { const Vec3& sn = smoothNormals[i2]; glNormal3f(sn.x, sn.y, sn.z); }
+                    if ((triState.shadingUv >= 0 || triLit == 1) && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
                     const Vec3& v2 = (*renderPositions)[i2];
                     glVertex3f(v2.x, v2.y, v2.z);
                 }

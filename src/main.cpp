@@ -12888,13 +12888,42 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]){ (void)name; if(!outFwd) return; outFwd[0]=gCamForward[0]; outFwd[1]=gCamForward[1]; outFwd[2]=gCamForward[2]; }\n";
                                 mc << "int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName){ (void)cameraName; (void)nodeName; return 1; }\n";
                                 mc << "/* Collision / physics bridge */\n";
-                                mc << "static float gCollExtent[3] = {0.5f, 0.5f, 0.5f};\n";
-                                mc << "static int gPhysicsEnabled = 0;\n";
+                                // Find the player's parent Node3D to export its physics settings
+                                {
+                                    float initExtX = 0.5f, initExtY = 0.5f, initExtZ = 0.5f;
+                                    float initBpX = 0.0f, initBpY = 0.0f, initBpZ = 0.0f;
+                                    int initPhysics = 0;
+                                    std::string parentName = meshSrc.parent;
+                                    for (const auto& n3 : gNode3DNodes)
+                                    {
+                                        if (n3.name == parentName)
+                                        {
+                                            initExtX = n3.extentX; initExtY = n3.extentY; initExtZ = n3.extentZ;
+                                            initBpX = n3.boundPosX; initBpY = n3.boundPosY; initBpZ = n3.boundPosZ;
+                                            initPhysics = n3.physicsEnabled ? 1 : 0;
+                                            break;
+                                        }
+                                    }
+                                    mc << "static float gCollExtent[3] = {" << fstr(initExtX) << "," << fstr(initExtY) << "," << fstr(initExtZ) << "};\n";
+                                    mc << "static int gPhysicsEnabled = " << initPhysics << ";\n";
+                                }
                                 mc << "static float gVelY = 0.0f;\n";
                                 mc << "static int gOnFloor = 0;\n";
                                 mc << "void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]){ (void)name; if(!outExtents) return; outExtents[0]=gCollExtent[0]; outExtents[1]=gCollExtent[1]; outExtents[2]=gCollExtent[2]; }\n";
                                 mc << "void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez){ (void)name; gCollExtent[0]=ex; gCollExtent[1]=ey; gCollExtent[2]=ez; }\n";
-                                mc << "static float gBoundPos[3] = {0.0f, 0.0f, 0.0f};\n";
+                                {
+                                    float bpX = 0.0f, bpY = 0.0f, bpZ = 0.0f;
+                                    std::string parentName = meshSrc.parent;
+                                    for (const auto& n3 : gNode3DNodes)
+                                    {
+                                        if (n3.name == parentName)
+                                        {
+                                            bpX = n3.boundPosX; bpY = n3.boundPosY; bpZ = n3.boundPosZ;
+                                            break;
+                                        }
+                                    }
+                                    mc << "static float gBoundPos[3] = {" << fstr(bpX) << "," << fstr(bpY) << "," << fstr(bpZ) << "};\n";
+                                }
                                 mc << "void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]){ (void)name; if(!outPos) return; outPos[0]=gBoundPos[0]; outPos[1]=gBoundPos[1]; outPos[2]=gBoundPos[2]; }\n";
                                 mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ (void)name; gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; }\n";
                                 mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ (void)name; return gPhysicsEnabled; }\n";

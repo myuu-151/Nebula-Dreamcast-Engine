@@ -12524,6 +12524,7 @@ RenderImGuiOnly:
                             std::vector<std::string> runtimeSceneFiles;
                             std::vector<std::vector<std::string>> runtimeSceneAnimDiskByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
+                            std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
                             std::string defaultSceneRuntimeFile;
                             for (const auto& ls : loadedScenes)
                             {
@@ -12546,6 +12547,7 @@ RenderImGuiOnly:
                                 int sceneSkippedMeshes = 0;
                                 std::vector<std::string> sceneAnimDiskByMesh;
                                 std::vector<uint8_t> sceneRuntimeTestByMesh;
+                                std::vector<uint8_t> sceneCollisionSourceByMesh;
                                 for (const auto& sm : stagedScene.staticMeshes)
                                 {
                                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
@@ -12600,6 +12602,7 @@ RenderImGuiOnly:
                                     }
                                     sceneAnimDiskByMesh.push_back(animDisk);
                                     sceneRuntimeTestByMesh.push_back(sm.runtimeTest ? 1u : 0u);
+                                    sceneCollisionSourceByMesh.push_back(sm.collisionSource ? 1u : 0u);
                                     ++sceneWrittenMeshes;
                                 }
                                 printf("[DreamcastBuild] Scene '%s' -> %s: %d meshes written, %d skipped\n",
@@ -12607,6 +12610,7 @@ RenderImGuiOnly:
                                 runtimeSceneFiles.push_back(sceneOutName);
                                 runtimeSceneAnimDiskByMesh.push_back(std::move(sceneAnimDiskByMesh));
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
+                                runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
                                 if (defaultSceneRuntimeFile.empty()) defaultSceneRuntimeFile = sceneOutName;
                             }
                             if (runtimeSceneFiles.empty())
@@ -12614,6 +12618,7 @@ RenderImGuiOnly:
                                 runtimeSceneFiles.push_back("DEFAULT.NEBSCENE");
                                 runtimeSceneAnimDiskByMesh.push_back({});
                                 runtimeSceneRuntimeTestByMesh.push_back({});
+                                runtimeSceneCollisionSourceByMesh.push_back({});
                                 std::ofstream so(cdScenesDir / "DEFAULT.NEBSCENE", std::ios::out | std::ios::trunc);
                                 if (so.is_open())
                                 {
@@ -12982,7 +12987,7 @@ RenderImGuiOnly:
                                 mc << "  dbgio_printf(\"[Mirror] idx=%d => X=%d Y=%d Z=%d\\n\", gMirrorLrIndex, gMirrorX, gMirrorY, gMirrorZ);\n";
                                 mc << "}\n";
                                 mc << "enum { MAX_SLOT = 16, MAX_MESHES = 64 };\n";
-                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; } SceneMeshMeta;\n";
+                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; uint8_t collisionSource; } SceneMeshMeta;\n";
                                 mc << "static SceneMeshMeta gSceneMeshes[MAX_MESHES];\n";
                                 mc << "static int gSceneMeshCount = 0;\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
@@ -13044,9 +13049,24 @@ RenderImGuiOnly:
                                     mc << "\n";
                                 }
                                 mc << "};\n";
+                                mc << "static const uint8_t kSceneCollisionSource[" << (int)runtimeSceneFiles.size() << "][MAX_MESHES] = {\n";
+                                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                                {
+                                    mc << "{";
+                                    for (int mi = 0; mi < 64; ++mi)
+                                    {
+                                        int cs = (mi < (int)runtimeSceneCollisionSourceByMesh[si].size()) ? (runtimeSceneCollisionSourceByMesh[si][mi] ? 1 : 0) : 0;
+                                        mc << cs;
+                                        if (mi + 1 < 64) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "};\n";
                                 mc << "static const char* NB_ResolveMappedRef(const char* logical, const NB_RefMap* map, int count){ if(!logical||!logical[0]||!map||count<=0) return logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(logical,map[i].logical))||(map[i].staged&&dc_eq_nocase(logical,map[i].staged))) return map[i].staged; } const char* slash=strrchr(logical,'/'); const char* name=slash?slash+1:logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(name,map[i].logical))||(map[i].staged&&dc_eq_nocase(name,map[i].staged))) return map[i].staged; } return logical; }\n";
                                 mc << "static int NB_FindSceneMetaIndex(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return gSceneIndex; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(sceneFile,gSceneFiles[i])) return i; } const char* slash=strrchr(sceneFile,'/'); const char* name=slash?slash+1:sceneFile; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(name,gSceneFiles[i])) return i; } return gSceneIndex; }\n";
-                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } if(gSceneMeshCount>0){ gMeshPos[0]=gSceneMeshes[0].pos[0]; gMeshPos[1]=gSceneMeshes[0].pos[1]; gMeshPos[2]=gSceneMeshes[0].pos[2]; gMeshRot[0]=gSceneMeshes[0].rot[0]; gMeshRot[1]=gSceneMeshes[0].rot[1]; gMeshRot[2]=gSceneMeshes[0].rot[2]; gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
+                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } if(gSceneMeshCount>0){ gMeshPos[0]=gSceneMeshes[0].pos[0]; gMeshPos[1]=gSceneMeshes[0].pos[1]; gMeshPos[2]=gSceneMeshes[0].pos[2]; gMeshRot[0]=gSceneMeshes[0].rot[0]; gMeshRot[1]=gSceneMeshes[0].rot[1]; gMeshRot[2]=gSceneMeshes[0].rot[2]; gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
                                 mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; gSceneMetaIndex=NB_FindSceneMetaIndex(sceneFile); gSceneIndex=gSceneMetaIndex; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); if(!NB_DC_LoadScene(path)) return 0; return NB_ApplyLoadedSceneState(); }\n";
                                 mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; gSceneIndex=idx; gSceneMetaIndex=idx; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",gSceneFiles[idx]); if(!NB_DC_SwitchScene(path)) return 0; if(!NB_ApplyLoadedSceneState()) return 0; return 1; }\n";
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
@@ -13492,6 +13512,37 @@ RenderImGuiOnly:
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    NB_Game_OnUpdate(dt);\n";
+                                mc << "    /* Physics tick: gravity + AABB floor collision */\n";
+                                mc << "    if (gPhysicsEnabled) {\n";
+                                mc << "      gVelY += -29.4f * dt;\n";
+                                mc << "      gMeshPos[1] += gVelY * dt;\n";
+                                mc << "      gOnFloor = 0;\n";
+                                mc << "      float pHx = gCollExtent[0], pHy = gCollExtent[1], pHz = gCollExtent[2];\n";
+                                mc << "      float pCx = gMeshPos[0] + gBoundPos[0], pCy = gMeshPos[1] + gBoundPos[1], pCz = gMeshPos[2] + gBoundPos[2];\n";
+                                mc << "      for (int mi = 0; mi < gSceneMeshCount && mi < MAX_MESHES; ++mi) {\n";
+                                mc << "        SceneMeshMeta* sm = &gSceneMeshes[mi];\n";
+                                mc << "        RuntimeSceneMesh* rm = &meshRt[mi];\n";
+                                mc << "        if (!sm->collisionSource || !rm->loaded || !rm->base || rm->kVertCount <= 0) continue;\n";
+                                mc << "        float fMinX = 1e30f, fMaxX = -1e30f, fMinZ = 1e30f, fMaxZ = -1e30f, fTopY = -1e30f;\n";
+                                mc << "        for (int vi = 0; vi < rm->kVertCount; ++vi) {\n";
+                                mc << "          float px = sm->pos[0] + rm->base[vi].x * sm->scale[0];\n";
+                                mc << "          float py = sm->pos[1] + rm->base[vi].y * sm->scale[1];\n";
+                                mc << "          float pz = sm->pos[2] + rm->base[vi].z * sm->scale[2];\n";
+                                mc << "          if (px < fMinX) fMinX = px; if (px > fMaxX) fMaxX = px;\n";
+                                mc << "          if (pz < fMinZ) fMinZ = pz; if (pz > fMaxZ) fMaxZ = pz;\n";
+                                mc << "          if (py > fTopY) fTopY = py;\n";
+                                mc << "        }\n";
+                                mc << "        if (fMinX > fMaxX) continue;\n";
+                                mc << "        if (pCx + pHx >= fMinX && pCx - pHx <= fMaxX && pCz + pHz >= fMinZ && pCz - pHz <= fMaxZ) {\n";
+                                mc << "          float bottomY = pCy - pHy;\n";
+                                mc << "          if (bottomY < fTopY) {\n";
+                                mc << "            gMeshPos[1] += (fTopY - bottomY);\n";
+                                mc << "            if (gVelY < 0.0f) gVelY = 0.0f;\n";
+                                mc << "            gOnFloor = 1;\n";
+                                mc << "          }\n";
+                                mc << "        }\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
                                 mc << "    if (sceneSwitchReq != 0) {\n";
                                 mc << "      int metaOk = (sceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
                                 mc << "      sceneSwitchReq = 0;\n";

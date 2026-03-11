@@ -2021,21 +2021,20 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
 
     int generated = 0;
 
-    // Keep only materials actually referenced by meshes, in stable internal index order.
-    std::vector<unsigned int> used;
+    // Keep only materials actually referenced by meshes, in source file order.
     std::vector<unsigned char> seen(scene->mNumMaterials, 0);
     for (unsigned int m = 0; m < scene->mNumMeshes; ++m)
     {
         const aiMesh* mesh = scene->mMeshes[m];
         if (!mesh) continue;
-        if (mesh->mMaterialIndex < scene->mNumMaterials && !seen[mesh->mMaterialIndex])
-        {
+        if (mesh->mMaterialIndex < scene->mNumMaterials)
             seen[mesh->mMaterialIndex] = 1;
-            used.push_back(mesh->mMaterialIndex);
-        }
     }
-    std::sort(used.begin(), used.end());
-
+    std::vector<unsigned int> used;
+    for (unsigned int i = 0; i < scene->mNumMaterials; ++i)
+    {
+        if (seen[i]) used.push_back(i);
+    }
     std::string meshStem = SanitizeToken(meshOut.stem().string());
     std::vector<std::string> importedSlotMaterials(kStaticMeshMaterialSlots);
     for (size_t ui = 0; ui < used.size(); ++ui)

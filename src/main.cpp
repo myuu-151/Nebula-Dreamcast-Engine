@@ -13404,8 +13404,13 @@ RenderImGuiOnly:
                                 mc << "  }\n";
                                 mc << "\n";
                                 mc << "  float sRuntimeClock = 0.0f;\n";
+                                mc << "  uint64 sLastUs = timer_us_gettime64();\n";
                                 mc << "  for (;;) {\n";
-                                mc << "    const float dt = 0.016f;\n";
+                                mc << "    uint64 sNowUs = timer_us_gettime64();\n";
+                                mc << "    float dt = (float)(sNowUs - sLastUs) * 0.000001f;\n";
+                                mc << "    sLastUs = sNowUs;\n";
+                                mc << "    if (dt > 0.1f) dt = 0.1f;\n";
+                                mc << "    if (dt < 0.0001f) dt = 0.016f;\n";
                                 mc << "    sRuntimeClock += dt;\n";
                                 mc << "    NB_KOS_PollInput();\n";
                                 mc << "    NB_TryLoadVmuBootImage();\n";
@@ -13705,7 +13710,6 @@ RenderImGuiOnly:
                                 mc << "\n";
                                 mc << "    pvr_list_finish();\n";
                                 mc << "    pvr_scene_finish();\n";
-                                mc << "    thd_sleep(16);\n";
                                 mc << "  }\n";
                                 mc << "\n";
                                 mc << "  return 0;\n";

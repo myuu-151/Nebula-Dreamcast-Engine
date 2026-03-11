@@ -2082,7 +2082,7 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
         {
             char midx[8];
             snprintf(midx, sizeof(midx), "%02u", (unsigned)(ui + 1));
-            std::string texBase = meshStem + "_" + std::string(midx) + "_" + SanitizeToken(texSrc.stem().string());
+            std::string texBase = SanitizeToken(texSrc.stem().string());
             std::filesystem::path texOut = MakeUniqueAssetPath(texDir, texBase, ".nebtex");
             std::string texWarn;
             if (ExportNebTexturePNG(texSrc, texOut, texWarn))

@@ -9426,6 +9426,7 @@ int main(int, char**)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
+                float preGravY = n3.y;
                 n3.velY += gravity * dt;
                 n3.y += n3.velY * dt;
 
@@ -9440,6 +9441,9 @@ int main(int, char**)
                 const float phx = std::max(0.0f, n3.extentX * pwsx);
                 const float phy = std::max(0.0f, n3.extentY * pwsy);
                 const float phz = std::max(0.0f, n3.extentZ * pwsz);
+                // Pre-gravity collision center Y (gravity only changes n3.y which flows into pwy/cy)
+                float gravDelta = n3.y - preGravY;
+                float prevBottomY = (cy - gravDelta) - phy;
 
                 for (const auto& fc : floorColliders)
                 {
@@ -9447,9 +9451,9 @@ int main(int, char**)
                     // AABB overlap test using physics node's bounds
                     if (cx + phx >= fc.minX && cx - phx <= fc.maxX && cz + phz >= fc.minZ && cz - phz <= fc.maxZ)
                     {
-                        // Floor response: bottom of collision box sits on floor surface
+                        // Floor response: only land on surfaces that were below feet before gravity
                         float bottomY = cy - phy;
-                        if (bottomY < fc.y)
+                        if (bottomY < fc.y && fc.y <= prevBottomY + 0.05f)
                         {
                             n3.y += (fc.y - bottomY);
                             if (n3.velY < 0.0f) n3.velY = 0.0f;
@@ -13548,11 +13552,13 @@ RenderImGuiOnly:
                                 mc << "    NB_Game_OnUpdate(dt);\n";
                                 mc << "    /* Physics tick: gravity + AABB floor collision */\n";
                                 mc << "    if (gPhysicsEnabled) {\n";
+                                mc << "      float preGravY = gMeshPos[1];\n";
                                 mc << "      gVelY += -29.4f * dt;\n";
                                 mc << "      gMeshPos[1] += gVelY * dt;\n";
                                 mc << "      gOnFloor = 0;\n";
                                 mc << "      float pHx = gCollExtent[0], pHy = gCollExtent[1], pHz = gCollExtent[2];\n";
                                 mc << "      float pCx = gMeshPos[0] + gBoundPos[0], pCy = gMeshPos[1] + gBoundPos[1], pCz = gMeshPos[2] + gBoundPos[2];\n";
+                                mc << "      float prevBottomY = (preGravY + gBoundPos[1]) - pHy;\n";
                                 mc << "      for (int mi = 0; mi < gSceneMeshCount && mi < MAX_MESHES; ++mi) {\n";
                                 mc << "        SceneMeshMeta* sm = &gSceneMeshes[mi];\n";
                                 mc << "        RuntimeSceneMesh* rm = &meshRt[mi];\n";
@@ -13569,7 +13575,7 @@ RenderImGuiOnly:
                                 mc << "        if (fMinX > fMaxX) continue;\n";
                                 mc << "        if (pCx + pHx >= fMinX && pCx - pHx <= fMaxX && pCz + pHz >= fMinZ && pCz - pHz <= fMaxZ) {\n";
                                 mc << "          float bottomY = pCy - pHy;\n";
-                                mc << "          if (bottomY < fTopY) {\n";
+                                mc << "          if (bottomY < fTopY && fTopY <= prevBottomY + 0.05f) {\n";
                                 mc << "            gMeshPos[1] += (fTopY - bottomY);\n";
                                 mc << "            if (gVelY < 0.0f) gVelY = 0.0f;\n";
                                 mc << "            gOnFloor = 1;\n";

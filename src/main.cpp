@@ -17060,20 +17060,6 @@ RenderImGuiOnly:
                         s = "Assets/" + s;
                     SaveMaterialTexture(gMaterialInspectorPath, s);
                 }
-                float uvScale = 0.0f;
-                LoadMaterialUvScale(gMaterialInspectorPath, uvScale);
-                int uvScaleStep = 0;
-                if (uvScale <= -2.5f) uvScaleStep = -3;
-                else if (uvScale <= -1.5f) uvScaleStep = -2;
-                else if (uvScale <= -0.5f) uvScaleStep = -1;
-                else uvScaleStep = 0;
-                int uvIdx = (uvScaleStep == 0) ? 0 : (uvScaleStep == -1 ? 1 : (uvScaleStep == -2 ? 2 : 3));
-                const char* uvScaleOptions[] = { "0", "-1", "-2", "-3" };
-                if (ImGui::Combo("UV Scale", &uvIdx, uvScaleOptions, IM_ARRAYSIZE(uvScaleOptions)))
-                {
-                    uvScaleStep = (uvIdx == 0) ? 0 : (uvIdx == 1 ? -1 : (uvIdx == 2 ? -2 : -3));
-                    SaveMaterialUvScale(gMaterialInspectorPath, (float)uvScaleStep);
-                }
                 {
                     float su=1,sv=1,ou=0,ov=0,rd=0;
                     LoadMaterialUvTransform(gMaterialInspectorPath,su,sv,ou,ov,rd);
@@ -17081,12 +17067,6 @@ RenderImGuiOnly:
                     if (ImGui::DragFloat("U Scale", &su, 0.01f, 0.01f, 100.0f, "%.3f")) changed = true;
                     if (ImGui::DragFloat("V Scale", &sv, 0.01f, 0.01f, 100.0f, "%.3f")) changed = true;
                     if (changed) SaveMaterialUvTransform(gMaterialInspectorPath,su,sv,ou,ov,rd);
-                }
-                bool allowUvRepeat = false;
-                LoadMaterialAllowUvRepeat(gMaterialInspectorPath, allowUvRepeat);
-                if (ImGui::Checkbox("Extended UV (Saturn)", &allowUvRepeat))
-                {
-                    SaveMaterialAllowUvRepeat(gMaterialInspectorPath, allowUvRepeat);
                 }
                 int shadingMode = LoadMaterialShadingMode(gMaterialInspectorPath);
                 const char* shadingOptions[] = { "Unlit", "Lit" };
@@ -17227,25 +17207,13 @@ RenderImGuiOnly:
                         s = "Assets/" + s;
                     SaveMaterialTexture(gMaterialInspectorPath2, s);
                 }
-                float uvScale = 0.0f;
-                LoadMaterialUvScale(gMaterialInspectorPath2, uvScale);
-                int uvScaleStep = 0;
-                if (uvScale <= -2.5f) uvScaleStep = -3;
-                else if (uvScale <= -1.5f) uvScaleStep = -2;
-                else if (uvScale <= -0.5f) uvScaleStep = -1;
-                else uvScaleStep = 0;
-                int uvIdx = (uvScaleStep == 0) ? 0 : (uvScaleStep == -1 ? 1 : (uvScaleStep == -2 ? 2 : 3));
-                const char* uvScaleOptions[] = { "0", "-1", "-2", "-3" };
-                if (ImGui::Combo("UV Scale##B", &uvIdx, uvScaleOptions, IM_ARRAYSIZE(uvScaleOptions)))
                 {
-                    uvScaleStep = (uvIdx == 0) ? 0 : (uvIdx == 1 ? -1 : (uvIdx == 2 ? -2 : -3));
-                    SaveMaterialUvScale(gMaterialInspectorPath2, (float)uvScaleStep);
-                }
-                bool allowUvRepeat = false;
-                LoadMaterialAllowUvRepeat(gMaterialInspectorPath2, allowUvRepeat);
-                if (ImGui::Checkbox("Extended UV (Saturn)##B", &allowUvRepeat))
-                {
-                    SaveMaterialAllowUvRepeat(gMaterialInspectorPath2, allowUvRepeat);
+                    float su=1,sv=1,ou=0,ov=0,rd=0;
+                    LoadMaterialUvTransform(gMaterialInspectorPath2,su,sv,ou,ov,rd);
+                    bool changed = false;
+                    if (ImGui::DragFloat("U Scale##B", &su, 0.01f, 0.01f, 100.0f, "%.3f")) changed = true;
+                    if (ImGui::DragFloat("V Scale##B", &sv, 0.01f, 0.01f, 100.0f, "%.3f")) changed = true;
+                    if (changed) SaveMaterialUvTransform(gMaterialInspectorPath2,su,sv,ou,ov,rd);
                 }
                 int shadingMode = LoadMaterialShadingMode(gMaterialInspectorPath2);
                 const char* shadingOptions[] = { "Unlit", "Lit" };

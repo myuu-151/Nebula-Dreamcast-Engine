@@ -17142,13 +17142,14 @@ RenderImGuiOnly:
                 int wrapMode = LoadNebTexWrapMode(gNebTexInspectorPath);
                 int saturnNpot = LoadNebTexSaturnNpotMode(gNebTexInspectorPath); // 0=pad, 1=resample
                 int filterMode = LoadNebTexFilterMode(gNebTexInspectorPath); // 0=nearest, 1=bilinear
-                const char* wrapOptions[] = { "Repeat", "Extend", "Clip", "Mirror" };
+                const char* wrapOptions[] = { "Repeat", "Extend" };
                 const char* saturnNpotOptions[] = { "Pad", "Resample" };
                 const char* filterOptions[] = { "Nearest", "Bilinear" };
                 bool flipU = false, flipV = false;
                 LoadNebTexFlipOptions(gNebTexInspectorPath, flipU, flipV);
                 bool changed = false;
-                changed |= ImGui::Combo("Extension", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
+                if (wrapMode > 1) wrapMode = 0;
+                changed |= ImGui::Combo("Wrap Mode", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
                 changed |= ImGui::Combo("Filter", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
                 changed |= ImGui::Combo("NPOT", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U", &flipU);
@@ -17300,13 +17301,14 @@ RenderImGuiOnly:
                 int wrapMode = LoadNebTexWrapMode(gNebTexInspectorPath2);
                 int saturnNpot = LoadNebTexSaturnNpotMode(gNebTexInspectorPath2);
                 int filterMode = LoadNebTexFilterMode(gNebTexInspectorPath2);
-                const char* wrapOptions[] = { "Repeat", "Extend", "Clip", "Mirror" };
+                const char* wrapOptions[] = { "Repeat", "Extend" };
                 const char* saturnNpotOptions[] = { "Pad", "Resample" };
                 const char* filterOptions[] = { "Nearest", "Bilinear" };
                 bool flipU = false, flipV = false;
                 LoadNebTexFlipOptions(gNebTexInspectorPath2, flipU, flipV);
                 bool changed = false;
-                changed |= ImGui::Combo("Extension##B", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
+                if (wrapMode > 1) wrapMode = 0;
+                changed |= ImGui::Combo("Wrap Mode##B", &wrapMode, wrapOptions, IM_ARRAYSIZE(wrapOptions));
                 changed |= ImGui::Combo("Filter##B", &filterMode, filterOptions, IM_ARRAYSIZE(filterOptions));
                 changed |= ImGui::Combo("NPOT##B", &saturnNpot, saturnNpotOptions, IM_ARRAYSIZE(saturnNpotOptions));
                 changed |= ImGui::Checkbox("Flip U##B", &flipU);

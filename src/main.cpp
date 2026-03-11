@@ -9305,14 +9305,29 @@ int main(int, char**)
                 n3.velY += gravity * dt;
                 n3.y += n3.velY * dt;
 
+                // Compute physics node's collision box in world space
+                float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
+                GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
+                Vec3 pRight{}, pUp{}, pForward{};
+                GetLocalAxesFromEuler(pwrx, pwry, pwrz, pRight, pUp, pForward);
+                float cx = pwx + pRight.x * n3.boundPosX + pUp.x * n3.boundPosY + pForward.x * n3.boundPosZ;
+                float cy = pwy + pRight.y * n3.boundPosX + pUp.y * n3.boundPosY + pForward.y * n3.boundPosZ;
+                float cz = pwz + pRight.z * n3.boundPosX + pUp.z * n3.boundPosY + pForward.z * n3.boundPosZ;
+                const float phx = std::max(0.0f, n3.extentX * pwsx);
+                const float phy = std::max(0.0f, n3.extentY * pwsy);
+                const float phz = std::max(0.0f, n3.extentZ * pwsz);
+
                 for (const auto& fc : floorColliders)
                 {
                     if (fc.ownerNode3D == ni) continue; // ignore self-collision source
-                    if (n3.x >= fc.minX && n3.x <= fc.maxX && n3.z >= fc.minZ && n3.z <= fc.maxZ)
+                    // AABB overlap test using physics node's bounds
+                    if (cx + phx >= fc.minX && cx - phx <= fc.maxX && cz + phz >= fc.minZ && cz - phz <= fc.maxZ)
                     {
-                        if (n3.y < fc.y)
+                        // Floor response: bottom of collision box sits on floor surface
+                        float bottomY = cy - phy;
+                        if (bottomY < fc.y)
                         {
-                            n3.y = fc.y;
+                            n3.y += (fc.y - bottomY);
                             if (n3.velY < 0.0f) n3.velY = 0.0f;
                         }
                     }

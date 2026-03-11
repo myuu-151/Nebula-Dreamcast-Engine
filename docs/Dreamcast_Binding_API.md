@@ -120,6 +120,16 @@ void NB_DC_UnloadScene(void);
 int  NB_DC_SwitchScene(const char* scenePath);
 ```
 
+### Common types
+
+```c
+typedef struct NB_Vec3 {
+    float x;
+    float y;
+    float z;
+} NB_Vec3;
+```
+
 ### Mesh/texture loading
 
 ```c
@@ -179,6 +189,7 @@ Use `*At` variants for modern multi-StaticMesh scenes.
 Declared in `src/platform/dreamcast/KosInput.h`, implemented in `KosInput.c`.
 
 ```c
+void  NB_KOS_InitInput(void);
 void  NB_KOS_PollInput(void);
 int   NB_KOS_HasController(void);
 float NB_KOS_GetStickX(void);
@@ -186,16 +197,67 @@ float NB_KOS_GetStickY(void);
 float NB_KOS_GetLTrigger(void);
 float NB_KOS_GetRTrigger(void);
 
-int NB_KOS_ButtonDown(int btn);
-int NB_KOS_ButtonPressed(int btn);
-int NB_KOS_ButtonReleased(int btn);
+int      NB_KOS_ButtonDown(int btn);
+int      NB_KOS_ButtonPressed(int btn);
+int      NB_KOS_ButtonReleased(int btn);
+uint32_t NB_KOS_GetRawButtons(void);
 ```
 
-Button IDs are `NB_BTN_*` enums/macros from `KosInput.h`.
+- **InitInput**: one-time initialization (called by runtime before main loop).
+- **PollInput**: reads controller state; call once per frame before any button/stick queries.
+- **HasController**: returns 1 if a controller is connected on port 0.
+- **GetStickX / GetStickY**: analog stick, normalized to approximately -1.0 .. +1.0.
+- **GetLTrigger / GetRTrigger**: analog triggers, normalized to 0.0 .. 1.0.
+- **ButtonDown**: returns 1 while the button is held.
+- **ButtonPressed**: returns 1 on the frame the button was first pressed.
+- **ButtonReleased**: returns 1 on the frame the button was released.
+- **GetRawButtons**: returns the raw Maple button bitmask (advanced use).
+
+### Button IDs (`NB_BTN_*`)
+
+```c
+#define NB_BTN_A          CONT_A
+#define NB_BTN_B          CONT_B
+#define NB_BTN_X          CONT_X
+#define NB_BTN_Y          CONT_Y
+#define NB_BTN_START      CONT_START
+#define NB_BTN_DPAD_UP    CONT_DPAD_UP
+#define NB_BTN_DPAD_DOWN  CONT_DPAD_DOWN
+#define NB_BTN_DPAD_LEFT  CONT_DPAD_LEFT
+#define NB_BTN_DPAD_RIGHT CONT_DPAD_RIGHT
+#define NB_BTN_Z          CONT_Z
+#define NB_BTN_D          CONT_D
+```
+
+### Low-level pad access
+
+```c
+typedef struct NB_KOS_RawPadState {
+    int has_controller;
+    uint32_t buttons;
+    int8_t stick_x;
+    int8_t stick_y;
+    uint8_t l_trigger;
+    uint8_t r_trigger;
+} NB_KOS_RawPadState;
+
+void NB_KOS_BindingsInit(void);
+void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState);
+```
+
+These are the raw Maple layer underneath `NB_KOS_*`. Most scripts should use the higher-level wrappers instead.
 
 ### Why use wrappers instead of raw Maple bits
 
 `NB_KOS_*` normalizes button semantics (including active-low behavior) and keeps script input consistent with runtime expectations.
+
+---
+
+## Runtime Timing
+
+The generated Dreamcast runtime uses `timer_us_gettime64()` to measure real delta time each frame. The `dt` value passed to `NB_Game_OnUpdate(dt)` reflects actual elapsed time in seconds (clamped to 0.1s max to prevent spiral-of-death on long frames).
+
+The render loop is paced by `pvr_wait_ready()` which syncs to the Dreamcast VBlank at 60 Hz (NTSC). No additional sleep is used, so the runtime targets a full 60 fps.
 
 ---
 

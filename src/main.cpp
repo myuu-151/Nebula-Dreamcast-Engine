@@ -595,6 +595,16 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_GetCameraRotation(const char* name, float outRot[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetCameraRotation\"); if(fn) fn(name,outRot); }\n";
     out << "void NB_RT_SetCameraRotation(const char* name, float x, float y, float z){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetCameraRotation\"); if(fn) fn(name,x,y,z); }\n";
     out << "int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsCameraUnderNode3D\"); return fn ? fn(cameraName,nodeName) : 0; }\n";
+    out << "void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DCollisionBounds\"); if(fn) fn(name,outExtents); }\n";
+    out << "void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DCollisionBounds\"); if(fn) fn(name,ex,ey,ez); }\n";
+    out << "void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]){ typedef void(*Fn)(const char*, float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DBoundPos\"); if(fn) fn(name,outPos); }\n";
+    out << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DBoundPos\"); if(fn) fn(name,bx,by,bz); }\n";
+    out << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DPhysicsEnabled\"); return fn ? fn(name) : 0; }\n";
+    out << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DPhysicsEnabled\"); if(fn) fn(name,enabled); }\n";
+    out << "float NB_RT_GetNode3DVelocityY(const char* name){ typedef float(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DVelocityY\"); return fn ? fn(name) : 0.0f; }\n";
+    out << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ typedef void(*Fn)(const char*, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DVelocityY\"); if(fn) fn(name,vy); }\n";
+    out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
+    out << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_CheckAABBOverlap\"); return fn ? fn(name1,name2) : 0; }\n";
     return true;
 }
 
@@ -1835,6 +1845,120 @@ NB_RT_EXPORT int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* n
     if (camIdx < 0)
         return 0;
     return IsCameraUnderNode3D(gCamera3DNodes[camIdx], nodeName) ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3])
+{
+    if (!outExtents) return;
+    outExtents[0] = outExtents[1] = outExtents[2] = 0.5f;
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    const auto& n = gNode3DNodes[idx];
+    outExtents[0] = n.extentX;
+    outExtents[1] = n.extentY;
+    outExtents[2] = n.extentZ;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    auto& n = gNode3DNodes[idx];
+    n.extentX = ex;
+    n.extentY = ey;
+    n.extentZ = ez;
+}
+
+NB_RT_EXPORT void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3])
+{
+    if (!outPos) return;
+    outPos[0] = outPos[1] = outPos[2] = 0.0f;
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    const auto& n = gNode3DNodes[idx];
+    outPos[0] = n.boundPosX;
+    outPos[1] = n.boundPosY;
+    outPos[2] = n.boundPosZ;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    auto& n = gNode3DNodes[idx];
+    n.boundPosX = bx;
+    n.boundPosY = by;
+    n.boundPosZ = bz;
+}
+
+NB_RT_EXPORT int NB_RT_GetNode3DPhysicsEnabled(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    return gNode3DNodes[idx].physicsEnabled ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].physicsEnabled = (enabled != 0);
+}
+
+NB_RT_EXPORT float NB_RT_GetNode3DVelocityY(const char* name)
+{
+    if (!name) return 0.0f;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0.0f;
+    return gNode3DNodes[idx].velY;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DVelocityY(const char* name, float vy)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].velY = vy;
+}
+
+NB_RT_EXPORT int NB_RT_IsNode3DOnFloor(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    const auto& n = gNode3DNodes[idx];
+    // On floor if physics enabled and vertical velocity is zero (landed)
+    return (n.physicsEnabled && n.velY >= 0.0f && n.velY < 0.01f) ? 1 : 0;
+}
+
+NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
+{
+    if (!name1 || !name2) return 0;
+    int i1 = FindNode3DByName(name1);
+    int i2 = FindNode3DByName(name2);
+    if (i1 < 0 || i2 < 0) return 0;
+
+    const auto& a = gNode3DNodes[i1];
+    const auto& b = gNode3DNodes[i2];
+
+    float ax = a.x, ay = a.y, az = a.z;
+    float bx = b.x, by = b.y, bz = b.z;
+
+    // Apply bound offsets
+    ax += a.boundPosX; ay += a.boundPosY; az += a.boundPosZ;
+    bx += b.boundPosX; by += b.boundPosY; bz += b.boundPosZ;
+
+    // AABB overlap test
+    if (ax + a.extentX < bx - b.extentX || ax - a.extentX > bx + b.extentX) return 0;
+    if (ay + a.extentY < by - b.extentY || ay - a.extentY > by + b.extentY) return 0;
+    if (az + a.extentZ < bz - b.extentZ || az - a.extentZ > bz + b.extentZ) return 0;
+    return 1;
 }
 
 static void ReparentStaticMeshKeepWorldPos(int childIdx, const std::string& newParent)
@@ -12758,6 +12882,22 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetCameraRotation(const char* name, float x, float y, float z){ (void)name; gRtCamRot[0]=x; gRtCamRot[1]=y; gRtCamRot[2]=z; { float rx=x*0.0174532925f, ry=y*0.0174532925f; float cx=cosf(rx), sx=sinf(rx), cy=cosf(ry), sy=sinf(ry); float fx=sy*cx, fy=-sx, fz=cy*cx; float fl=sqrtf(fx*fx+fy*fy+fz*fz); if(fl<1e-6f) fl=1.0f; fx/=fl; fy/=fl; fz/=fl; gCamForward[0]=fx; gCamForward[1]=fy; gCamForward[2]=fz; gCamUp[0]=0.0f; gCamUp[1]=1.0f; gCamUp[2]=0.0f; float rxv = gCamUp[1]*fz - gCamUp[2]*fy; float ryv = gCamUp[2]*fx - gCamUp[0]*fz; float rzv = gCamUp[0]*fy - gCamUp[1]*fx; float rl=sqrtf(rxv*rxv+ryv*ryv+rzv*rzv); if(rl<1e-6f){ rxv=1.0f; ryv=0.0f; rzv=0.0f; rl=1.0f; } gCamRight[0]=rxv/rl; gCamRight[1]=ryv/rl; gCamRight[2]=rzv/rl; } }\n";
                                 mc << "void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]){ (void)name; if(!outFwd) return; outFwd[0]=gCamForward[0]; outFwd[1]=gCamForward[1]; outFwd[2]=gCamForward[2]; }\n";
                                 mc << "int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName){ (void)cameraName; (void)nodeName; return 1; }\n";
+                                mc << "/* Collision / physics bridge */\n";
+                                mc << "static float gCollExtent[3] = {0.5f, 0.5f, 0.5f};\n";
+                                mc << "static int gPhysicsEnabled = 0;\n";
+                                mc << "static float gVelY = 0.0f;\n";
+                                mc << "static int gOnFloor = 0;\n";
+                                mc << "void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]){ (void)name; if(!outExtents) return; outExtents[0]=gCollExtent[0]; outExtents[1]=gCollExtent[1]; outExtents[2]=gCollExtent[2]; }\n";
+                                mc << "void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez){ (void)name; gCollExtent[0]=ex; gCollExtent[1]=ey; gCollExtent[2]=ez; }\n";
+                                mc << "static float gBoundPos[3] = {0.0f, 0.0f, 0.0f};\n";
+                                mc << "void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]){ (void)name; if(!outPos) return; outPos[0]=gBoundPos[0]; outPos[1]=gBoundPos[1]; outPos[2]=gBoundPos[2]; }\n";
+                                mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ (void)name; gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; }\n";
+                                mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ (void)name; return gPhysicsEnabled; }\n";
+                                mc << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ (void)name; gPhysicsEnabled=enabled; }\n";
+                                mc << "float NB_RT_GetNode3DVelocityY(const char* name){ (void)name; return gVelY; }\n";
+                                mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
+                                mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
+                                mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";

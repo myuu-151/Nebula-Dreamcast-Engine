@@ -79,6 +79,28 @@ int  NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName);
 
 Used for orbit-style cameras, camera-relative movement, and linkage checks.
 
+### Collision / physics bridge
+
+```c
+void  NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]);
+void  NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez);
+void  NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]);
+void  NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz);
+int   NB_RT_GetNode3DPhysicsEnabled(const char* name);
+void  NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled);
+float NB_RT_GetNode3DVelocityY(const char* name);
+void  NB_RT_SetNode3DVelocityY(const char* name, float vy);
+int   NB_RT_IsNode3DOnFloor(const char* name);
+int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
+```
+
+- **CollisionBounds**: get/set the AABB half-extents (box size) of a Node3D's collision volume.
+- **BoundPos**: get/set the local offset of the collision box relative to the node's origin.
+- **PhysicsEnabled**: toggle gravity and floor collision per node.
+- **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
+- **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
+- **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).
+
 ### Where `NB_RT_*` is implemented
 
 - Implemented in generated runtime code (`main.c`) emitted from `src/main.cpp`.
@@ -104,10 +126,12 @@ int  NB_DC_SwitchScene(const char* scenePath);
 typedef struct NB_Mesh {
     NB_Vec3* pos;
     NB_Vec3* tri_uv;
+    NB_Vec3* tri_uv1;       /* second UV layer (v6+), NULL if absent */
     uint16_t* indices;
     uint16_t* tri_mat;
     int vert_count;
     int tri_count;
+    int uv_layer_count;      /* total UV layers present (0, 1, or 2) */
 } NB_Mesh;
 
 typedef struct NB_Texture {
@@ -117,6 +141,9 @@ typedef struct NB_Texture {
     float us;
     float vs;
     int filter;
+    int wrapMode;
+    int flipU;
+    int flipV;
 } NB_Texture;
 
 int  NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out);

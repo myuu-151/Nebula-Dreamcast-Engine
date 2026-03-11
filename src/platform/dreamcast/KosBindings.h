@@ -77,3 +77,15 @@ void NB_RT_GetCameraRotation(const char* name, float outRot[3]);
 void NB_RT_SetCameraRotation(const char* name, float x, float y, float z);
 void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]);
 int NB_RT_IsCameraUnderNode3D(const char* cameraName, const char* nodeName);
+
+// Collision / physics bridge
+void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]);
+void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez);
+void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]);
+void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz);
+int NB_RT_GetNode3DPhysicsEnabled(const char* name);
+void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled);
+float NB_RT_GetNode3DVelocityY(const char* name);
+void NB_RT_SetNode3DVelocityY(const char* name, float vy);
+int NB_RT_IsNode3DOnFloor(const char* name);
+int NB_RT_CheckAABBOverlap(const char* name1, const char* name2);

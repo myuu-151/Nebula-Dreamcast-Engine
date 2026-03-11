@@ -1981,7 +1981,7 @@ static bool SaveNebSlotsManifest(const std::filesystem::path& absMeshPath, const
 
 static std::filesystem::path GetNebMeshMetaPath(const std::filesystem::path& absMeshPath)
 {
-    return std::filesystem::path(absMeshPath.string() + ".animmeta");
+    return absMeshPath.parent_path() / "animmeta" / (absMeshPath.stem().string() + ".animmeta.animmeta");
 }
 
 static std::filesystem::path GetNebMeshVtxAnimLinkPath(const std::filesystem::path& absMeshPath)
@@ -5831,7 +5831,7 @@ static std::filesystem::path ResolveProjectAssetPath(const std::string& relOrAbs
 
 static std::filesystem::path GetNebMeshEmbeddedMetaPath(const std::filesystem::path& absMeshPath)
 {
-    return std::filesystem::path(absMeshPath.string() + ".animmeta");
+    return absMeshPath.parent_path() / "animmeta" / (absMeshPath.stem().string() + ".animmeta.animmeta");
 }
 
 static std::string JoinUIntCsv(const std::vector<unsigned int>& values)
@@ -5917,6 +5917,7 @@ static void BuildDefaultEmbeddedMetaFromScene(const aiScene* scene, NebMeshEmbed
 static bool SaveNebMeshEmbeddedMeta(const std::filesystem::path& absMeshPath, const NebMeshEmbeddedAnimMeta& meta)
 {
     std::filesystem::path metaPath = GetNebMeshEmbeddedMetaPath(absMeshPath);
+    std::filesystem::create_directories(metaPath.parent_path());
     std::ofstream out(metaPath, std::ios::out | std::ios::trunc);
     if (!out.is_open()) return false;
     out << "source_fbx=" << meta.sourceFbxPath << "\n";

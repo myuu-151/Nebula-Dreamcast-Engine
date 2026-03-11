@@ -16478,13 +16478,7 @@ RenderImGuiOnly:
                 static char nebslotBuf[256] = {};
                 if (inspectorChanged)
                 {
-                    std::string slotPath;
-                    if (!n.mesh.empty() && !gProjectDir.empty())
-                    {
-                        std::filesystem::path absMesh = std::filesystem::path(gProjectDir) / n.mesh;
-                        slotPath = ToProjectRelativePath(GetNebSlotsPathForMesh(absMesh));
-                    }
-                    strncpy_s(nebslotBuf, slotPath.c_str(), sizeof(nebslotBuf) - 1);
+                    nebslotBuf[0] = '\0';
                 }
 
                 ImGui::Spacing();

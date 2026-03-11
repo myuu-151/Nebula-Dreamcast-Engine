@@ -2104,7 +2104,7 @@ static int ImportModelTexturesAndGenerateMaterials(const aiScene* scene,
 
         char midx[8];
         snprintf(midx, sizeof(midx), "%02u", (unsigned)(ui + 1));
-        std::string matBase = "m_" + meshStem + "_" + std::string(midx) + "_" + matNameSafe;
+        std::string matBase = "m_" + matNameSafe;
         std::filesystem::path matOut = MakeUniqueAssetPath(matDir, matBase, ".nebmat");
         if (SaveMaterialTexture(matOut, texRel))
         {

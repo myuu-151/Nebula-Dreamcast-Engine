@@ -13653,7 +13653,8 @@ RenderImGuiOnly:
                                 mc << "        int sid = (int)rm->triMatNormal[t]; if (sid < 0 || sid >= rm->slotCount) sid = 0; if (!rm->slotReady[sid]) continue;\n";
                                 mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
                                 mc << "        uint32 col = 0xFFFFFFFF, colA = 0xFFFFFFFF, colB = 0xFFFFFFFF, colC = 0xFFFFFFFF;\n";
-                                mc << "        if (meshShadeMode) {\n";
+                                mc << "        int slotShaded = (mi < MAX_MESHES && sid < MAX_SLOT) ? (kMeshMatShadeMode[mi][sid] || kMeshMatShadingUv[mi][sid] >= 0) : 0;\n";
+                                mc << "        if (meshShadeMode && slotShaded) {\n";
                                 mc << "          V3 na=nrm[ia], nb=nrm[ib], nc=nrm[ic];\n";
                                 mc << "          float nA=dot3(na,sLight); if(nA<0.0f)nA=0.0f; float litA=sAmb + nA*sDifScale - ((na.y<0.0f)?(-na.y*sShQ):0.0f) + (1.0f-fabsf(na.z))*0.12f;\n";
                                 mc << "          float nB=dot3(nb,sLight); if(nB<0.0f)nB=0.0f; float litB=sAmb + nB*sDifScale - ((nb.y<0.0f)?(-nb.y*sShQ):0.0f) + (1.0f-fabsf(nb.z))*0.12f;\n";

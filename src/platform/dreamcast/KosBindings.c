@@ -400,9 +400,19 @@ int NB_DC_LoadTexture(const char* texPath, NB_Texture* out) {
         }
     }
 
-    int tail = fgetc(f);
+    /* Extension chunk: filter(1B) wrapMode(1B) flipU(1B) flipV(1B) */
     int filter = (flg & 1u) ? 1 : 0;
-    if (tail == 0 || tail == 1) filter = tail;
+    int wrapMode = 0, flipU = 0, flipV = 0;
+    int b0 = fgetc(f);
+    if (b0 != EOF) {
+        if (b0 == 0 || b0 == 1) filter = b0;
+        int b1 = fgetc(f);
+        if (b1 != EOF) { wrapMode = b1; }
+        int b2 = fgetc(f);
+        if (b2 != EOF) { flipU = b2; }
+        int b3 = fgetc(f);
+        if (b3 != EOF) { flipV = b3; }
+    }
     fclose(f);
 
     out->pixels = pix;
@@ -411,6 +421,9 @@ int NB_DC_LoadTexture(const char* texPath, NB_Texture* out) {
     out->us = (float)w / (float)tw;
     out->vs = (float)h / (float)th;
     out->filter = filter;
+    out->wrapMode = wrapMode;
+    out->flipU = flipU;
+    out->flipV = flipV;
     return 1;
 }
 

@@ -39,6 +39,9 @@ typedef struct NB_Texture {
     float us;
     float vs;
     int filter;
+    int wrapMode;
+    int flipU;
+    int flipV;
 } NB_Texture;
 
 int NB_DC_LoadScene(const char* scenePath);

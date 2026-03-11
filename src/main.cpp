@@ -16529,16 +16529,6 @@ RenderImGuiOnly:
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
                 ImGui::SameLine();
-                {
-                    std::string slotPathLive;
-                    if (!n.mesh.empty() && !gProjectDir.empty())
-                    {
-                        std::filesystem::path absMesh = std::filesystem::path(gProjectDir) / n.mesh;
-                        slotPathLive = ToProjectRelativePath(GetNebSlotsPathForMesh(absMesh));
-                    }
-                    if (!ImGui::IsAnyItemActive() && slotPathLive != nebslotBuf)
-                        strncpy_s(nebslotBuf, slotPathLive.c_str(), sizeof(nebslotBuf) - 1);
-                }
                 if (ImGui::InputText("##NebslotPath", nebslotBuf, sizeof(nebslotBuf)))
                 {
                 }

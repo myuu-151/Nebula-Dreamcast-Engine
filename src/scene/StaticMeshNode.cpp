@@ -1,4 +1,5 @@
 #include "NodeTypes.h"
+#include "../assets/meta_io.h"
 
 #include <algorithm>
 #include <cctype>
@@ -102,6 +103,8 @@ namespace NebulaNodes
         if (!projectDir.empty() && !n.mesh.empty())
         {
             std::filesystem::path meshPath = std::filesystem::path(projectDir) / n.mesh;
+
+            // Try mat/ directory naming convention first
             std::filesystem::path matDir = meshPath.parent_path() / "mat";
             std::string meshStem = meshPath.stem().string();
             for (char& c : meshStem)
@@ -121,6 +124,18 @@ namespace NebulaNodes
                     std::string stem = e.path().stem().string();
                     if (stem.rfind(prefix, 0) == 0 && stem.size() > prefix.size())
                         return stem.substr(prefix.size());
+                }
+            }
+
+            // Fall back to nebslots manifest for slot names
+            std::vector<std::string> slots;
+            if (NebulaAssets::LoadNebSlotsManifest(meshPath, slots, projectDir))
+            {
+                if (slotIndex < (int)slots.size() && !slots[slotIndex].empty())
+                {
+                    std::string stem = std::filesystem::path(slots[slotIndex]).stem().string();
+                    if (stem.rfind("m_", 0) == 0 && stem.size() > 2) return stem.substr(2);
+                    return stem.empty() ? "material" : stem;
                 }
             }
         }

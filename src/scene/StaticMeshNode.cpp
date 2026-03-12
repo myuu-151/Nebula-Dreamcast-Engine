@@ -70,7 +70,9 @@ namespace NebulaNodes
             {
                 const auto& pn = node3DNodes[ni];
                 ox += pn.x; oy += pn.y; oz += pn.z;
-                orx += pn.rotX; ory += pn.rotY; orz += pn.rotZ;
+                // Node3D parent drives rotation entirely; child local rotation
+                // is applied separately during rendering for visual orientation only.
+                orx = pn.rotX; ory = pn.rotY; orz = pn.rotZ;
                 osx *= pn.scaleX; osy *= pn.scaleY; osz *= pn.scaleZ;
                 p = pn.parent;
                 continue;

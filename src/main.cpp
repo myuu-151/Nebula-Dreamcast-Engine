@@ -10814,22 +10814,27 @@ int main(int, char**)
             GetStaticMeshWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
             glPushMatrix();
             glTranslatef(wx, wy, wz);
-            // StaticMesh rotation axis remap:
-            // X <- Z (pitch/back-forth), Y <- X (yaw left-right), Z <- Y (roll/spin)
-            // If parented under Node3D, apply parent/world rotation directly (Node3D axis basis)
-            // to avoid child-local mismatch against root node rotation.
-            float sxRot = wrz;
-            float syRot = wrx;
-            float szRot = wry;
+            // If parented under Node3D, Node3D drives world rotation and the
+            // child's local rotation is applied on top for visual orientation only.
             if (!s.parent.empty() && FindNode3DByName(s.parent) >= 0)
             {
-                sxRot = wrx;
-                syRot = wry;
-                szRot = wrz;
+                // Parent (Node3D) rotation first
+                glRotatef(wrx, 1.0f, 0.0f, 0.0f);
+                glRotatef(wry, 0.0f, 1.0f, 0.0f);
+                glRotatef(wrz, 0.0f, 0.0f, 1.0f);
+                // Child local rotation on top (visual offset, uses same axis basis as Node3D)
+                glRotatef(s.rotX, 1.0f, 0.0f, 0.0f);
+                glRotatef(s.rotY, 0.0f, 1.0f, 0.0f);
+                glRotatef(s.rotZ, 0.0f, 0.0f, 1.0f);
             }
-            glRotatef(sxRot, 1.0f, 0.0f, 0.0f);
-            glRotatef(syRot, 0.0f, 1.0f, 0.0f);
-            glRotatef(szRot, 0.0f, 0.0f, 1.0f);
+            else
+            {
+                // Standalone StaticMesh rotation axis remap:
+                // X <- Z (pitch/back-forth), Y <- X (yaw left-right), Z <- Y (roll/spin)
+                glRotatef(wrz, 1.0f, 0.0f, 0.0f);
+                glRotatef(wrx, 0.0f, 1.0f, 0.0f);
+                glRotatef(wry, 0.0f, 0.0f, 1.0f);
+            }
             glScalef(wsx, wsy, wsz);
 
             // Transform smooth normals to camera space via full modelview matrix.
@@ -13228,9 +13233,29 @@ RenderImGuiOnly:
                                 mc << "static const float kProjFocalX = " << fstr(dcFocalX) << ";\n";
                                 mc << "static const float kProjFocalY = " << fstr(dcFocalY) << ";\n";
                                 mc << "static const float kCamRot[3] = {" << fstr(camSrc.rotX) << "," << fstr(camSrc.rotY) << "," << fstr(camSrc.rotZ) << "};\n";
-                                mc << "static float gMeshPos[3] = {" << fstr(meshSrc.x) << "," << fstr(meshSrc.y) << "," << fstr(meshSrc.z) << "};\n";
-                                mc << "static float gMeshRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
-                                mc << "static float gMeshScale[3] = {" << fstr(meshSrc.scaleX) << "," << fstr(meshSrc.scaleY) << "," << fstr(meshSrc.scaleZ) << "};\n";
+                                // Initialize gMeshPos/gMeshRot from the parent Node3D (drives movement),
+                                // NOT from the child StaticMesh3D (visual offset only).
+                                {
+                                    float initPosX = meshSrc.x, initPosY = meshSrc.y, initPosZ = meshSrc.z;
+                                    float initRotX = meshSrc.rotX, initRotY = meshSrc.rotY, initRotZ = meshSrc.rotZ;
+                                    float initScX = meshSrc.scaleX, initScY = meshSrc.scaleY, initScZ = meshSrc.scaleZ;
+                                    if (!meshSrc.parent.empty())
+                                    {
+                                        for (const auto& n3 : gNode3DNodes)
+                                        {
+                                            if (n3.name == meshSrc.parent)
+                                            {
+                                                initPosX = n3.x; initPosY = n3.y; initPosZ = n3.z;
+                                                initRotX = n3.rotX; initRotY = n3.rotY; initRotZ = n3.rotZ;
+                                                initScX = n3.scaleX; initScY = n3.scaleY; initScZ = n3.scaleZ;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    mc << "static float gMeshPos[3] = {" << fstr(initPosX) << "," << fstr(initPosY) << "," << fstr(initPosZ) << "};\n";
+                                    mc << "static float gMeshRot[3] = {" << fstr(initRotX) << "," << fstr(initRotY) << "," << fstr(initRotZ) << "};\n";
+                                    mc << "static float gMeshScale[3] = {" << fstr(initScX) << "," << fstr(initScY) << "," << fstr(initScZ) << "};\n";
+                                }
                                 mc << "static const char kPlayerMeshDisk[] = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "static int gPlayerMeshIdx = -1;\n";
                                 mc << "void NB_RT_GetMeshPosition(float outPos[3]){ if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
@@ -13967,16 +13992,23 @@ RenderImGuiOnly:
                                 mc << "      SV* sv = gSv; uint8_t* ok = gOk; V3* cs = gCs; V3* nrm = gNrm;\n";
                                 mc << "      float smPos[3] = {sm->pos[0], sm->pos[1], sm->pos[2]};\n";
                                 mc << "      float smRot[3] = {sm->rot[0], sm->rot[1], sm->rot[2]};\n";
-                                mc << "      if (mi == gPlayerMeshIdx) { smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
+                                mc << "      /* Child local rotation (visual offset only, zero for non-player meshes). */\n";
+                                mc << "      float cRx = 0, cRy = 0, cRz = 0;\n";
+                                mc << "      if (mi == gPlayerMeshIdx) { cRx = deg2rad(sm->rot[0]); cRy = deg2rad(sm->rot[1]); cRz = deg2rad(sm->rot[2]); smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
                                 mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
-                                mc << "      /* Player mesh (parented under Node3D) uses identity remap. */\n";
+                                mc << "      /* Player mesh (parented under Node3D) uses identity remap — parent drives rotation. */\n";
                                 mc << "      float rxr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
                                 mc << "      float ryr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[1]) : deg2rad(smRot[0]);\n";
                                 mc << "      float rzr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[2]) : deg2rad(smRot[1]);\n";
                                 mc << "      const V3* srcBase = rm->base; if(sm->runtimeTest && rm->anim.loaded && rm->anim.frames && rm->anim.posed && rm->anim.frameCount>0){ int af=(int)floorf(sRuntimeClock * rm->anim.fps); if(rm->anim.frameCount>0) af%=rm->anim.frameCount; if(af<0) af=0; const V3* fr=&rm->anim.frames[(size_t)af*(size_t)rm->anim.vertCount]; int nv=rm->anim.vertCount; if(rm->anim.meshAligned){ for(int vi=0;vi<nv;++vi) rm->anim.posed[vi]=fr[vi]; } else { const V3* f0=&rm->anim.frames[0]; V3 bmin=rm->base[0], bmax=rm->base[0], bcen={0,0,0}, amin=f0[0], amax=f0[0], acen={0,0,0}; for(int vi=0; vi<nv; ++vi){ V3 bp=rm->base[vi], ap=f0[vi]; bcen.x+=bp.x; bcen.y+=bp.y; bcen.z+=bp.z; acen.x+=ap.x; acen.y+=ap.y; acen.z+=ap.z; if(bp.x<bmin.x)bmin.x=bp.x; if(bp.y<bmin.y)bmin.y=bp.y; if(bp.z<bmin.z)bmin.z=bp.z; if(bp.x>bmax.x)bmax.x=bp.x; if(bp.y>bmax.y)bmax.y=bp.y; if(bp.z>bmax.z)bmax.z=bp.z; if(ap.x<amin.x)amin.x=ap.x; if(ap.y<amin.y)amin.y=ap.y; if(ap.z<amin.z)amin.z=ap.z; if(ap.x>amax.x)amax.x=ap.x; if(ap.y>amax.y)amax.y=ap.y; if(ap.z>amax.z)amax.z=ap.z; } if(nv>0){ float inv=1.0f/(float)nv; bcen.x*=inv; bcen.y*=inv; bcen.z*=inv; acen.x*=inv; acen.y*=inv; acen.z*=inv; } float bd=sqrtf((bmax.x-bmin.x)*(bmax.x-bmin.x)+(bmax.y-bmin.y)*(bmax.y-bmin.y)+(bmax.z-bmin.z)*(bmax.z-bmin.z)); float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z)); float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f; for(int vi=0; vi<nv; ++vi){ rm->anim.posed[vi].x = bcen.x + (fr[vi].x - acen.x)*ds; rm->anim.posed[vi].y = bcen.y + (fr[vi].y - acen.y)*ds; rm->anim.posed[vi].z = bcen.z + (fr[vi].z - acen.z)*ds; } } for(int vi=nv;vi<rm->kVertCount;++vi) rm->anim.posed[vi]=rm->base[vi]; srcBase=rm->anim.posed; }\n";
                                 mc << "      float _sx=sinf(rxr),_cx=cosf(rxr),_sy=sinf(ryr),_cy=cosf(ryr),_sz=sinf(rzr),_cz=cosf(rzr);\n";
+                                mc << "      /* Child visual rotation sin/cos (identity when cRx/cRy/cRz are 0). */\n";
+                                mc << "      float _csx=sinf(cRx),_ccx=cosf(cRx),_csy=sinf(cRy),_ccy=cosf(cRy),_csz=sinf(cRz),_ccz=cosf(cRz);\n";
                                 mc << "      float _scx=sm->scale[0]*(float)gMirrorX, _scy=sm->scale[1]*(float)gMirrorY, _scz=sm->scale[2]*(float)gMirrorZ;\n";
-                                mc << "      for (int i=0;i<rm->kVertCount;++i){ V3 v=srcBase[i]; v.x*=_scx; v.y*=_scy; v.z*=_scz; float t; t=v.x*_cz-v.y*_sz; v.y=v.x*_sz+v.y*_cz; v.x=t; t=v.x*_cy+v.z*_sy; v.z=-v.x*_sy+v.z*_cy; v.x=t; t=v.y*_cx-v.z*_sx; v.z=v.y*_sx+v.z*_cx; v.y=t; v.x+=smPos[0]; v.y+=smPos[1]; v.z+=smPos[2]; cs[i]=w2c(v); ok[i]=proj_cs(cs[i],&sv[i])?1:0; nrm[i]=(V3){0,0,0}; }\n";
+                                mc << "      for (int i=0;i<rm->kVertCount;++i){ V3 v=srcBase[i]; v.x*=_scx; v.y*=_scy; v.z*=_scz; float t; ";
+                                mc << "t=v.x*_ccz-v.y*_csz; v.y=v.x*_csz+v.y*_ccz; v.x=t; t=v.x*_ccy+v.z*_csy; v.z=-v.x*_csy+v.z*_ccy; v.x=t; t=v.y*_ccx-v.z*_csx; v.z=v.y*_csx+v.z*_ccx; v.y=t; ";
+                                mc << "t=v.x*_cz-v.y*_sz; v.y=v.x*_sz+v.y*_cz; v.x=t; t=v.x*_cy+v.z*_sy; v.z=-v.x*_sy+v.z*_cy; v.x=t; t=v.y*_cx-v.z*_sx; v.z=v.y*_sx+v.z*_cx; v.y=t; ";
+                                mc << "v.x+=smPos[0]; v.y+=smPos[1]; v.z+=smPos[2]; cs[i]=w2c(v); ok[i]=proj_cs(cs[i],&sv[i])?1:0; nrm[i]=(V3){0,0,0}; }\n";
                                 mc << "      float mirrorDet = (sm->scale[0] * (float)gMirrorX) * (sm->scale[1] * (float)gMirrorY) * (sm->scale[2] * (float)gMirrorZ);\n";
                                 mc << "      const int mirroredWinding = (mirrorDet < 0.0f) ? 1 : 0;\n";
                                 mc << "      const uint16_t *tris = (mirroredWinding && rm->trisFlipped) ? rm->trisFlipped : rm->trisNormal;\n";

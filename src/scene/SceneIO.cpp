@@ -214,7 +214,7 @@ namespace NebulaScene
         if (s == "-") s.clear();
     }
 
-    std::string BuildSceneText(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d)
+    std::string BuildSceneText(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d, const std::vector<NavMesh3DNode>& navMeshes)
     {
         std::ostringstream out;
         out << "scene=" << path.stem().string() << "\n";
@@ -241,6 +241,7 @@ namespace NebulaScene
             out << " " << (n.collisionSource ? 1 : 0);
             out << " " << EncodeSceneToken(n.vtxAnim);
             out << " " << (n.runtimeTest ? 1 : 0);
+            out << " " << (n.navmeshReady ? 1 : 0);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -269,6 +270,21 @@ namespace NebulaScene
                 << n.extentX << " " << n.extentY << " " << n.extentZ << " "
                 << n.boundPosX << " " << n.boundPosY << " " << n.boundPosZ << "\n";
         }
+        for (const auto& n : navMeshes)
+        {
+            out << "NavMesh3D " << n.name << " "
+                << n.x << " " << n.y << " " << n.z << " "
+                << n.rotX << " " << n.rotY << " " << n.rotZ << " "
+                << n.scaleX << " " << n.scaleY << " " << n.scaleZ << " "
+                << n.extentX << " " << n.extentY << " " << n.extentZ << " "
+                << (n.navBounds ? 1 : 0) << " "
+                << (n.navNegator ? 1 : 0) << " "
+                << (n.cullWalls ? 1 : 0) << " "
+                << n.wallCullThreshold << " "
+                << EncodeSceneToken(n.parent) << " "
+                << n.wireR << " " << n.wireG << " " << n.wireB << " "
+                << n.wireThickness << "\n";
+        }
         return out.str();
     }
 
@@ -279,11 +295,11 @@ namespace NebulaScene
         out << BuildSceneText(path, nodes, std::vector<StaticMesh3DNode>{}, std::vector<Camera3DNode>{}, std::vector<Node3DNode>{});
     }
 
-    void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d)
+    void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d, const std::vector<NavMesh3DNode>& navMeshes)
     {
         std::ofstream out(path, std::ios::out | std::ios::trunc);
         if (!out.is_open()) return;
-        out << BuildSceneText(path, nodes, statics, cameras, node3d);
+        out << BuildSceneText(path, nodes, statics, cameras, node3d, navMeshes);
     }
 
     bool LoadSceneFromPath(const std::filesystem::path& path, SceneData& outScene)
@@ -297,6 +313,7 @@ namespace NebulaScene
         outScene.staticMeshes.clear();
         outScene.cameras.clear();
         outScene.node3d.clear();
+        outScene.navMeshes.clear();
 
         std::string line;
         while (std::getline(in, line))
@@ -362,6 +379,9 @@ namespace NebulaScene
                 size_t runtimeTestIdx = animIdx + 1;
                 if (runtimeTestIdx < extra.size())
                     n.runtimeTest = (atoi(extra[runtimeTestIdx].c_str()) != 0);
+                size_t navmeshReadyIdx = runtimeTestIdx + 1;
+                if (navmeshReadyIdx < extra.size())
+                    n.navmeshReady = (atoi(extra[navmeshReadyIdx].c_str()) != 0);
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;
                 outScene.staticMeshes.push_back(n);
@@ -477,6 +497,35 @@ namespace NebulaScene
                     n.boundPosZ = (float)atof(toks[20].c_str());
                 }
                 outScene.node3d.push_back(n);
+            }
+            else if (type == "NavMesh3D")
+            {
+                NavMesh3DNode n;
+                std::vector<std::string> toks;
+                std::string tok;
+                while (ss >> tok) toks.push_back(tok);
+                if (toks.size() < 12) continue;
+                auto F = [&](size_t i) -> float { return (i < toks.size()) ? (float)atof(toks[i].c_str()) : 0.0f; };
+
+                n.name = toks[0];
+                n.x = F(1); n.y = F(2); n.z = F(3);
+                n.rotX = F(4); n.rotY = F(5); n.rotZ = F(6);
+                n.scaleX = F(7); n.scaleY = F(8); n.scaleZ = F(9);
+                n.extentX = F(10); n.extentY = F(11); n.extentZ = F(12);
+                if (toks.size() >= 14) n.navBounds = (atoi(toks[13].c_str()) != 0);
+                if (toks.size() >= 15) n.navNegator = (atoi(toks[14].c_str()) != 0);
+                if (toks.size() >= 16) n.cullWalls = (atoi(toks[15].c_str()) != 0);
+                if (toks.size() >= 17) n.wallCullThreshold = F(16);
+                if (toks.size() >= 18)
+                {
+                    n.parent = toks[17];
+                    DecodeSceneToken(n.parent);
+                }
+                if (toks.size() >= 19) n.wireR = F(18);
+                if (toks.size() >= 20) n.wireG = F(19);
+                if (toks.size() >= 21) n.wireB = F(20);
+                if (toks.size() >= 22) n.wireThickness = F(21);
+                outScene.navMeshes.push_back(n);
             }
         }
         return true;

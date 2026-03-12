@@ -23,8 +23,8 @@ namespace NebulaScene
 
     std::string EncodeSceneToken(const std::string& s);
     void DecodeSceneToken(std::string& s);
-    std::string BuildSceneText(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d);
+    std::string BuildSceneText(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d, const std::vector<NavMesh3DNode>& navMeshes = {});
     void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes);
-    void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d);
+    void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d, const std::vector<NavMesh3DNode>& navMeshes = {});
     bool LoadSceneFromPath(const std::filesystem::path& path, SceneData& outScene);
 }

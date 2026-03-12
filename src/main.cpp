@@ -189,10 +189,12 @@ static int gSelectedAudio3D = -1;
 static int gSelectedStaticMesh = -1;
 static int gSelectedCamera3D = -1;
 static int gSelectedNode3D = -1;
+static int gSelectedNavMesh3D = -1;
 static int gInspectorPinnedAudio3D = -1;
 static int gInspectorPinnedStaticMesh = -1;
 static int gInspectorPinnedCamera3D = -1;
 static int gInspectorPinnedNode3D = -1;
+static int gInspectorPinnedNavMesh3D = -1;
 static TransformMode gTransformMode = Transform_None;
 static char gAxisLock = 0; // 'X','Y','Z'
 static bool gTransforming = false;
@@ -292,6 +294,7 @@ static bool gSaveAllInProgress = false;
 static std::vector<StaticMesh3DNode> gStaticMeshNodes;
 static std::vector<Camera3DNode> gCamera3DNodes;
 static std::vector<Node3DNode> gNode3DNodes;
+static std::vector<NavMesh3DNode> gNavMesh3DNodes;
 
 static bool gImportPopupOpen = false;
 static std::string gImportPath;
@@ -316,10 +319,12 @@ static int gStaticAnimPreviewNode = -1;
 static bool gHasTransformSnapshot = false;
 static bool gTransformIsStatic = false;
 static bool gTransformIsNode3D = false;
+static bool gTransformIsNavMesh3D = false;
 static int gTransformIndex = -1;
 static Audio3DNode gTransformBefore;
 static StaticMesh3DNode gTransformBeforeStatic;
 static Node3DNode gTransformBeforeNode3D;
+static NavMesh3DNode gTransformBeforeNavMesh3D;
 
 static bool gHasRotatePreview = false;
 static int gRotatePreviewIndex = -1;
@@ -347,6 +352,13 @@ static bool TransformChanged(const StaticMesh3DNode& a, const StaticMesh3DNode& 
 }
 
 static bool TransformChanged(const Node3DNode& a, const Node3DNode& b)
+{
+    return a.x != b.x || a.y != b.y || a.z != b.z ||
+           a.rotX != b.rotX || a.rotY != b.rotY || a.rotZ != b.rotZ ||
+           a.scaleX != b.scaleX || a.scaleY != b.scaleY || a.scaleZ != b.scaleZ;
+}
+
+static bool TransformChanged(const NavMesh3DNode& a, const NavMesh3DNode& b)
 {
     return a.x != b.x || a.y != b.y || a.z != b.z ||
            a.rotX != b.rotX || a.rotY != b.rotY || a.rotZ != b.rotZ ||
@@ -1003,6 +1015,7 @@ static void BeginTransformSnapshot()
         gHasTransformSnapshot = true;
         gTransformIsStatic = false;
         gTransformIsNode3D = false;
+        gTransformIsNavMesh3D = false;
         gTransformIndex = gSelectedAudio3D;
         gTransformBefore = gAudio3DNodes[gSelectedAudio3D];
         return;
@@ -1013,6 +1026,7 @@ static void BeginTransformSnapshot()
         gHasTransformSnapshot = true;
         gTransformIsStatic = true;
         gTransformIsNode3D = false;
+        gTransformIsNavMesh3D = false;
         gTransformIndex = gSelectedStaticMesh;
         gTransformBeforeStatic = gStaticMeshNodes[gSelectedStaticMesh];
         return;
@@ -1023,8 +1037,20 @@ static void BeginTransformSnapshot()
         gHasTransformSnapshot = true;
         gTransformIsStatic = false;
         gTransformIsNode3D = true;
+        gTransformIsNavMesh3D = false;
         gTransformIndex = gSelectedNode3D;
         gTransformBeforeNode3D = gNode3DNodes[gSelectedNode3D];
+        return;
+    }
+
+    if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+    {
+        gHasTransformSnapshot = true;
+        gTransformIsStatic = false;
+        gTransformIsNode3D = false;
+        gTransformIsNavMesh3D = true;
+        gTransformIndex = gSelectedNavMesh3D;
+        gTransformBeforeNavMesh3D = gNavMesh3DNodes[gSelectedNavMesh3D];
     }
 }
 
@@ -1067,6 +1093,25 @@ static void EndTransformSnapshot()
             PushUndo({"Transform Node3D",
                 [idx, before]() { if (idx >= 0 && idx < (int)gNode3DNodes.size()) gNode3DNodes[idx] = before; },
                 [idx, after]() { if (idx >= 0 && idx < (int)gNode3DNodes.size()) gNode3DNodes[idx] = after; }
+            });
+        }
+    }
+    else if (gTransformIsNavMesh3D)
+    {
+        if (gTransformIndex < 0 || gTransformIndex >= (int)gNavMesh3DNodes.size())
+        {
+            gHasTransformSnapshot = false;
+            return;
+        }
+
+        NavMesh3DNode before = gTransformBeforeNavMesh3D;
+        NavMesh3DNode after = gNavMesh3DNodes[gTransformIndex];
+        if (TransformChanged(before, after))
+        {
+            int idx = gTransformIndex;
+            PushUndo({"Transform NavMesh3D",
+                [idx, before]() { if (idx >= 0 && idx < (int)gNavMesh3DNodes.size()) gNavMesh3DNodes[idx] = before; },
+                [idx, after]() { if (idx >= 0 && idx < (int)gNavMesh3DNodes.size()) gNavMesh3DNodes[idx] = after; }
             });
         }
     }
@@ -2675,9 +2720,9 @@ static void SaveSceneToPath(const std::filesystem::path& path, const std::vector
     NebulaScene::SaveSceneToPath(path, nodes);
 }
 
-static void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d)
+static void SaveSceneToPath(const std::filesystem::path& path, const std::vector<Audio3DNode>& nodes, const std::vector<StaticMesh3DNode>& statics, const std::vector<Camera3DNode>& cameras, const std::vector<Node3DNode>& node3d, const std::vector<NavMesh3DNode>& navMeshes = {})
 {
-    NebulaScene::SaveSceneToPath(path, nodes, statics, cameras, node3d);
+    NebulaScene::SaveSceneToPath(path, nodes, statics, cameras, node3d, navMeshes);
 }
 
 static bool HasUnsavedProjectChanges()
@@ -2724,12 +2769,14 @@ static void SetActiveScene(int index)
         gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
         gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
         gOpenScenes[gActiveScene].node3d = gNode3DNodes;
+        gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
     }
     gActiveScene = index;
     gAudio3DNodes = gOpenScenes[gActiveScene].nodes;
     gStaticMeshNodes = gOpenScenes[gActiveScene].staticMeshes;
     gCamera3DNodes = gOpenScenes[gActiveScene].cameras;
     gNode3DNodes = gOpenScenes[gActiveScene].node3d;
+    gNavMesh3DNodes = gOpenScenes[gActiveScene].navMeshes;
     gForceSelectSceneTab = index;
     NotifyScriptSceneSwitch();
 }
@@ -2765,7 +2812,8 @@ static void SaveActiveScene()
     gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
     gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
     gOpenScenes[gActiveScene].node3d = gNode3DNodes;
-    SaveSceneToPath(gOpenScenes[gActiveScene].path, gOpenScenes[gActiveScene].nodes, gOpenScenes[gActiveScene].staticMeshes, gOpenScenes[gActiveScene].cameras, gOpenScenes[gActiveScene].node3d);
+    gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
+    SaveSceneToPath(gOpenScenes[gActiveScene].path, gOpenScenes[gActiveScene].nodes, gOpenScenes[gActiveScene].staticMeshes, gOpenScenes[gActiveScene].cameras, gOpenScenes[gActiveScene].node3d, gOpenScenes[gActiveScene].navMeshes);
     RefreshOpenSceneTabMetadataForPath(gOpenScenes[gActiveScene].path);
     gViewportToast = "Saved " + gOpenScenes[gActiveScene].name;
     gViewportToastUntil = glfwGetTime() + 2.0;
@@ -2787,13 +2835,14 @@ static void SaveAllProjectChanges()
         gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
         gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
         gOpenScenes[gActiveScene].node3d = gNode3DNodes;
+        gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
     }
 
     // Save every open scene in the current project.
     gSaveAllInProgress = true;
     for (auto& s : gOpenScenes)
     {
-        SaveSceneToPath(s.path, s.nodes, s.staticMeshes, s.cameras, s.node3d);
+        SaveSceneToPath(s.path, s.nodes, s.staticMeshes, s.cameras, s.node3d, s.navMeshes);
         RefreshOpenSceneTabMetadataForPath(s.path);
     }
     gSaveAllInProgress = false;
@@ -2910,8 +2959,8 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                     else
                     {
                         bool topOccupied =
-                            (gSelectedAudio3D >= 0) || (gSelectedStaticMesh >= 0) || (gSelectedCamera3D >= 0) ||
-                            (gInspectorPinnedAudio3D >= 0) || (gInspectorPinnedStaticMesh >= 0) || (gInspectorPinnedCamera3D >= 0) || (gInspectorPinnedNode3D >= 0) ||
+                            (gSelectedAudio3D >= 0) || (gSelectedStaticMesh >= 0) || (gSelectedCamera3D >= 0) || (gSelectedNavMesh3D >= 0) ||
+                            (gInspectorPinnedAudio3D >= 0) || (gInspectorPinnedStaticMesh >= 0) || (gInspectorPinnedCamera3D >= 0) || (gInspectorPinnedNode3D >= 0) || (gInspectorPinnedNavMesh3D >= 0) ||
                             (gMaterialInspectorOpen && !gMaterialInspectorPath.empty()) ||
                             (gNebTexInspectorOpen && !gNebTexInspectorPath.empty());
 
@@ -2922,10 +2971,12 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                             gSelectedStaticMesh = -1;
                             gSelectedCamera3D = -1;
                             gSelectedNode3D = -1;
+                            gSelectedNavMesh3D = -1;
                             gInspectorPinnedAudio3D = -1;
                             gInspectorPinnedStaticMesh = -1;
                             gInspectorPinnedCamera3D = -1;
                             gInspectorPinnedNode3D = -1;
+                            gInspectorPinnedNavMesh3D = -1;
                             gInspectorSel = -1;
 
                             gMaterialInspectorOpen = false;
@@ -2985,7 +3036,7 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                     bool canSave = gSaveAllInProgress || (gActiveScene >= 0 && gActiveScene < (int)gOpenScenes.size() && gOpenScenes[gActiveScene].path == p);
                     if (canSave)
                     {
-                        SaveSceneToPath(p, gAudio3DNodes, gStaticMeshNodes, gCamera3DNodes, gNode3DNodes);
+                        SaveSceneToPath(p, gAudio3DNodes, gStaticMeshNodes, gCamera3DNodes, gNode3DNodes, gNavMesh3DNodes);
                         RefreshOpenSceneTabMetadataForPath(p);
                         gViewportToast = "Saved " + p.stem().string();
                     }
@@ -3119,6 +3170,7 @@ static void DrawAssetsBrowser(const std::filesystem::path& root)
                     gInspectorPinnedStaticMesh = -1;
                     gInspectorPinnedCamera3D = -1;
                     gInspectorPinnedNode3D = -1;
+                    gInspectorPinnedNavMesh3D = -1;
                 }
             }
             if (p.extension() == ".nebmesh")
@@ -8575,6 +8627,7 @@ int main(int, char**)
     std::vector<StaticMesh3DNode> playSavedStaticMeshNodes;
     std::vector<Camera3DNode> playSavedCamera3DNodes;
     std::vector<Node3DNode> playSavedNode3DNodes;
+    std::vector<NavMesh3DNode> playSavedNavMesh3DNodes;
 
     bool showPreferences = false;
     bool showViewportDebugTab = false;
@@ -9267,6 +9320,7 @@ int main(int, char**)
                         gStaticMeshNodes = playSavedStaticMeshNodes;
                         gCamera3DNodes = playSavedCamera3DNodes;
                         gNode3DNodes = playSavedNode3DNodes;
+                        gNavMesh3DNodes = playSavedNavMesh3DNodes;
                     }
                 }
                 else
@@ -9277,6 +9331,8 @@ int main(int, char**)
                             gStaticMeshNodes[gTransformIndex] = gTransformBeforeStatic;
                         else if (gTransformIsNode3D && gTransformIndex >= 0 && gTransformIndex < (int)gNode3DNodes.size())
                             gNode3DNodes[gTransformIndex] = gTransformBeforeNode3D;
+                        else if (gTransformIsNavMesh3D && gTransformIndex >= 0 && gTransformIndex < (int)gNavMesh3DNodes.size())
+                            gNavMesh3DNodes[gTransformIndex] = gTransformBeforeNavMesh3D;
                         else if (gTransformIndex >= 0 && gTransformIndex < (int)gAudio3DNodes.size())
                             gAudio3DNodes[gTransformIndex] = gTransformBefore;
                     }
@@ -9332,6 +9388,29 @@ int main(int, char**)
                         [idx]() {
                             if (idx >= 0 && idx < (int)gStaticMeshNodes.size())
                                 gStaticMeshNodes.erase(gStaticMeshNodes.begin() + idx);
+                        }
+                    });
+                }
+                else if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+                {
+                    int idx = gSelectedNavMesh3D;
+                    NavMesh3DNode node = gNavMesh3DNodes[idx];
+                    gNavMesh3DNodes.erase(gNavMesh3DNodes.begin() + idx);
+                    gSelectedNavMesh3D = -1;
+                    gTransformMode = Transform_None;
+                    gAxisLock = 0;
+                    gHasTransformSnapshot = false;
+
+                    PushUndo({"Delete NavMesh3D",
+                        [idx, node]() {
+                            int i = idx;
+                            if (i < 0) return;
+                            if (i > (int)gNavMesh3DNodes.size()) i = (int)gNavMesh3DNodes.size();
+                            gNavMesh3DNodes.insert(gNavMesh3DNodes.begin() + i, node);
+                        },
+                        [idx]() {
+                            if (idx >= 0 && idx < (int)gNavMesh3DNodes.size())
+                                gNavMesh3DNodes.erase(gNavMesh3DNodes.begin() + idx);
                         }
                     });
                 }
@@ -9727,6 +9806,133 @@ int main(int, char**)
         {
             auto& n = gNode3DNodes[gSelectedNode3D];
             const int selectedId = 40000 + gSelectedNode3D;
+            if (gTransformMode != Transform_None)
+            {
+                float dx = 0.0f;
+                float dy = 0.0f;
+                if (!gTransforming)
+                {
+                    gTransforming = true;
+                    gLastTransformMouseX = io.MousePos.x;
+                    gLastTransformMouseY = io.MousePos.y;
+                }
+                else
+                {
+                    dx = (float)(io.MousePos.x - gLastTransformMouseX);
+                    dy = (float)(io.MousePos.y - gLastTransformMouseY);
+                    gLastTransformMouseX = io.MousePos.x;
+                    gLastTransformMouseY = io.MousePos.y;
+                }
+
+                if ((dx != 0.0f || dy != 0.0f) && !gHasTransformSnapshot)
+                {
+                    BeginTransformSnapshot();
+                }
+
+                Vec3 right, upAxis, forwardAxis;
+                forwardAxis = forward;
+                right = { forwardAxis.y * up.z - forwardAxis.z * up.y,
+                          forwardAxis.z * up.x - forwardAxis.x * up.z,
+                          forwardAxis.x * up.y - forwardAxis.y * up.x };
+                float rlen = sqrtf(right.x*right.x + right.y*right.y + right.z*right.z);
+                if (rlen > 0.0001f) { right.x /= rlen; right.y /= rlen; right.z /= rlen; }
+                upAxis = { right.y * forwardAxis.z - right.z * forwardAxis.y,
+                           right.z * forwardAxis.x - right.x * forwardAxis.z,
+                           right.x * forwardAxis.y - right.y * forwardAxis.x };
+                float ulen = sqrtf(upAxis.x*upAxis.x + upAxis.y*upAxis.y + upAxis.z*upAxis.z);
+                if (ulen > 0.0001f) { upAxis.x /= ulen; upAxis.y /= ulen; upAxis.z /= ulen; }
+
+                float distToCam = sqrtf((n.x - eye.x)*(n.x - eye.x) + (n.y - eye.y)*(n.y - eye.y) + (n.z - eye.z)*(n.z - eye.z));
+                float moveScale = 0.0015f * distToCam;
+
+                if (gTransformMode == Transform_Grab)
+                {
+                    Vec3 delta = { right.x * -dx * moveScale + upAxis.x * -dy * moveScale,
+                                   right.y * -dx * moveScale + upAxis.y * -dy * moveScale,
+                                   right.z * -dx * moveScale + upAxis.z * -dy * moveScale };
+
+                    if (gAxisLock == 'X') { n.x += delta.x; }
+                    else if (gAxisLock == 'Y') { n.y += delta.y; }
+                    else if (gAxisLock == 'Z') { n.z += delta.z; }
+                    else { n.x += delta.x; n.y += delta.y; n.z += delta.z; }
+
+                    if (ImGui::IsMouseClicked(0))
+                    {
+                        if (!gHasTransformSnapshot) BeginTransformSnapshot();
+                        EndTransformSnapshot();
+                        gTransformMode = Transform_None;
+                    }
+                }
+                else if (gTransformMode == Transform_Rotate)
+                {
+                    float rotScale = 1.5f;
+                    if (!gHasRotatePreview || gRotatePreviewIndex != selectedId)
+                    {
+                        gHasRotatePreview = true;
+                        gRotatePreviewIndex = selectedId;
+                        gRotateStartX = n.rotX;
+                        gRotateStartY = n.rotY;
+                        gRotateStartZ = n.rotZ;
+                        gRotateStartMouseX = io.MousePos.x;
+                        gRotateStartMouseY = io.MousePos.y;
+                    }
+
+                    float rdx = (float)(io.MousePos.x - gRotateStartMouseX);
+                    float rdy = (float)(io.MousePos.y - gRotateStartMouseY);
+                    gRotatePreviewX = gRotateStartX;
+                    gRotatePreviewY = gRotateStartY;
+                    gRotatePreviewZ = gRotateStartZ;
+
+                    if (gAxisLock == 'X') gRotatePreviewX += rdy * rotScale;
+                    else if (gAxisLock == 'Y') gRotatePreviewY += rdx * rotScale;
+                    else if (gAxisLock == 'Z') gRotatePreviewZ += rdx * rotScale;
+                    else { gRotatePreviewY += rdx * rotScale; gRotatePreviewX += rdy * rotScale; }
+
+                    if (ImGui::IsMouseClicked(0))
+                    {
+                        n.rotX = gRotatePreviewX;
+                        n.rotY = gRotatePreviewY;
+                        n.rotZ = gRotatePreviewZ;
+                        gRotateStartX = n.rotX;
+                        gRotateStartY = n.rotY;
+                        gRotateStartZ = n.rotZ;
+                        gRotateStartMouseX = io.MousePos.x;
+                        gRotateStartMouseY = io.MousePos.y;
+                        gHasRotatePreview = false;
+                        if (!gHasTransformSnapshot) BeginTransformSnapshot();
+                        EndTransformSnapshot();
+                        gTransformMode = Transform_None;
+                    }
+                }
+                else if (gTransformMode == Transform_Scale)
+                {
+                    float s = 1.0f + ((-dy + dx) * 0.03f);
+                    if (s < 0.01f) s = 0.01f;
+
+                    if (gAxisLock == 'X') n.scaleX *= s;
+                    else if (gAxisLock == 'Y') n.scaleY *= s;
+                    else if (gAxisLock == 'Z') n.scaleZ *= s;
+                    else { n.scaleX *= s; n.scaleY *= s; n.scaleZ *= s; }
+
+                    if (ImGui::IsMouseClicked(0))
+                    {
+                        if (!gHasTransformSnapshot) BeginTransformSnapshot();
+                        EndTransformSnapshot();
+                        gTransformMode = Transform_None;
+                    }
+                }
+
+                if (gTransformMode == Transform_Scale) { gDbgDx = dx; gDbgDy = dy; }
+            }
+            else
+            {
+                gTransforming = false;
+            }
+        }
+        else if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+        {
+            auto& n = gNavMesh3DNodes[gSelectedNavMesh3D];
+            const int selectedId = 50000 + gSelectedNavMesh3D;
             if (gTransformMode != Transform_None)
             {
                 float dx = 0.0f;
@@ -10289,6 +10495,37 @@ int main(int, char**)
             glPopMatrix();
         }
 
+        // NavMesh3D bounds rendering (wireframe box, cyan for positive, red for negator)
+        for (int i = 0; i < (int)gNavMesh3DNodes.size(); ++i)
+        {
+            const auto& n = gNavMesh3DNodes[i];
+            if (!n.navBounds) continue;
+            const bool selected = (gSelectedNavMesh3D == i);
+            if (selected) glColor3f(1.0f, 1.0f, 1.0f);
+            else if (n.navNegator) glColor3f(1.0f, 0.25f, 0.25f);
+            else glColor3f(n.wireR, n.wireG, n.wireB);
+
+            glLineWidth(n.wireThickness);
+            glPushMatrix();
+            glTranslatef(n.x, n.y, n.z);
+            glRotatef(n.rotX, 1.0f, 0.0f, 0.0f);
+            glRotatef(n.rotY, 0.0f, 1.0f, 0.0f);
+            glRotatef(n.rotZ, 0.0f, 0.0f, 1.0f);
+            glScalef(n.scaleX * n.extentX, n.scaleY * n.extentY, n.scaleZ * n.extentZ);
+
+            const float q = 0.5f;
+            glBegin(GL_QUADS);
+            glVertex3f(-q, -q,  q); glVertex3f( q, -q,  q); glVertex3f( q,  q,  q); glVertex3f(-q,  q,  q);
+            glVertex3f( q, -q, -q); glVertex3f(-q, -q, -q); glVertex3f(-q,  q, -q); glVertex3f( q,  q, -q);
+            glVertex3f(-q, -q, -q); glVertex3f(-q, -q,  q); glVertex3f(-q,  q,  q); glVertex3f(-q,  q, -q);
+            glVertex3f( q, -q,  q); glVertex3f( q, -q, -q); glVertex3f( q,  q, -q); glVertex3f( q,  q,  q);
+            glVertex3f(-q,  q,  q); glVertex3f( q,  q,  q); glVertex3f( q,  q, -q); glVertex3f(-q,  q, -q);
+            glVertex3f(-q, -q, -q); glVertex3f( q, -q, -q); glVertex3f( q, -q,  q); glVertex3f(-q, -q,  q);
+            glEnd();
+            glPopMatrix();
+            glLineWidth(1.0f);
+        }
+
         // StaticMesh3D rendering (basic)
         glPolygonMode(GL_FRONT_AND_BACK, gWireframePreview ? GL_LINE : GL_FILL);
         for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
@@ -10771,6 +11008,90 @@ int main(int, char**)
                 glShadeModel(GL_FLAT);
             }
 
+            // Green wireframe overlay for navmesh-ready triangles inside a NavMesh3D bounds
+            if (s.navmeshReady && !selected && !gNavMesh3DNodes.empty())
+            {
+                // Collect positive (non-negator) bounds AABBs + wireframe style from first matching
+                struct NavBounds { float minX, minY, minZ, maxX, maxY, maxZ; float r, g, b, thick; };
+                std::vector<NavBounds> posBounds;
+                for (int ni = 0; ni < (int)gNavMesh3DNodes.size(); ++ni)
+                {
+                    const auto& nm = gNavMesh3DNodes[ni];
+                    if (!nm.navBounds || nm.navNegator) continue;
+                    float hx = nm.scaleX * nm.extentX * 0.5f;
+                    float hy = nm.scaleY * nm.extentY * 0.5f;
+                    float hz = nm.scaleZ * nm.extentZ * 0.5f;
+                    posBounds.push_back({ nm.x - hx, nm.y - hy, nm.z - hz, nm.x + hx, nm.y + hy, nm.z + hz, nm.wireR, nm.wireG, nm.wireB, nm.wireThickness });
+                }
+
+                if (!posBounds.empty())
+                {
+                    // Use color/thickness from first positive bounds
+                    float overlayR = posBounds[0].r, overlayG = posBounds[0].g, overlayB = posBounds[0].b;
+                    float overlayThick = posBounds[0].thick;
+
+                    bool anyDrawn = false;
+                    for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
+                    {
+                        uint16_t i0 = mesh->indices[idx + 0];
+                        uint16_t i1 = mesh->indices[idx + 1];
+                        uint16_t i2 = mesh->indices[idx + 2];
+                        if (i0 >= renderPositions->size() || i1 >= renderPositions->size() || i2 >= renderPositions->size())
+                            continue;
+                        const Vec3& lv0 = (*renderPositions)[i0];
+                        const Vec3& lv1 = (*renderPositions)[i1];
+                        const Vec3& lv2 = (*renderPositions)[i2];
+
+                        // World-space positions (scale + translate)
+                        float wp[3][3] = {
+                            { wx + lv0.x * wsx, wy + lv0.y * wsy, wz + lv0.z * wsz },
+                            { wx + lv1.x * wsx, wy + lv1.y * wsy, wz + lv1.z * wsz },
+                            { wx + lv2.x * wsx, wy + lv2.y * wsy, wz + lv2.z * wsz }
+                        };
+
+                        bool triInside = false;
+                        for (int vi = 0; vi < 3 && !triInside; ++vi)
+                        {
+                            for (int bi = 0; bi < (int)posBounds.size() && !triInside; ++bi)
+                            {
+                                const auto& b = posBounds[bi];
+                                if (wp[vi][0] >= b.minX && wp[vi][0] <= b.maxX &&
+                                    wp[vi][1] >= b.minY && wp[vi][1] <= b.maxY &&
+                                    wp[vi][2] >= b.minZ && wp[vi][2] <= b.maxZ)
+                                {
+                                    triInside = true;
+                                    overlayR = b.r; overlayG = b.g; overlayB = b.b;
+                                    overlayThick = b.thick;
+                                }
+                            }
+                        }
+
+                        if (triInside)
+                        {
+                            if (!anyDrawn)
+                            {
+                                glDisable(GL_TEXTURE_2D);
+                                glDisable(GL_LIGHTING);
+                                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                glLineWidth(overlayThick);
+                                glColor3f(overlayR, overlayG, overlayB);
+                                glBegin(GL_TRIANGLES);
+                                anyDrawn = true;
+                            }
+                            glVertex3f(lv0.x, lv0.y, lv0.z);
+                            glVertex3f(lv1.x, lv1.y, lv1.z);
+                            glVertex3f(lv2.x, lv2.y, lv2.z);
+                        }
+                    }
+                    if (anyDrawn)
+                    {
+                        glEnd();
+                        glLineWidth(1.0f);
+                        glPolygonMode(GL_FRONT_AND_BACK, gWireframePreview ? GL_LINE : GL_FILL);
+                    }
+                }
+            }
+
             // Selected checker overlay: fullscreen texture masked by selected mesh shape
             if (selected && gCheckerOverlayTex != 0)
             {
@@ -10926,6 +11247,7 @@ RenderImGuiOnly:
                 playSavedStaticMeshNodes = gStaticMeshNodes;
                 playSavedCamera3DNodes = gCamera3DNodes;
                 playSavedNode3DNodes = gNode3DNodes;
+                playSavedNavMesh3DNodes = gNavMesh3DNodes;
                 playSceneSnapshotValid = true;
 
                 gPlayMode = true;
@@ -10952,6 +11274,7 @@ RenderImGuiOnly:
                     gStaticMeshNodes = playSavedStaticMeshNodes;
                     gCamera3DNodes = playSavedCamera3DNodes;
                     gNode3DNodes = playSavedNode3DNodes;
+                    gNavMesh3DNodes = playSavedNavMesh3DNodes;
                 }
             }
         }
@@ -11504,6 +11827,7 @@ RenderImGuiOnly:
                                 gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
                                 gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
                                 gOpenScenes[gActiveScene].node3d = gNode3DNodes;
+                                gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
                             }
 
                             std::string defaultSceneCfg = GetProjectDefaultScene(std::filesystem::path(gProjectDir));
@@ -15372,6 +15696,28 @@ RenderImGuiOnly:
                         }
                     });
                 }
+                if (ImGui::MenuItem("NavMesh3D"))
+                {
+                    NavMesh3DNode node;
+                    node.name = "NavMesh3D" + std::to_string((int)gNavMesh3DNodes.size() + 1);
+                    int idx = (int)gNavMesh3DNodes.size();
+                    gNavMesh3DNodes.push_back(node);
+                    gSelectedNavMesh3D = idx;
+                    gSelectedAudio3D = -1;
+                    gSelectedStaticMesh = -1;
+                    gSelectedCamera3D = -1;
+                    gSelectedNode3D = -1;
+
+                    PushUndo({"Create NavMesh3D",
+                        [idx]() { if (idx >= 0 && idx < (int)gNavMesh3DNodes.size()) gNavMesh3DNodes.erase(gNavMesh3DNodes.begin() + idx); },
+                        [idx, node]() {
+                            if (idx < 0) return;
+                            int i = idx;
+                            if (i > (int)gNavMesh3DNodes.size()) i = (int)gNavMesh3DNodes.size();
+                            gNavMesh3DNodes.insert(gNavMesh3DNodes.begin() + i, node);
+                        }
+                    });
+                }
                 ImGui::EndMenu();
             }
             ImGui::EndPopup();
@@ -15423,6 +15769,7 @@ RenderImGuiOnly:
                 gSelectedStaticMesh = -1;
                 gSelectedCamera3D = -1;
                 gSelectedNode3D = -1;
+                gSelectedNavMesh3D = -1;
                 gTransforming = false;
                 gTransformMode = Transform_None;
                 gAxisLock = 0;
@@ -15553,6 +15900,7 @@ RenderImGuiOnly:
                     gSelectedAudio3D = -1;
                     gSelectedCamera3D = -1;
                     gSelectedNode3D = -1;
+                    gSelectedNavMesh3D = -1;
                     gTransforming = false;
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
@@ -15722,6 +16070,7 @@ RenderImGuiOnly:
                     gSelectedAudio3D = -1;
                     gSelectedStaticMesh = -1;
                     gSelectedNode3D = -1;
+                    gSelectedNavMesh3D = -1;
                     gTransforming = false;
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
@@ -15862,6 +16211,7 @@ RenderImGuiOnly:
                     gSelectedAudio3D = -1;
                     gSelectedStaticMesh = -1;
                     gSelectedCamera3D = -1;
+                    gSelectedNavMesh3D = -1;
                     gTransforming = false;
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
@@ -16018,6 +16368,43 @@ RenderImGuiOnly:
             for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
                 if (!node3dDrawn[(size_t)i])
                     drawNode3D(i, 0);
+        }
+
+        // List NavMesh3D nodes
+        for (int i = 0; i < (int)gNavMesh3DNodes.size(); ++i)
+        {
+            auto& n = gNavMesh3DNodes[i];
+            ImGui::PushID(10000 + i);
+            bool selected = (gSelectedNavMesh3D == i);
+            std::string label = n.name + (n.navNegator ? " [NEG]" : "") + (n.cullWalls ? " [CULL]" : "");
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                gSelectedNavMesh3D = i;
+                gSelectedAudio3D = -1;
+                gSelectedStaticMesh = -1;
+                gSelectedCamera3D = -1;
+                gSelectedNode3D = -1;
+                gTransforming = false;
+                gTransformMode = Transform_None;
+                gAxisLock = 0;
+            }
+
+            bool requestDelete = false;
+            if (ImGui::BeginPopupContextItem("NavMesh3DContext"))
+            {
+                if (ImGui::MenuItem("Delete"))
+                    requestDelete = true;
+                ImGui::EndPopup();
+            }
+            if (requestDelete)
+            {
+                gNavMesh3DNodes.erase(gNavMesh3DNodes.begin() + i);
+                if (gSelectedNavMesh3D == i) gSelectedNavMesh3D = -1;
+                else if (gSelectedNavMesh3D > i) --gSelectedNavMesh3D;
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
         }
 
         ImGui::End();
@@ -16511,6 +16898,7 @@ RenderImGuiOnly:
             gInspectorPinnedStaticMesh = -1;
             gInspectorPinnedCamera3D = -1;
             gInspectorPinnedNode3D = -1;
+            gInspectorPinnedNavMesh3D = -1;
         }
         else if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
         {
@@ -16518,6 +16906,7 @@ RenderImGuiOnly:
             gInspectorPinnedAudio3D = -1;
             gInspectorPinnedCamera3D = -1;
             gInspectorPinnedNode3D = -1;
+            gInspectorPinnedNavMesh3D = -1;
         }
         else if (gSelectedCamera3D >= 0 && gSelectedCamera3D < (int)gCamera3DNodes.size())
         {
@@ -16525,6 +16914,7 @@ RenderImGuiOnly:
             gInspectorPinnedAudio3D = -1;
             gInspectorPinnedStaticMesh = -1;
             gInspectorPinnedNode3D = -1;
+            gInspectorPinnedNavMesh3D = -1;
         }
         else if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
         {
@@ -16532,22 +16922,34 @@ RenderImGuiOnly:
             gInspectorPinnedAudio3D = -1;
             gInspectorPinnedStaticMesh = -1;
             gInspectorPinnedCamera3D = -1;
+            gInspectorPinnedNavMesh3D = -1;
+        }
+        else if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+        {
+            gInspectorPinnedNavMesh3D = gSelectedNavMesh3D;
+            gInspectorPinnedAudio3D = -1;
+            gInspectorPinnedStaticMesh = -1;
+            gInspectorPinnedCamera3D = -1;
+            gInspectorPinnedNode3D = -1;
         }
 
         if (gInspectorPinnedAudio3D >= (int)gAudio3DNodes.size()) gInspectorPinnedAudio3D = -1;
         if (gInspectorPinnedStaticMesh >= (int)gStaticMeshNodes.size()) gInspectorPinnedStaticMesh = -1;
         if (gInspectorPinnedCamera3D >= (int)gCamera3DNodes.size()) gInspectorPinnedCamera3D = -1;
         if (gInspectorPinnedNode3D >= (int)gNode3DNodes.size()) gInspectorPinnedNode3D = -1;
+        if (gInspectorPinnedNavMesh3D >= (int)gNavMesh3DNodes.size()) gInspectorPinnedNavMesh3D = -1;
 
         int inspectAudio = (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size()) ? gSelectedAudio3D : gInspectorPinnedAudio3D;
         int inspectStatic = (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size()) ? gSelectedStaticMesh : gInspectorPinnedStaticMesh;
         int inspectCamera = (gSelectedCamera3D >= 0 && gSelectedCamera3D < (int)gCamera3DNodes.size()) ? gSelectedCamera3D : gInspectorPinnedCamera3D;
         int inspectNode3D = (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size()) ? gSelectedNode3D : gInspectorPinnedNode3D;
+        int inspectNavMesh3D = (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size()) ? gSelectedNavMesh3D : gInspectorPinnedNavMesh3D;
 
         if ((inspectAudio >= 0 && inspectAudio < (int)gAudio3DNodes.size()) ||
             (inspectStatic >= 0 && inspectStatic < (int)gStaticMeshNodes.size()) ||
             (inspectCamera >= 0 && inspectCamera < (int)gCamera3DNodes.size()) ||
             (inspectNode3D >= 0 && inspectNode3D < (int)gNode3DNodes.size()) ||
+            (inspectNavMesh3D >= 0 && inspectNavMesh3D < (int)gNavMesh3DNodes.size()) ||
             (gMaterialInspectorOpen && !gMaterialInspectorPath.empty()) ||
             (gNebTexInspectorOpen && !gNebTexInspectorPath.empty()) ||
             (gMaterialInspectorOpen2 && !gMaterialInspectorPath2.empty()) ||
@@ -16582,11 +16984,13 @@ RenderImGuiOnly:
                 gSelectedStaticMesh = -1;
                 gSelectedCamera3D = -1;
                 gSelectedNode3D = -1;
+                gSelectedNavMesh3D = -1;
                 gSelectedAssetPath.clear();
                 gInspectorPinnedAudio3D = -1;
                 gInspectorPinnedStaticMesh = -1;
                 gInspectorPinnedCamera3D = -1;
                 gInspectorPinnedNode3D = -1;
+                gInspectorPinnedNavMesh3D = -1;
             }
             ImGui::Separator();
             ImGui::BeginChild("##InspectorTopScroll", ImVec2(0, 0), false, ImGuiWindowFlags_None);
@@ -17024,6 +17428,7 @@ RenderImGuiOnly:
                 if (ImGui::Button("Reset Xform (keep world)##InspectorStatic"))
                     ResetStaticMeshTransformsKeepWorld(inspectStatic);
                 ImGui::Checkbox("Collision Source (Saturn floor)", &n.collisionSource);
+                ImGui::Checkbox("Navmesh Ready", &n.navmeshReady);
 
                 ImGui::DragFloat3("Position", &n.x, 0.1f);
                 float rotArr[3] = { n.rotY, n.rotZ, n.rotX };
@@ -17242,6 +17647,42 @@ RenderImGuiOnly:
                 ImGui::TextUnformatted("Collision Bounds (local)");
                 ImGui::DragFloat3("XYZ Extents", &n.extentX, 0.01f, 0.0f, 1000.0f);
                 ImGui::DragFloat3("Bounds Position", &n.boundPosX, 0.01f);
+            }
+            else if (inspectNavMesh3D >= 0 && inspectNavMesh3D < (int)gNavMesh3DNodes.size())
+            {
+                auto& n = gNavMesh3DNodes[inspectNavMesh3D];
+                ImGui::Text("NavMesh3D");
+                ImGui::Separator();
+
+                static char navNameBuf[256] = {};
+                static int lastNavInspected = -1;
+                bool navInspectorChanged = (lastNavInspected != inspectNavMesh3D);
+                lastNavInspected = inspectNavMesh3D;
+                if (navInspectorChanged)
+                    strncpy_s(navNameBuf, n.name.c_str(), sizeof(navNameBuf) - 1);
+                if (ImGui::InputText("Name", navNameBuf, sizeof(navNameBuf)))
+                    n.name = navNameBuf;
+
+                ImGui::DragFloat3("Position", &n.x, 0.1f);
+                float navRotArr[3] = { n.rotY, n.rotZ, n.rotX };
+                if (ImGui::DragFloat3("##NavMesh3DRotPacked", navRotArr, 0.5f))
+                {
+                    n.rotY = navRotArr[0];
+                    n.rotZ = navRotArr[1];
+                    n.rotX = navRotArr[2];
+                }
+                ImGui::SameLine(); ImGui::Text("Rotation");
+                ImGui::DragFloat3("Scale", &n.scaleX, 0.01f, 0.01f, 100.0f);
+                ImGui::Separator();
+                ImGui::DragFloat3("Extents", &n.extentX, 0.1f, 0.1f, 1000.0f);
+                ImGui::Checkbox("Nav Bounds", &n.navBounds);
+                ImGui::Checkbox("Nav Negator", &n.navNegator);
+                ImGui::Checkbox("Cull Walls", &n.cullWalls);
+                if (n.cullWalls)
+                    ImGui::DragFloat("Wall Cull Threshold", &n.wallCullThreshold, 0.01f, 0.0f, 1.0f);
+                ImGui::Separator();
+                ImGui::ColorEdit3("Wireframe Color", &n.wireR);
+                ImGui::DragFloat("Wireframe Thickness", &n.wireThickness, 0.1f, 0.5f, 10.0f);
             }
             else if (gMaterialInspectorOpen && !gMaterialInspectorPath.empty())
             {
@@ -17580,6 +18021,7 @@ RenderImGuiOnly:
                             gStaticMeshNodes = gOpenScenes[gActiveScene].staticMeshes;
                             gCamera3DNodes = gOpenScenes[gActiveScene].cameras;
                             gNode3DNodes = gOpenScenes[gActiveScene].node3d;
+    gNavMesh3DNodes = gOpenScenes[gActiveScene].navMeshes;
                         }
                         else
                         {
@@ -17587,14 +18029,17 @@ RenderImGuiOnly:
                             gStaticMeshNodes.clear();
                             gCamera3DNodes.clear();
                             gNode3DNodes.clear();
+                            gNavMesh3DNodes.clear();
                             gSelectedAudio3D = -1;
                             gSelectedStaticMesh = -1;
                             gSelectedCamera3D = -1;
                             gSelectedNode3D = -1;
+                            gSelectedNavMesh3D = -1;
                             gInspectorPinnedAudio3D = -1;
                             gInspectorPinnedStaticMesh = -1;
                             gInspectorPinnedCamera3D = -1;
                             gInspectorPinnedNode3D = -1;
+                            gInspectorPinnedNavMesh3D = -1;
                         }
                         break;
                     }

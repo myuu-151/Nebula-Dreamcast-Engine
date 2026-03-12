@@ -31,6 +31,8 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.cpp"
     "${CMAKE_SOURCE_DIR}/src/nebula_dreamcast.h"
     "${CMAKE_SOURCE_DIR}/nebula.rc"
+    "${CMAKE_SOURCE_DIR}/src/navmesh/NavMeshBuilder.cpp"
+    "${CMAKE_SOURCE_DIR}/src/navmesh/NavMeshBuilder.h"
 )
 
 set(IMGUI_SOURCES
@@ -48,6 +50,7 @@ target_sources(NebulaEditor PRIVATE ${IMGUI_SOURCES})
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
 add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/glfw")
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/recastnavigation")
 
 include(FetchContent)
 FetchContent_Declare(
@@ -58,7 +61,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(assimp)
 
 if (WIN32)
-    target_link_libraries(NebulaEditor PRIVATE glfw opengl32 gdi32 user32 shell32 winmm windowscodecs assimp)
+    target_link_libraries(NebulaEditor PRIVATE glfw opengl32 gdi32 user32 shell32 winmm windowscodecs assimp Recast Detour)
     target_compile_definitions(NebulaEditor PRIVATE GLFW_EXPOSE_NATIVE_WIN32)
 endif()
 

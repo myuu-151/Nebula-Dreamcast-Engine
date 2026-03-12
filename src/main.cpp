@@ -12896,6 +12896,9 @@ RenderImGuiOnly:
                             std::vector<std::vector<std::string>> runtimeSceneAnimDiskByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
+                            // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
+                            struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
+                            std::vector<ScenePlayerParent> runtimeScenePlayerParent;
                             std::string defaultSceneRuntimeFile;
                             for (const auto& ls : loadedScenes)
                             {
@@ -12982,6 +12985,27 @@ RenderImGuiOnly:
                                 runtimeSceneAnimDiskByMesh.push_back(std::move(sceneAnimDiskByMesh));
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
+                                // Find the player mesh's parent Node3D transform for this scene.
+                                {
+                                    ScenePlayerParent pp{};
+                                    for (const auto& sm : stagedScene.staticMeshes)
+                                    {
+                                        if (sm.mesh == meshSrc.mesh)
+                                        {
+                                            for (const auto& n3 : stagedScene.node3d)
+                                            {
+                                                if (n3.name == sm.parent)
+                                                {
+                                                    pp.pos[0] = n3.x; pp.pos[1] = n3.y; pp.pos[2] = n3.z;
+                                                    pp.rot[0] = n3.rotX; pp.rot[1] = n3.rotY; pp.rot[2] = n3.rotZ;
+                                                    break;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    runtimeScenePlayerParent.push_back(pp);
+                                }
                                 if (defaultSceneRuntimeFile.empty()) defaultSceneRuntimeFile = sceneOutName;
                             }
                             if (runtimeSceneFiles.empty())
@@ -12990,6 +13014,7 @@ RenderImGuiOnly:
                                 runtimeSceneAnimDiskByMesh.push_back({});
                                 runtimeSceneRuntimeTestByMesh.push_back({});
                                 runtimeSceneCollisionSourceByMesh.push_back({});
+                                runtimeScenePlayerParent.push_back(ScenePlayerParent{});
                                 std::ofstream so(cdScenesDir / "DEFAULT.NEBSCENE", std::ios::out | std::ios::trunc);
                                 if (so.is_open())
                                 {
@@ -13484,9 +13509,36 @@ RenderImGuiOnly:
                                     mc << "\n";
                                 }
                                 mc << "};\n";
+                                // Per-scene parent Node3D transform for the player mesh (drives movement).
+                                mc << "static const float kScenePlayerParentPos[" << (int)runtimeSceneFiles.size() << "][3] = {\n";
+                                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                                {
+                                    const auto& pp = runtimeScenePlayerParent[si];
+                                    mc << "{" << fstr(pp.pos[0]) << "," << fstr(pp.pos[1]) << "," << fstr(pp.pos[2]) << "}";
+                                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "};\n";
+                                mc << "static const float kScenePlayerParentRot[" << (int)runtimeSceneFiles.size() << "][3] = {\n";
+                                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                                {
+                                    const auto& pp = runtimeScenePlayerParent[si];
+                                    mc << "{" << fstr(pp.rot[0]) << "," << fstr(pp.rot[1]) << "," << fstr(pp.rot[2]) << "}";
+                                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "};\n";
                                 mc << "static const char* NB_ResolveMappedRef(const char* logical, const NB_RefMap* map, int count){ if(!logical||!logical[0]||!map||count<=0) return logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(logical,map[i].logical))||(map[i].staged&&dc_eq_nocase(logical,map[i].staged))) return map[i].staged; } const char* slash=strrchr(logical,'/'); const char* name=slash?slash+1:logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(name,map[i].logical))||(map[i].staged&&dc_eq_nocase(name,map[i].staged))) return map[i].staged; } return logical; }\n";
                                 mc << "static int NB_FindSceneMetaIndex(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return gSceneIndex; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(sceneFile,gSceneFiles[i])) return i; } const char* slash=strrchr(sceneFile,'/'); const char* name=slash?slash+1:sceneFile; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(name,gSceneFiles[i])) return i; } return gSceneIndex; }\n";
-                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } if(gSceneMeshCount>0){ gMeshPos[0]=gSceneMeshes[0].pos[0]; gMeshPos[1]=gSceneMeshes[0].pos[1]; gMeshPos[2]=gSceneMeshes[0].pos[2]; gMeshRot[0]=gSceneMeshes[0].rot[0]; gMeshRot[1]=gSceneMeshes[0].rot[1]; gMeshRot[2]=gSceneMeshes[0].rot[2]; gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
+                                // NB_ApplyLoadedSceneState: use parent Node3D transform for gMeshPos/gMeshRot (drives movement),
+                                // NOT the child StaticMesh3D transform (which is visual offset only).
+                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } "
+                                   "/* Use parent Node3D transform for movement (pos/rot), not child mesh. */ "
+                                   "{ int si=gSceneMetaIndex; if(si<0) si=0; if(si>=" << (int)runtimeSceneFiles.size() << ") si=0; "
+                                   "gMeshPos[0]=kScenePlayerParentPos[si][0]; gMeshPos[1]=kScenePlayerParentPos[si][1]; gMeshPos[2]=kScenePlayerParentPos[si][2]; "
+                                   "gMeshRot[0]=kScenePlayerParentRot[si][0]; gMeshRot[1]=kScenePlayerParentRot[si][1]; gMeshRot[2]=kScenePlayerParentRot[si][2]; "
+                                   "} "
+                                   "if(gSceneMeshCount>0){ gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
                                 mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; gSceneMetaIndex=NB_FindSceneMetaIndex(sceneFile); gSceneIndex=gSceneMetaIndex; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); if(!NB_DC_LoadScene(path)) return 0; return NB_ApplyLoadedSceneState(); }\n";
                                 mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; gSceneIndex=idx; gSceneMetaIndex=idx; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",gSceneFiles[idx]); if(!NB_DC_SwitchScene(path)) return 0; if(!NB_ApplyLoadedSceneState()) return 0; return 1; }\n";
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";

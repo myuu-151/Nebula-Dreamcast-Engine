@@ -10062,11 +10062,16 @@ int main(int, char**)
         glMatrixMode(GL_MODELVIEW);
         glLoadMatrixf(view.m);
 
-        // Background gradient
+        // Background gradient — reset state to ensure vertex colors work
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_ALPHA_TEST);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
+        glDisable(GL_LIGHTING);
+        glDisableClientState(GL_COLOR_ARRAY);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableClientState(GL_NORMAL_ARRAY);
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -11116,6 +11121,8 @@ int main(int, char**)
                                 glDisable(GL_TEXTURE_2D);
                                 glDisable(GL_LIGHTING);
                                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                glEnable(GL_POLYGON_OFFSET_LINE);
+                                glPolygonOffset(-1.0f, -1.0f);
                                 glLineWidth(overlayThick);
                                 glColor3f(overlayR, overlayG, overlayB);
                                 glBegin(GL_TRIANGLES);
@@ -11129,6 +11136,8 @@ int main(int, char**)
                     if (anyDrawn)
                     {
                         glEnd();
+                        glDisable(GL_POLYGON_OFFSET_LINE);
+                        glPolygonOffset(0.0f, 0.0f);
                         glLineWidth(1.0f);
                         glPolygonMode(GL_FRONT_AND_BACK, gWireframePreview ? GL_LINE : GL_FILL);
                     }
@@ -15643,59 +15652,91 @@ RenderImGuiOnly:
             float bestDist = 1e9f; // px
             int bestAudioIndex = -1;
             int bestStaticIndex = -1;
+            int bestCameraIndex = -1;
+            int bestNode3DIndex = -1;
+            int bestNavMeshIndex = -1;
+
+            auto pickNearest = [&](float sx, float sy) -> float {
+                float dx = io.MousePos.x - sx;
+                float dy = io.MousePos.y - sy;
+                return sqrtf(dx*dx + dy*dy);
+            };
+            auto clearBest = [&]() { bestAudioIndex = -1; bestStaticIndex = -1; bestCameraIndex = -1; bestNode3DIndex = -1; bestNavMeshIndex = -1; };
 
             for (int i = 0; i < (int)gAudio3DNodes.size(); ++i)
             {
-                const auto& n = gAudio3DNodes[i];
                 float sx, sy;
-                if (ProjectToScreenGL({ n.x, n.y, n.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                if (ProjectToScreenGL({ gAudio3DNodes[i].x, gAudio3DNodes[i].y, gAudio3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
                 {
-                    float dx = io.MousePos.x - sx;
-                    float dy = io.MousePos.y - sy;
-                    float d = sqrtf(dx*dx + dy*dy);
-                    if (d < bestDist)
-                    {
-                        bestDist = d;
-                        bestAudioIndex = i;
-                        bestStaticIndex = -1;
-                    }
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestAudioIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gStaticMeshNodes[i].x, gStaticMeshNodes[i].y, gStaticMeshNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestStaticIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gCamera3DNodes[i].x, gCamera3DNodes[i].y, gCamera3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestCameraIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gNode3DNodes[i].x, gNode3DNodes[i].y, gNode3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestNode3DIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gNavMesh3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gNavMesh3DNodes[i].x, gNavMesh3DNodes[i].y, gNavMesh3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestNavMeshIndex = i; }
                 }
             }
 
-            for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
-            {
-                const auto& n = gStaticMeshNodes[i];
-                float sx, sy;
-                if (ProjectToScreenGL({ n.x, n.y, n.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
-                {
-                    float dx = io.MousePos.x - sx;
-                    float dy = io.MousePos.y - sy;
-                    float d = sqrtf(dx*dx + dy*dy);
-                    if (d < bestDist)
-                    {
-                        bestDist = d;
-                        bestAudioIndex = -1;
-                        bestStaticIndex = i;
-                    }
-                }
-            }
+            auto deselectAll = [&]() {
+                gSelectedAudio3D = -1; gSelectedStaticMesh = -1;
+                gSelectedCamera3D = -1; gSelectedNode3D = -1; gSelectedNavMesh3D = -1;
+            };
 
             if (gTransformMode == Transform_None)
             {
                 int prevAudioSel = gSelectedAudio3D;
                 int prevStaticSel = gSelectedStaticMesh;
+                int prevCameraSel = gSelectedCamera3D;
+                int prevNode3DSel = gSelectedNode3D;
+                int prevNavMeshSel = gSelectedNavMesh3D;
                 if (bestDist < 80.0f)
                 {
                     gSelectedAudio3D = bestAudioIndex;
                     gSelectedStaticMesh = bestStaticIndex;
+                    gSelectedCamera3D = bestCameraIndex;
+                    gSelectedNode3D = bestNode3DIndex;
+                    gSelectedNavMesh3D = bestNavMeshIndex;
                 }
                 else
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                 }
 
-                if (gSelectedAudio3D != prevAudioSel || gSelectedStaticMesh != prevStaticSel)
+                if (gSelectedAudio3D != prevAudioSel || gSelectedStaticMesh != prevStaticSel ||
+                    gSelectedCamera3D != prevCameraSel || gSelectedNode3D != prevNode3DSel ||
+                    gSelectedNavMesh3D != prevNavMeshSel)
                 {
                     gTransforming = false;
                     gTransformMode = Transform_None;
@@ -15708,8 +15749,7 @@ RenderImGuiOnly:
             {
                 if (bestDist >= 80.0f)
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
                     gHasRotatePreview = false;
@@ -15719,8 +15759,7 @@ RenderImGuiOnly:
             {
                 if (bestDist >= 80.0f)
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
                 }
@@ -15944,6 +15983,13 @@ RenderImGuiOnly:
                     gNodeRenameNode3D = false;
                     strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                     gNodeRenameOpen = true;
+                }
+                if (ImGui::MenuItem("Duplicate"))
+                {
+                    Audio3DNode dup = n;
+                    dup.name = n.name + "_copy";
+                    dup.x += 1.0f;
+                    gAudio3DNodes.push_back(dup);
                 }
                 if (ImGui::MenuItem("Unlink Hierarchy"))
                 {

@@ -107,9 +107,7 @@ int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 int  NB_RT_NavMeshBuild(void);
 void NB_RT_NavMeshClear(void);
 int  NB_RT_NavMeshIsReady(void);
-int  NB_RT_NavMeshFindPath(float sx, float sy, float sz,
-                           float gx, float gy, float gz,
-                           float* outPath, int maxPoints);
+int  NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints);
 int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
 int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
 ```

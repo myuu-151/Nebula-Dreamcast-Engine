@@ -9261,6 +9261,8 @@ int main(int, char**)
         }
 
         // Transform hotkeys (GLFW-level, toggles)
+        // Block when typing in an input field or hovering over any ImGui panel
+        // (Inspector, Scene, etc.) so keys like S don't trigger Scale while editing values.
         {
             auto edge = [](bool now, bool& prev) { bool pressed = (now && !prev); prev = now; return pressed; };
 
@@ -9273,30 +9275,40 @@ int main(int, char**)
             bool kEsc = (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
             bool kDel = (glfwGetKey(window, GLFW_KEY_DELETE) == GLFW_PRESS);
 
-            if (edge(kG, gKeyG))
+            bool blockTransformKeys = ImGui::GetIO().WantTextInput || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+
+            if (edge(kG, gKeyG) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Grab) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Grab; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kR, gKeyR))
+            if (edge(kR, gKeyR) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Rotate) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Rotate; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kS, gKeyS))
+            if (edge(kS, gKeyS) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Scale) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Scale; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kX, gKeyX)) gAxisLock = (gAxisLock == 'X') ? 0 : 'X';
-            if (edge(kY, gKeyY)) gAxisLock = (gAxisLock == 'Y') ? 0 : 'Y';
-            if (edge(kZ, gKeyZ)) gAxisLock = (gAxisLock == 'Z') ? 0 : 'Z';
+            if (!blockTransformKeys)
+            {
+                if (edge(kX, gKeyX)) gAxisLock = (gAxisLock == 'X') ? 0 : 'X';
+                if (edge(kY, gKeyY)) gAxisLock = (gAxisLock == 'Y') ? 0 : 'Y';
+                if (edge(kZ, gKeyZ)) gAxisLock = (gAxisLock == 'Z') ? 0 : 'Z';
+            }
+            else
+            {
+                // Still consume edges so we don't get a stale press when unblocked
+                edge(kX, gKeyX); edge(kY, gKeyY); edge(kZ, gKeyZ);
+            }
             if (edge(kEsc, gKeyEsc))
             {
                 if (gPlayMode)

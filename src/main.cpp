@@ -15699,13 +15699,110 @@ RenderImGuiOnly:
                     if (d < bestDist) { bestDist = d; clearBest(); bestAudioIndex = i; }
                 }
             }
+            // StaticMesh3D: test mouse against projected triangles for accurate picking.
+            // Falls back to origin-point distance if mesh data is unavailable.
             for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
             {
-                float sx, sy;
-                if (ProjectToScreenGL({ gStaticMeshNodes[i].x, gStaticMeshNodes[i].y, gStaticMeshNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                const auto& s = gStaticMeshNodes[i];
+                bool hitMesh = false;
+
+                // Try triangle-based picking if mesh geometry is loaded
+                if (!s.mesh.empty() && !gProjectDir.empty())
                 {
-                    float d = pickNearest(sx, sy);
-                    if (d < bestDist) { bestDist = d; clearBest(); bestStaticIndex = i; }
+                    std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
+                    const NebMesh* mesh = GetNebMesh(meshPath);
+                    if (mesh && mesh->valid && !mesh->positions.empty() && mesh->indices.size() >= 3)
+                    {
+                        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+                        GetStaticMeshWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+                        // Build rotation matrix (same axis remap as rendering)
+                        bool parentedNode3D = (!s.parent.empty() && FindNode3DByName(s.parent) >= 0);
+                        float arx, ary, arz;
+                        if (parentedNode3D) { arx = wrx; ary = wry; arz = wrz; }
+                        else { arx = wrz; ary = wrx; arz = wry; }
+                        float rrx = arx * 3.14159f / 180.0f, rry = ary * 3.14159f / 180.0f, rrz = arz * 3.14159f / 180.0f;
+                        float cx1 = cosf(rrx), sx1 = sinf(rrx), cy1 = cosf(rry), sy1 = sinf(rry), cz1 = cosf(rrz), sz1 = sinf(rrz);
+
+                        // Child local rotation for parented meshes
+                        float ccx = 1, csx2 = 0, ccy = 1, csy2 = 0, ccz = 1, csz2 = 0;
+                        if (parentedNode3D)
+                        {
+                            float crx = s.rotX * 3.14159f / 180.0f, cry = s.rotY * 3.14159f / 180.0f, crz = s.rotZ * 3.14159f / 180.0f;
+                            ccx = cosf(crx); csx2 = sinf(crx); ccy = cosf(cry); csy2 = sinf(cry); ccz = cosf(crz); csz2 = sinf(crz);
+                        }
+
+                        float scaleX = io.DisplayFramebufferScale.x, scaleY = io.DisplayFramebufferScale.y;
+                        float mx = io.MousePos.x, my = io.MousePos.y;
+
+                        for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
+                        {
+                            float svx[3], svy[3];
+                            bool allOk = true;
+                            for (int vi = 0; vi < 3; ++vi)
+                            {
+                                uint16_t ii = mesh->indices[idx + vi];
+                                if (ii >= mesh->positions.size()) { allOk = false; break; }
+                                Vec3 v = mesh->positions[ii];
+                                v.x *= wsx; v.y *= wsy; v.z *= wsz;
+
+                                if (parentedNode3D)
+                                {
+                                    // Child rotation first
+                                    float t;
+                                    t = v.x*ccz - v.y*csz2; v.y = v.x*csz2 + v.y*ccz; v.x = t;
+                                    t = v.x*ccy + v.z*csy2; v.z = -v.x*csy2 + v.z*ccy; v.x = t;
+                                    t = v.y*ccx - v.z*csx2; v.z = v.y*csx2 + v.z*ccx; v.y = t;
+                                }
+
+                                // Parent/standalone rotation
+                                float t;
+                                t = v.x*cz1 - v.y*sz1; v.y = v.x*sz1 + v.y*cz1; v.x = t;
+                                t = v.x*cy1 + v.z*sy1; v.z = -v.x*sy1 + v.z*cy1; v.x = t;
+                                t = v.y*cx1 - v.z*sx1; v.z = v.y*sx1 + v.z*cx1; v.y = t;
+
+                                v.x += wx; v.y += wy; v.z += wz;
+
+                                if (!ProjectToScreenGL(v, svx[vi], svy[vi], scaleX, scaleY))
+                                { allOk = false; break; }
+                            }
+                            if (!allOk) continue;
+
+                            // Point-in-triangle test (2D barycentric)
+                            float d0x = svx[1] - svx[0], d0y = svy[1] - svy[0];
+                            float d1x = svx[2] - svx[0], d1y = svy[2] - svy[0];
+                            float d2x = mx - svx[0], d2y = my - svy[0];
+                            float dot00 = d0x*d0x + d0y*d0y;
+                            float dot01 = d0x*d1x + d0y*d1y;
+                            float dot02 = d0x*d2x + d0y*d2y;
+                            float dot11 = d1x*d1x + d1y*d1y;
+                            float dot12 = d1x*d2x + d1y*d2y;
+                            float invDenom = dot00*dot11 - dot01*dot01;
+                            if (fabsf(invDenom) < 1e-10f) continue;
+                            invDenom = 1.0f / invDenom;
+                            float u = (dot11*dot02 - dot01*dot12) * invDenom;
+                            float v2 = (dot00*dot12 - dot01*dot02) * invDenom;
+                            if (u >= 0.0f && v2 >= 0.0f && (u + v2) <= 1.0f)
+                            {
+                                hitMesh = true;
+                                bestDist = 0.0f;
+                                clearBest();
+                                bestStaticIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Fallback to origin-point distance if no triangle hit
+                if (!hitMesh)
+                {
+                    float sx, sy;
+                    if (ProjectToScreenGL({ s.x, s.y, s.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                    {
+                        float d = pickNearest(sx, sy);
+                        if (d < bestDist) { bestDist = d; clearBest(); bestStaticIndex = i; }
+                    }
                 }
             }
             for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)

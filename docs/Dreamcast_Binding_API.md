@@ -204,6 +204,22 @@ void        NB_DC_GetSceneTransformAt(int meshIndex, float outPos[3], float outR
 
 Use `*At` variants for modern multi-StaticMesh scenes.
 
+### NavMesh asset loading
+
+```c
+int         NB_DC_LoadNavMesh(const char* navPath);
+void        NB_DC_FreeNavMesh(void);
+int         NB_DC_NavMeshIsLoaded(void);
+const void* NB_DC_GetNavMeshData(int* outSize);
+```
+
+- **LoadNavMesh**: loads a serialized navmesh binary (`.BIN`) from disc into memory. Returns 1 on success.
+- **FreeNavMesh**: releases the loaded navmesh data.
+- **NavMeshIsLoaded**: returns 1 if navmesh data is currently in memory.
+- **GetNavMeshData**: returns a pointer to the raw navmesh blob and its size. Used by future Detour integration for pathfinding queries on DC.
+
+The editor automatically builds and packages the navmesh binary (`NAV00001.BIN`) into `cd_root/data/navmesh/` during Dreamcast export.
+
 ---
 
 ## Dreamcast Input Binding API (`NB_KOS_*`)

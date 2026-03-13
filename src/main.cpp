@@ -12638,6 +12638,7 @@ RenderImGuiOnly:
                             std::filesystem::path cdMatDir = cdDataDir / "materials";
                             std::filesystem::path cdAnimDir = cdDataDir / "animations";
                             std::filesystem::path cdVmuDir = cdDataDir / "vmu";
+                            std::filesystem::path cdNavDir = cdDataDir / "navmesh";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);
@@ -12645,12 +12646,14 @@ RenderImGuiOnly:
                             std::filesystem::remove_all(cdMatDir, stageEc);
                             std::filesystem::remove_all(cdAnimDir, stageEc);
                             std::filesystem::remove_all(cdVmuDir, stageEc);
+                            std::filesystem::remove_all(cdNavDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
                             std::filesystem::create_directories(cdMatDir);
                             std::filesystem::create_directories(cdAnimDir);
                             std::filesystem::create_directories(cdVmuDir);
+                            std::filesystem::create_directories(cdNavDir);
 
                             auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
                             {
@@ -13022,6 +13025,73 @@ RenderImGuiOnly:
                                         }
                                         stagedAnimByAbs[key] = outName;
                                         animStageMapEntries.push_back({ key, outName });
+                                    }
+                                }
+                                // Stage navmesh binary — build from all scene meshes and serialize
+                                if (!stagingNameCollision)
+                                {
+                                    // Build navmesh from all meshes in all loaded scenes
+                                    std::vector<float> navVerts;
+                                    std::vector<int>   navTris;
+                                    for (const auto& ls : loadedScenes)
+                                    {
+                                        for (const auto& sm : ls.staticMeshes)
+                                        {
+                                            if (sm.meshFilePath.empty()) continue;
+                                            std::ifstream mf(sm.meshFilePath, std::ios::binary);
+                                            if (!mf.is_open()) continue;
+                                            char magic[8] = {};
+                                            mf.read(magic, 7);
+                                            if (std::string(magic) != "NEBMESH") continue;
+                                            uint32_t vc = 0, tc = 0;
+                                            mf.read(reinterpret_cast<char*>(&vc), 4);
+                                            mf.read(reinterpret_cast<char*>(&tc), 4);
+                                            std::vector<float> mv(vc * 3);
+                                            mf.read(reinterpret_cast<char*>(mv.data()), vc * 3 * sizeof(float));
+                                            mf.seekg(vc * 2 * sizeof(float), std::ios::cur);
+                                            std::vector<uint16_t> mi(tc * 3);
+                                            mf.read(reinterpret_cast<char*>(mi.data()), tc * 3 * sizeof(uint16_t));
+
+                                            float sx = sm.scaleX, sy = sm.scaleY, sz = sm.scaleZ;
+                                            float rx = sm.rotX * 3.14159265f / 180.0f;
+                                            float ry = sm.rotY * 3.14159265f / 180.0f;
+                                            float rz = sm.rotZ * 3.14159265f / 180.0f;
+                                            float cx = cosf(rx), snx = sinf(rx);
+                                            float cy = cosf(ry), sny = sinf(ry);
+                                            float cz = cosf(rz), snz = sinf(rz);
+
+                                            int baseV = (int)(navVerts.size() / 3);
+                                            for (uint32_t v = 0; v < vc; ++v)
+                                            {
+                                                float lx = mv[v*3+0]*sx, ly = mv[v*3+1]*sy, lz = mv[v*3+2]*sz;
+                                                float t1x=lx, t1y=ly*cx-lz*snx, t1z=ly*snx+lz*cx;
+                                                float t2x=t1x*cy+t1z*sny, t2y=t1y, t2z=-t1x*sny+t1z*cy;
+                                                float t3x=t2x*cz-t2y*snz, t3y=t2x*snz+t2y*cz, t3z=t2z;
+                                                navVerts.push_back(t3x + sm.x);
+                                                navVerts.push_back(t3y + sm.y);
+                                                navVerts.push_back(t3z + sm.z);
+                                            }
+                                            for (uint32_t t = 0; t < tc * 3; ++t)
+                                                navTris.push_back(baseV + (int)mi[t]);
+                                        }
+                                    }
+                                    if (!navVerts.empty() && !navTris.empty())
+                                    {
+                                        if (NavMeshBuild(navVerts.data(), (int)navVerts.size(), navTris.data(), (int)navTris.size()))
+                                        {
+                                            std::vector<uint8_t> blob;
+                                            if (NavMeshSaveBinary(blob) && !blob.empty())
+                                            {
+                                                std::filesystem::path navOut = cdNavDir / "NAV00001.BIN";
+                                                std::ofstream nf(navOut, std::ios::binary);
+                                                if (nf.is_open())
+                                                {
+                                                    nf.write(reinterpret_cast<const char*>(blob.data()), blob.size());
+                                                    printf("[DreamcastBuild]   staged navmesh: NAV00001.BIN (%d bytes)\n", (int)blob.size());
+                                                }
+                                            }
+                                            NavMeshClear();
+                                        }
                                     }
                                 }
                                 if (!stagingNameCollision)
@@ -13509,9 +13579,10 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
-                                mc << "int NB_RT_NavMeshBuild(void){ return 0; }\n";
-                                mc << "void NB_RT_NavMeshClear(void){}\n";
-                                mc << "int NB_RT_NavMeshIsReady(void){ return 0; }\n";
+                                mc << "static int gNavMeshLoaded = 0;\n";
+                                mc << "int NB_RT_NavMeshBuild(void){ if (!gNavMeshLoaded) { gNavMeshLoaded = NB_DC_LoadNavMesh(\"/cd/data/navmesh/NAV00001.BIN\"); } return gNavMeshLoaded; }\n";
+                                mc << "void NB_RT_NavMeshClear(void){ NB_DC_FreeNavMesh(); gNavMeshLoaded=0; }\n";
+                                mc << "int NB_RT_NavMeshIsReady(void){ return NB_DC_NavMeshIsLoaded(); }\n";
                                 mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ (void)sx; (void)sy; (void)sz; (void)gx; (void)gy; (void)gz; (void)outPath; (void)maxPoints; return 0; }\n";
                                 mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ (void)outPos; return 0; }\n";
                                 mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ (void)px; (void)py; (void)pz; (void)outPos; return 0; }\n";

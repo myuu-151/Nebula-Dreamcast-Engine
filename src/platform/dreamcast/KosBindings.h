@@ -89,3 +89,17 @@ float NB_RT_GetNode3DVelocityY(const char* name);
 void NB_RT_SetNode3DVelocityY(const char* name, float vy);
 int NB_RT_IsNode3DOnFloor(const char* name);
 int NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
+
+// NavMesh bridge
+int  NB_RT_NavMeshBuild(void);
+void NB_RT_NavMeshClear(void);
+int  NB_RT_NavMeshIsReady(void);
+int  NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints);
+int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
+int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
+
+// NavMesh DC asset loading
+int  NB_DC_LoadNavMesh(const char* navPath);
+void NB_DC_FreeNavMesh(void);
+int  NB_DC_NavMeshIsLoaded(void);
+const void* NB_DC_GetNavMeshData(int* outSize);

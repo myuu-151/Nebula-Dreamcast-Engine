@@ -2024,10 +2024,10 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
     for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
     {
         const auto& sm = gStaticMeshNodes[si];
-        if (sm.meshFilePath.empty()) continue;
+        if (sm.mesh.empty()) continue;
 
         // Load mesh data
-        std::ifstream mf(sm.meshFilePath, std::ios::binary);
+        std::ifstream mf(sm.mesh, std::ios::binary);
         if (!mf.is_open()) continue;
 
         // Read .nebmesh header
@@ -13035,10 +13035,10 @@ RenderImGuiOnly:
                                     std::vector<int>   navTris;
                                     for (const auto& ls : loadedScenes)
                                     {
-                                        for (const auto& sm : ls.staticMeshes)
+                                        for (const auto& sm : ls.data.staticMeshes)
                                         {
-                                            if (sm.meshFilePath.empty()) continue;
-                                            std::ifstream mf(sm.meshFilePath, std::ios::binary);
+                                            if (sm.mesh.empty()) continue;
+                                            std::ifstream mf(sm.mesh, std::ios::binary);
                                             if (!mf.is_open()) continue;
                                             char magic[8] = {};
                                             mf.read(magic, 7);

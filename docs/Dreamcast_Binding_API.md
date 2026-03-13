@@ -101,6 +101,28 @@ int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
 - **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).
 
+### NavMesh bridge
+
+```c
+int  NB_RT_NavMeshBuild(void);
+void NB_RT_NavMeshClear(void);
+int  NB_RT_NavMeshIsReady(void);
+int  NB_RT_NavMeshFindPath(float sx, float sy, float sz,
+                           float gx, float gy, float gz,
+                           float* outPath, int maxPoints);
+int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
+int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
+```
+
+- **NavMeshBuild**: builds the navmesh from all StaticMesh3D geometry in the current scene. Returns 1 on success.
+- **NavMeshClear**: frees the current navmesh data.
+- **NavMeshIsReady**: returns 1 if a navmesh has been built and is available for queries.
+- **NavMeshFindPath**: finds a path between two world-space points. Writes up to `maxPoints` waypoints into `outPath` (packed xyz). Returns the number of waypoints, or 0 if no path found.
+- **NavMeshFindRandomPoint**: picks a random navigable point on the navmesh. Returns 1 on success.
+- **NavMeshFindClosestPoint**: projects a world position onto the nearest navmesh surface. Returns 1 on success.
+
+> **Note:** On Dreamcast, navmesh functions are currently stubbed (return 0). The editor-side implementations use Recast/Detour and are fully functional for in-editor script testing.
+
 ### Where `NB_RT_*` is implemented
 
 - Implemented in generated runtime code (`main.c`) emitted from `src/main.cpp`.

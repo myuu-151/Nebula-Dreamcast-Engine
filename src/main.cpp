@@ -41,6 +41,7 @@
 #include "platform/dreamcast/build_helpers.h"
 #include "scene/SceneIO.h"
 #include "scene/NodeTypes.h"
+#include "navmesh/NavMeshBuilder.h"
 #include <GL/gl.h>
 
 enum class InspectorPlaybackMode : int;
@@ -617,6 +618,12 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ typedef void(*Fn)(const char*, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DVelocityY\"); if(fn) fn(name,vy); }\n";
     out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
     out << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_CheckAABBOverlap\"); return fn ? fn(name1,name2) : 0; }\n";
+    out << "int NB_RT_NavMeshBuild(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshBuild\"); return fn ? fn() : 0; }\n";
+    out << "void NB_RT_NavMeshClear(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshClear\"); if(fn) fn(); }\n";
+    out << "int NB_RT_NavMeshIsReady(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshIsReady\"); return fn ? fn() : 0; }\n";
+    out << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ typedef int(*Fn)(float,float,float,float,float,float,float*,int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindPath\"); return fn ? fn(sx,sy,sz,gx,gy,gz,outPath,maxPoints) : 0; }\n";
+    out << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ typedef int(*Fn)(float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindRandomPoint\"); return fn ? fn(outPos) : 0; }\n";
+    out << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindClosestPoint\"); return fn ? fn(px,py,pz,outPos) : 0; }\n";
     return true;
 }
 
@@ -2003,6 +2010,124 @@ NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
     if (ax + a.extentX < bx - b.extentX || ax - a.extentX > bx + b.extentX) return 0;
     if (ay + a.extentY < by - b.extentY || ay - a.extentY > by + b.extentY) return 0;
     if (az + a.extentZ < bz - b.extentZ || az - a.extentZ > bz + b.extentZ) return 0;
+    return 1;
+}
+
+// ---------------------------------------------------------------------------
+// NavMesh runtime bridge (editor-side)
+// ---------------------------------------------------------------------------
+NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
+{
+    // Gather world-space triangles from collision-flagged StaticMesh3D nodes
+    std::vector<float> verts;
+    std::vector<int>   tris;
+    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+    {
+        const auto& sm = gStaticMeshNodes[si];
+        if (sm.meshFilePath.empty()) continue;
+
+        // Load mesh data
+        std::ifstream mf(sm.meshFilePath, std::ios::binary);
+        if (!mf.is_open()) continue;
+
+        // Read .nebmesh header
+        char magic[8] = {};
+        mf.read(magic, 7);
+        if (std::string(magic) != "NEBMESH") continue;
+
+        uint32_t vertCount = 0, triCount = 0;
+        mf.read(reinterpret_cast<char*>(&vertCount), 4);
+        mf.read(reinterpret_cast<char*>(&triCount), 4);
+
+        std::vector<float> meshVerts(vertCount * 3);
+        mf.read(reinterpret_cast<char*>(meshVerts.data()), vertCount * 3 * sizeof(float));
+
+        // Skip UVs (vertCount * 2 floats)
+        mf.seekg(vertCount * 2 * sizeof(float), std::ios::cur);
+
+        std::vector<uint16_t> meshIndices(triCount * 3);
+        mf.read(reinterpret_cast<char*>(meshIndices.data()), triCount * 3 * sizeof(uint16_t));
+
+        // Get world transform
+        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+        GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+        float rx = wrx * 3.14159265f / 180.0f;
+        float ry = wry * 3.14159265f / 180.0f;
+        float rz = wrz * 3.14159265f / 180.0f;
+        float cx = cosf(rx), sx2 = sinf(rx);
+        float cy = cosf(ry), sy = sinf(ry);
+        float cz = cosf(rz), sz = sinf(rz);
+
+        int baseVert = (int)(verts.size() / 3);
+        for (uint32_t v = 0; v < vertCount; ++v)
+        {
+            float lx = meshVerts[v * 3 + 0] * wsx;
+            float ly = meshVerts[v * 3 + 1] * wsy;
+            float lz = meshVerts[v * 3 + 2] * wsz;
+
+            // Euler rotation YXZ
+            float t1x = lx, t1y = ly * cx - lz * sx2, t1z = ly * sx2 + lz * cx;
+            float t2x = t1x * cy + t1z * sy, t2y = t1y, t2z = -t1x * sy + t1z * cy;
+            float t3x = t2x * cz - t2y * sz, t3y = t2x * sz + t2y * cz, t3z = t2z;
+
+            verts.push_back(t3x + wx);
+            verts.push_back(t3y + wy);
+            verts.push_back(t3z + wz);
+        }
+        for (uint32_t t = 0; t < triCount * 3; ++t)
+        {
+            tris.push_back(baseVert + (int)meshIndices[t]);
+        }
+    }
+
+    if (verts.empty() || tris.empty()) return 0;
+    return NavMeshBuild(verts.data(), (int)verts.size(), tris.data(), (int)tris.size()) ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_NavMeshClear(void)
+{
+    NavMeshClear();
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshIsReady(void)
+{
+    return NavMeshIsReady() ? 1 : 0;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindPath(float sx, float sy, float sz,
+                                        float gx, float gy, float gz,
+                                        float* outPath, int maxPoints)
+{
+    Vec3 start = {sx, sy, sz};
+    Vec3 goal  = {gx, gy, gz};
+    std::vector<Vec3> path;
+    if (!NavMeshFindPath(start, goal, path)) return 0;
+    int count = (int)path.size();
+    if (count > maxPoints) count = maxPoints;
+    for (int i = 0; i < count; ++i)
+    {
+        outPath[i * 3 + 0] = path[i].x;
+        outPath[i * 3 + 1] = path[i].y;
+        outPath[i * 3 + 2] = path[i].z;
+    }
+    return count;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindRandomPoint(float outPos[3])
+{
+    Vec3 pt;
+    if (!NavMeshFindRandomPoint(pt)) return 0;
+    outPos[0] = pt.x; outPos[1] = pt.y; outPos[2] = pt.z;
+    return 1;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3])
+{
+    Vec3 pos = {px, py, pz};
+    Vec3 closest;
+    if (!NavMeshFindClosestPoint(pos, closest)) return 0;
+    outPos[0] = closest.x; outPos[1] = closest.y; outPos[2] = closest.z;
     return 1;
 }
 
@@ -13384,6 +13509,12 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
+                                mc << "int NB_RT_NavMeshBuild(void){ return 0; }\n";
+                                mc << "void NB_RT_NavMeshClear(void){}\n";
+                                mc << "int NB_RT_NavMeshIsReady(void){ return 0; }\n";
+                                mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ (void)sx; (void)sy; (void)sz; (void)gx; (void)gy; (void)gz; (void)outPath; (void)maxPoints; return 0; }\n";
+                                mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ (void)outPos; return 0; }\n";
+                                mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ (void)px; (void)py; (void)pz; (void)outPos; return 0; }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";

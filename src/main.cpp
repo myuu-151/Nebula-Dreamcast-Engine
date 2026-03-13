@@ -16122,6 +16122,13 @@ RenderImGuiOnly:
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
                     }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        StaticMesh3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.x += 1.0f;
+                        gStaticMeshNodes.push_back(dup);
+                    }
                     if (!n.parent.empty() && ImGui::MenuItem("Unparent"))
                     {
                         n.parent.clear();
@@ -16292,6 +16299,14 @@ RenderImGuiOnly:
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
                     }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        Camera3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.main = false;
+                        dup.x += 1.0f;
+                        gCamera3DNodes.push_back(dup);
+                    }
                     if (ImGui::MenuItem("Unlink Hierarchy"))
                     {
                         n.parent.clear();
@@ -16433,6 +16448,13 @@ RenderImGuiOnly:
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
                     }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        Node3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.x += 1.0f;
+                        gNode3DNodes.push_back(dup);
+                    }
                     if (!n.parent.empty() && ImGui::MenuItem("Unparent"))
                     {
                         n.parent.clear();
@@ -16560,6 +16582,13 @@ RenderImGuiOnly:
             bool requestDelete = false;
             if (ImGui::BeginPopupContextItem("NavMesh3DContext"))
             {
+                if (ImGui::MenuItem("Duplicate"))
+                {
+                    NavMesh3DNode dup = n;
+                    dup.name = n.name + "_copy";
+                    dup.x += 1.0f;
+                    gNavMesh3DNodes.push_back(dup);
+                }
                 if (ImGui::MenuItem("Delete"))
                     requestDelete = true;
                 ImGui::EndPopup();

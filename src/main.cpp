@@ -10062,12 +10062,17 @@ int main(int, char**)
         glMatrixMode(GL_MODELVIEW);
         glLoadMatrixf(view.m);
 
-        // Background gradient — reset state to ensure vertex colors work
+        // Background gradient — fully reset GL state so vertex colors are not
+        // modulated by leftover lighting / material state from the previous frame.
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_ALPHA_TEST);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
         glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);
+        glDisable(GL_COLOR_MATERIAL);
+        glDisable(GL_NORMALIZE);
+        glShadeModel(GL_SMOOTH);
         glDisableClientState(GL_COLOR_ARRAY);
         glDisableClientState(GL_VERTEX_ARRAY);
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -11236,6 +11241,15 @@ int main(int, char**)
             glDisable(GL_TEXTURE_2D);
         }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+        // Clean up all GL state that mesh rendering may have enabled so it
+        // never leaks into the next frame's gradient or ImGui pass.
+        glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);
+        glDisable(GL_COLOR_MATERIAL);
+        glDisable(GL_NORMALIZE);
+        glDisable(GL_TEXTURE_2D);
+        glShadeModel(GL_SMOOTH);
 
 RenderImGuiOnly:
         // ImGui

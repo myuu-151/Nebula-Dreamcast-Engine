@@ -13316,6 +13316,7 @@ RenderImGuiOnly:
                                     mc << "static float gMeshRot[3] = {" << fstr(initRotX) << "," << fstr(initRotY) << "," << fstr(initRotZ) << "};\n";
                                     mc << "static float gMeshScale[3] = {" << fstr(initScX) << "," << fstr(initScY) << "," << fstr(initScZ) << "};\n";
                                 }
+                                mc << "static const float kPlayerChildRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static const char kPlayerMeshDisk[] = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "static int gPlayerMeshIdx = -1;\n";
                                 mc << "void NB_RT_GetMeshPosition(float outPos[3]){ if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
@@ -14081,7 +14082,7 @@ RenderImGuiOnly:
                                 mc << "      float smRot[3] = {sm->rot[0], sm->rot[1], sm->rot[2]};\n";
                                 mc << "      /* Child local rotation (visual offset only, zero for non-player meshes). */\n";
                                 mc << "      float cRx = 0, cRy = 0, cRz = 0;\n";
-                                mc << "      if (mi == gPlayerMeshIdx) { smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
+                                mc << "      if (mi == gPlayerMeshIdx) { cRx = deg2rad(kPlayerChildRot[0]); cRy = deg2rad(kPlayerChildRot[1]); cRz = deg2rad(kPlayerChildRot[2]); smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
                                 mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
                                 mc << "      /* Player mesh (parented under Node3D) uses identity remap — parent drives rotation. */\n";
                                 mc << "      float rxr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";

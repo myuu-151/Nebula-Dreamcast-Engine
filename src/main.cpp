@@ -11417,22 +11417,22 @@ RenderImGuiOnly:
             if (io.KeyShift) SaveAllProjectChanges();
             else SaveActiveScene();
         }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C))
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !ImGui::GetIO().WantTextInput)
         {
+            gHasCopiedNode = false;
+            gHasCopiedStatic = false;
             if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
             {
                 gHasCopiedNode = true;
-                gHasCopiedStatic = false;
                 gCopiedNode = gAudio3DNodes[gSelectedAudio3D];
             }
             else if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
             {
                 gHasCopiedStatic = true;
-                gHasCopiedNode = false;
                 gCopiedStatic = gStaticMeshNodes[gSelectedStaticMesh];
             }
         }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V))
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !ImGui::GetIO().WantTextInput)
         {
             if (gHasCopiedNode)
             {

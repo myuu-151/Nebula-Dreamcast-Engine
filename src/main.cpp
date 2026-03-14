@@ -9766,52 +9766,48 @@ int main(int, char**)
                         }
                     }
 
-                    // Solve for rotX/rotZ that align the local up axis with the
-                    // surface normal, given the current rotY (yaw).
-                    // Engine convention: R = Rz * Ry * Rx
-                    // Up vector (column 1) = (sx*sy*cz - cx*sz, sx*sy*sz + cx*cz, sx*cy)
-                    // We want up = (nx, ny, nz), solve for sx,cx (rotX) and sz,cz (rotZ).
+                    // Snap pitch/roll to surface normal, preserving yaw.
+                    // Analytical solution for R = Rz * Ry * Rx:
+                    //   up.z = cy*sx = nz  →  rotX = asin(nz/cy)
+                    //   up.x = cz*sx*sy - cx*sz = nx
+                    //   up.y = cx*cz + sx*sy*sz = ny  →  2x2 solve for rotZ
                     {
                         const float kPI = 3.14159265f;
                         const float kDeg = 180.0f / kPI;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
                         float savedYaw = n3.rotY;
+
                         float yawRad = savedYaw * kPI / 180.0f;
                         float cy = cosf(yawRad), sy = sinf(yawRad);
 
                         float newRotX, newRotZ;
                         if (fabsf(cy) > 0.001f)
                         {
-                            // From up.z = sx*cy = nz → sx = nz/cy
                             float sxVal = nz / cy;
                             if (sxVal > 1.0f) sxVal = 1.0f;
                             if (sxVal < -1.0f) sxVal = -1.0f;
                             newRotX = asinf(sxVal) * kDeg;
-                            float cx = cosf(asinf(sxVal));
-                            // Solve linear system for cz, sz:
-                            // A*cz - B*sz = nx  where A = sx*sy, B = cx
-                            // B*cz + A*sz = ny
+                            float cxVal = cosf(asinf(sxVal));
                             float A = sxVal * sy;
-                            float B = cx;
+                            float B = cxVal;
                             float det = A * A + B * B;
                             if (det > 0.0001f)
                             {
                                 float invDet = 1.0f / det;
-                                float cz = (A * nx + B * ny) * invDet;
-                                float sz = (A * ny - B * nx) * invDet;
-                                newRotZ = atan2f(sz, cz) * kDeg;
+                                float czVal = (A * nx + B * ny) * invDet;
+                                float szVal = (A * ny - B * nx) * invDet;
+                                newRotZ = atan2f(szVal, czVal) * kDeg;
                             }
-                            else
-                            {
-                                newRotZ = 0.0f;
-                            }
+                            else newRotZ = 0.0f;
                         }
                         else
                         {
-                            // Gimbal lock near rotY = ±90°
+                            // Near gimbal lock (yaw ≈ ±90°): rotX can't control up.z,
+                            // solve rotZ from up.x/up.y directly with rotX = 0.
                             newRotX = 0.0f;
                             newRotZ = atan2f(-nx, ny) * kDeg;
                         }
+
                         n3.rotX = newRotX;
                         n3.rotZ = newRotZ;
                         n3.rotY = savedYaw;
@@ -9819,9 +9815,9 @@ int main(int, char**)
                 }
                 else if (!scriptManaged)
                 {
-                    // No ground hit — gradually return to upright
-                    n3.rotX *= 0.9f;
-                    n3.rotZ *= 0.9f;
+                    // No ground hit — snap to upright
+                    n3.rotX = 0.0f;
+                    n3.rotZ = 0.0f;
                 }
             }
         }

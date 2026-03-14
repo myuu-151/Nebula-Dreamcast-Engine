@@ -9766,20 +9766,21 @@ int main(int, char**)
                         }
                     }
 
-                    // Align rotation to surface normal.
-                    // Build orthonormal frame: up=normal, forward=yaw projected onto slope plane.
-                    // Then extract Euler angles matching engine convention (R = Rz * Ry * Rx).
+                    // Align pitch/roll to surface normal, preserving yaw.
+                    // Project the player's yaw-forward onto the slope plane,
+                    // build an orthonormal frame, extract rotX/rotZ only.
                     {
                         const float kPI = 3.14159265f;
                         const float kDeg = 180.0f / kPI;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
+                        float savedYaw = n3.rotY; // preserve yaw — never overwrite
 
-                        // Player's intended forward from yaw (horizontal)
-                        float yawRad = n3.rotY * kPI / 180.0f;
+                        // Player's forward from yaw (horizontal)
+                        float yawRad = savedYaw * kPI / 180.0f;
                         float flatFwdX = sinf(yawRad), flatFwdZ = cosf(yawRad);
 
-                        // Project flat forward onto the slope plane: fwd = flatFwd - dot(flatFwd,n)*n
-                        float dn = flatFwdX * nx + flatFwdZ * nz; // flatFwdY=0
+                        // Project flat forward onto slope plane
+                        float dn = flatFwdX * nx + flatFwdZ * nz;
                         float pfx = flatFwdX - dn * nx;
                         float pfy = -dn * ny;
                         float pfz = flatFwdZ - dn * nz;
@@ -9787,37 +9788,20 @@ int main(int, char**)
                         if (pfLen < 0.001f) { pfx = flatFwdX; pfy = 0.0f; pfz = flatFwdZ; pfLen = 1.0f; }
                         { float inv = 1.0f / pfLen; pfx *= inv; pfy *= inv; pfz *= inv; }
 
-                        // Right = cross(forward, up)  (forward x normal)
+                        // Right = cross(forward, normal)
                         float rrx = pfy * nz - pfz * ny;
                         float rry = pfz * nx - pfx * nz;
                         float rrz = pfx * ny - pfy * nx;
                         float rrLen = sqrtf(rrx * rrx + rry * rry + rrz * rrz);
                         if (rrLen > 0.001f) { float inv = 1.0f / rrLen; rrx *= inv; rry *= inv; rrz *= inv; }
 
-                        // Matrix columns in GetLocalAxesFromEuler convention:
-                        //   right   = (m00, m10, m20) = (rrx, rry, rrz)
-                        //   up      = (m01, m11, m21) = (nx,  ny,  nz)
-                        //   forward = (m02, m12, m22) = (pfx, pfy, pfz)
-                        // Extract Euler: m20=-sin(ry), m21=cos(ry)*sin(rx), m22=cos(ry)*cos(rx)
-                        //                m10=cos(ry)*sin(rz), m00=cos(ry)*cos(rz)
-                        float m20 = rrz;  // right.z
-                        float sRotY = std::max(-1.0f, std::min(1.0f, -m20));
-                        float newRotY = asinf(sRotY) * kDeg;
-                        float cosRY = cosf(asinf(sRotY));
-                        float newRotX, newRotZ;
-                        if (cosRY > 0.001f)
-                        {
-                            newRotX = atan2f(nz, pfz) * kDeg;   // atan2(m21, m22)
-                            newRotZ = atan2f(rry, rrx) * kDeg;  // atan2(m10, m00)
-                        }
-                        else
-                        {
-                            newRotX = atan2f(-pfy, ny) * kDeg;
-                            newRotZ = 0.0f;
-                        }
-                        n3.rotX = newRotX;
-                        n3.rotY = newRotY;
-                        n3.rotZ = newRotZ;
+                        // Extract rotX and rotZ from the rotation matrix (keep rotY unchanged).
+                        // Matrix: right=(rrx,rry,rrz), up=(nx,ny,nz), fwd=(pfx,pfy,pfz)
+                        // m21=nz, m22=pfz → rotX = atan2(m21, m22)
+                        // m10=rry, m00=rrx → rotZ = atan2(m10, m00)
+                        n3.rotX = atan2f(nz, pfz) * kDeg;
+                        n3.rotZ = atan2f(rry, rrx) * kDeg;
+                        n3.rotY = savedYaw;
                     }
                 }
                 else if (!scriptManaged)

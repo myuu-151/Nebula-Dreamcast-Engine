@@ -9729,7 +9729,7 @@ int main(int, char**)
 
         // Debug overlay/HUD moved below once viewport layout is known.
 
-        // Node3D gravity + per-triangle ground collision in play mode.
+        // Node3D gravity + per-triangle ground collision + slope alignment in play mode.
         if (gPlayMode)
         {
             const float gravity = -29.4f;
@@ -9738,13 +9738,16 @@ int main(int, char**)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
-                // Skip nodes whose position was set by a script this frame
-                if (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]) continue;
+                bool scriptManaged = (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]);
 
-                n3.velY += gravity * dt;
-                n3.y += n3.velY * dt;
+                // Script-managed nodes handle their own gravity/position — only apply for non-script nodes
+                if (!scriptManaged)
+                {
+                    n3.velY += gravity * dt;
+                    n3.y += n3.velY * dt;
+                }
 
-                // Raycast down from node's bound center to find ground
+                // Slope alignment: always raycast and align rotation for ALL physics nodes
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
                 float hy = std::max(0.0f, n3.extentY * pwsy);
@@ -9753,23 +9756,31 @@ int main(int, char**)
                 float hitNormal[3] = {0.0f, 1.0f, 0.0f};
                 if (NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal))
                 {
-                    float feetY = pwy + n3.boundPosY - hy;
-                    float groundY = hitY - n3.boundPosY + hy;
-                    if (n3.y <= groundY)
+                    if (!scriptManaged)
                     {
-                        n3.y = groundY;
-                        if (n3.velY < 0.0f) n3.velY = 0.0f;
-
-                        // Align rotation to surface normal
-                        float ny = hitNormal[1];
-                        if (ny < 0.01f) ny = 0.01f;
-                        float yawRad = n3.rotY * 3.14159f / 180.0f;
-                        float sYaw = sinf(yawRad), cYaw = cosf(yawRad);
-                        float nFwd = hitNormal[0] * sYaw + hitNormal[2] * cYaw;
-                        float nRgt = hitNormal[0] * cYaw - hitNormal[2] * sYaw;
-                        n3.rotX = atan2f(nFwd, ny) * 180.0f / 3.14159f;
-                        n3.rotZ = -atan2f(nRgt, ny) * 180.0f / 3.14159f;
+                        float groundY = hitY - n3.boundPosY + hy;
+                        if (n3.y <= groundY)
+                        {
+                            n3.y = groundY;
+                            if (n3.velY < 0.0f) n3.velY = 0.0f;
+                        }
                     }
+
+                    // Align pitch/roll to surface normal (engine-level, applies to all physics nodes)
+                    float ny = hitNormal[1];
+                    if (ny < 0.01f) ny = 0.01f;
+                    float yawRad = n3.rotY * 3.14159f / 180.0f;
+                    float sYaw = sinf(yawRad), cYaw = cosf(yawRad);
+                    float nFwd = hitNormal[0] * sYaw + hitNormal[2] * cYaw;
+                    float nRgt = hitNormal[0] * cYaw - hitNormal[2] * sYaw;
+                    n3.rotX = atan2f(nFwd, ny) * 180.0f / 3.14159f;
+                    n3.rotZ = -atan2f(nRgt, ny) * 180.0f / 3.14159f;
+                }
+                else if (!scriptManaged)
+                {
+                    // No ground hit — gradually return to upright
+                    n3.rotX *= 0.9f;
+                    n3.rotZ *= 0.9f;
                 }
             }
         }

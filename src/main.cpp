@@ -13254,6 +13254,10 @@ RenderImGuiOnly:
                             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
+                            struct Node3DExport { std::string name; float pos[3]; float rot[3]; float scale[3]; float extent[3]; float boundPos[3]; int physicsEnabled; int collisionSource; };
+                            std::vector<std::vector<Node3DExport>> runtimeSceneNode3Ds;
+                            // Per-scene: for each mesh index, the Node3D index that is its parent (-1 if none)
+                            std::vector<std::vector<int>> runtimeSceneMeshParentN3D;
                             std::string defaultSceneRuntimeFile;
                             for (const auto& ls : loadedScenes)
                             {
@@ -13361,6 +13365,48 @@ RenderImGuiOnly:
                                     }
                                     runtimeScenePlayerParent.push_back(pp);
                                 }
+                                // Collect all Node3D data for this scene (for DC multi-Node3D physics)
+                                {
+                                    std::vector<Node3DExport> sceneNode3Ds;
+                                    // Build name→Node3D index map
+                                    std::unordered_map<std::string, int> n3dNameToIdx;
+                                    for (size_t ni = 0; ni < stagedScene.node3d.size(); ++ni)
+                                    {
+                                        const auto& n3 = stagedScene.node3d[ni];
+                                        Node3DExport ne{};
+                                        ne.name = n3.name;
+                                        ne.pos[0] = n3.x; ne.pos[1] = n3.y; ne.pos[2] = n3.z;
+                                        ne.rot[0] = n3.rotX; ne.rot[1] = n3.rotY; ne.rot[2] = n3.rotZ;
+                                        ne.scale[0] = n3.scaleX; ne.scale[1] = n3.scaleY; ne.scale[2] = n3.scaleZ;
+                                        ne.extent[0] = n3.extentX; ne.extent[1] = n3.extentY; ne.extent[2] = n3.extentZ;
+                                        ne.boundPos[0] = n3.boundPosX; ne.boundPos[1] = n3.boundPosY; ne.boundPos[2] = n3.boundPosZ;
+                                        ne.physicsEnabled = n3.physicsEnabled ? 1 : 0;
+                                        ne.collisionSource = n3.collisionSource ? 1 : 0;
+                                        n3dNameToIdx[n3.name] = (int)ni;
+                                        sceneNode3Ds.push_back(ne);
+                                    }
+                                    // Build per-mesh parent Node3D index (-1 if none)
+                                    std::vector<int> meshParentN3D;
+                                    {
+                                        int meshIdx = 0;
+                                        for (const auto& sm : stagedScene.staticMeshes)
+                                        {
+                                            std::string meshKey = normalizeAbsKey(std::filesystem::path(gProjectDir) / sm.mesh);
+                                            auto it = stagedMeshByAbs.find(meshKey);
+                                            if (it == stagedMeshByAbs.end() || it->second.empty()) continue; // skipped mesh
+                                            int parentIdx = -1;
+                                            if (!sm.parent.empty())
+                                            {
+                                                auto pit = n3dNameToIdx.find(sm.parent);
+                                                if (pit != n3dNameToIdx.end()) parentIdx = pit->second;
+                                            }
+                                            meshParentN3D.push_back(parentIdx);
+                                            ++meshIdx;
+                                        }
+                                    }
+                                    runtimeSceneNode3Ds.push_back(std::move(sceneNode3Ds));
+                                    runtimeSceneMeshParentN3D.push_back(std::move(meshParentN3D));
+                                }
                                 if (defaultSceneRuntimeFile.empty()) defaultSceneRuntimeFile = sceneOutName;
                             }
                             if (runtimeSceneFiles.empty())
@@ -13370,6 +13416,8 @@ RenderImGuiOnly:
                                 runtimeSceneRuntimeTestByMesh.push_back({});
                                 runtimeSceneCollisionSourceByMesh.push_back({});
                                 runtimeScenePlayerParent.push_back(ScenePlayerParent{});
+                                runtimeSceneNode3Ds.push_back({});
+                                runtimeSceneMeshParentN3D.push_back({});
                                 std::ofstream so(cdScenesDir / "DEFAULT.NEBSCENE", std::ios::out | std::ios::trunc);
                                 if (so.is_open())
                                 {
@@ -13892,6 +13940,131 @@ RenderImGuiOnly:
                                     mc << "\n";
                                 }
                                 mc << "};\n";
+                                // --- Multi-Node3D physics: emit per-scene Node3D constant arrays ---
+                                {
+                                    int sceneCount = (int)runtimeSceneFiles.size();
+                                    int maxN3D = 0;
+                                    for (const auto& sn : runtimeSceneNode3Ds)
+                                        if ((int)sn.size() > maxN3D) maxN3D = (int)sn.size();
+                                    if (maxN3D < 1) maxN3D = 1; // at least 1 to avoid zero-size arrays
+                                    mc << "#define MAX_NODE3D " << maxN3D << "\n";
+                                    // Node3D count per scene
+                                    mc << "static const int kSceneNode3DCount[" << sceneCount << "] = {";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << (int)runtimeSceneNode3Ds[si].size();
+                                        if (si + 1 < sceneCount) mc << ",";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D initial positions [scene][node3d][3]
+                                    mc << "static const float kSceneNode3DPos[" << sceneCount << "][" << maxN3D << "][3] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            if (ni < (int)runtimeSceneNode3Ds[si].size())
+                                            {
+                                                const auto& ne = runtimeSceneNode3Ds[si][ni];
+                                                mc << "{" << fstr(ne.pos[0]) << "," << fstr(ne.pos[1]) << "," << fstr(ne.pos[2]) << "}";
+                                            }
+                                            else mc << "{0,0,0}";
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D extents [scene][node3d][3]
+                                    mc << "static const float kSceneNode3DExt[" << sceneCount << "][" << maxN3D << "][3] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            if (ni < (int)runtimeSceneNode3Ds[si].size())
+                                            {
+                                                const auto& ne = runtimeSceneNode3Ds[si][ni];
+                                                mc << "{" << fstr(ne.extent[0]) << "," << fstr(ne.extent[1]) << "," << fstr(ne.extent[2]) << "}";
+                                            }
+                                            else mc << "{0.5,0.5,0.5}";
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D bound positions [scene][node3d][3]
+                                    mc << "static const float kSceneNode3DBndPos[" << sceneCount << "][" << maxN3D << "][3] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            if (ni < (int)runtimeSceneNode3Ds[si].size())
+                                            {
+                                                const auto& ne = runtimeSceneNode3Ds[si][ni];
+                                                mc << "{" << fstr(ne.boundPos[0]) << "," << fstr(ne.boundPos[1]) << "," << fstr(ne.boundPos[2]) << "}";
+                                            }
+                                            else mc << "{0,0,0}";
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D physics enabled flags [scene][node3d]
+                                    mc << "static const int kSceneNode3DPhys[" << sceneCount << "][" << maxN3D << "] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            mc << ((ni < (int)runtimeSceneNode3Ds[si].size()) ? runtimeSceneNode3Ds[si][ni].physicsEnabled : 0);
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Per-mesh parent Node3D index (-1 = no parent) [scene][mesh]
+                                    mc << "static const int kSceneMeshParentN3D[" << sceneCount << "][MAX_MESHES] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        const auto& mp = runtimeSceneMeshParentN3D[si];
+                                        for (int mi = 0; mi < 64; ++mi) // MAX_MESHES=64
+                                        {
+                                            mc << ((mi < (int)mp.size()) ? mp[mi] : -1);
+                                            if (mi + 1 < 64) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // DcNode3D runtime struct and arrays
+                                    mc << "typedef struct { float pos[3]; float rot[3]; float velY; int onFloor; float extent[3]; float boundPos[3]; int physEnabled; } DcNode3D;\n";
+                                    mc << "static DcNode3D gNode3Ds[MAX_NODE3D];\n";
+                                    mc << "static int gNode3DCount = 0;\n";
+                                    mc << "static void NB_InitNode3Ds(void){\n";
+                                    mc << "  int si = gSceneMetaIndex; if(si<0) si=0; if(si>=" << sceneCount << ") si=0;\n";
+                                    mc << "  gNode3DCount = kSceneNode3DCount[si]; if(gNode3DCount>MAX_NODE3D) gNode3DCount=MAX_NODE3D;\n";
+                                    mc << "  for(int ni=0; ni<gNode3DCount; ni++){\n";
+                                    mc << "    DcNode3D* nd = &gNode3Ds[ni];\n";
+                                    mc << "    nd->pos[0]=kSceneNode3DPos[si][ni][0]; nd->pos[1]=kSceneNode3DPos[si][ni][1]; nd->pos[2]=kSceneNode3DPos[si][ni][2];\n";
+                                    mc << "    nd->rot[0]=0; nd->rot[1]=0; nd->rot[2]=0;\n";
+                                    mc << "    nd->velY=0; nd->onFloor=0;\n";
+                                    mc << "    nd->extent[0]=kSceneNode3DExt[si][ni][0]; nd->extent[1]=kSceneNode3DExt[si][ni][1]; nd->extent[2]=kSceneNode3DExt[si][ni][2];\n";
+                                    mc << "    nd->boundPos[0]=kSceneNode3DBndPos[si][ni][0]; nd->boundPos[1]=kSceneNode3DBndPos[si][ni][1]; nd->boundPos[2]=kSceneNode3DBndPos[si][ni][2];\n";
+                                    mc << "    nd->physEnabled=kSceneNode3DPhys[si][ni];\n";
+                                    mc << "  }\n";
+                                    mc << "}\n";
+                                }
                                 mc << "static const char* NB_ResolveMappedRef(const char* logical, const NB_RefMap* map, int count){ if(!logical||!logical[0]||!map||count<=0) return logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(logical,map[i].logical))||(map[i].staged&&dc_eq_nocase(logical,map[i].staged))) return map[i].staged; } const char* slash=strrchr(logical,'/'); const char* name=slash?slash+1:logical; for(int i=0;i<count;++i){ if((map[i].logical&&dc_eq_nocase(name,map[i].logical))||(map[i].staged&&dc_eq_nocase(name,map[i].staged))) return map[i].staged; } return logical; }\n";
                                 mc << "static int NB_FindSceneMetaIndex(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return gSceneIndex; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(sceneFile,gSceneFiles[i])) return i; } const char* slash=strrchr(sceneFile,'/'); const char* name=slash?slash+1:sceneFile; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(name,gSceneFiles[i])) return i; } return gSceneIndex; }\n";
                                 // NB_ApplyLoadedSceneState: use parent Node3D transform for gMeshPos/gMeshRot (drives movement),
@@ -13902,7 +14075,8 @@ RenderImGuiOnly:
                                    "gMeshPos[0]=kScenePlayerParentPos[si][0]; gMeshPos[1]=kScenePlayerParentPos[si][1]; gMeshPos[2]=kScenePlayerParentPos[si][2]; "
                                    "gMeshRot[0]=kScenePlayerParentRot[si][0]; gMeshRot[1]=kScenePlayerParentRot[si][1]; gMeshRot[2]=kScenePlayerParentRot[si][2]; "
                                    "} "
-                                   "if(gSceneMeshCount>0){ gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } return 1; }\n";
+                                   "if(gSceneMeshCount>0){ gMeshScale[0]=gSceneMeshes[0].scale[0]; gMeshScale[1]=gSceneMeshes[0].scale[1]; gMeshScale[2]=gSceneMeshes[0].scale[2]; } "
+                                   "NB_InitNode3Ds(); return 1; }\n";
                                 mc << "static int NB_LoadScene(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return 0; gSceneMetaIndex=NB_FindSceneMetaIndex(sceneFile); gSceneIndex=gSceneMetaIndex; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",sceneFile); if(!NB_DC_LoadScene(path)) return 0; return NB_ApplyLoadedSceneState(); }\n";
                                 mc << "static int NB_LoadSceneIndex(int idx){ if(gSceneCount<=0) return 0; while(idx<0) idx+=gSceneCount; idx%=gSceneCount; gSceneIndex=idx; gSceneMetaIndex=idx; char path[256]; snprintf(path,sizeof(path),\"/cd/data/scenes/%s\",gSceneFiles[idx]); if(!NB_DC_SwitchScene(path)) return 0; if(!NB_ApplyLoadedSceneState()) return 0; return 1; }\n";
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
@@ -14433,10 +14607,57 @@ RenderImGuiOnly:
                                 mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "    }\n";
+                                // --- Multi-Node3D physics loop ---
+                                mc << "    /* Node3D physics: gravity + AABB floor collision for all physics-enabled Node3Ds */\n";
+                                mc << "    { int si=gSceneMetaIndex; if(si<0) si=0; if(si>=" << (int)runtimeSceneFiles.size() << ") si=0;\n";
+                                mc << "    int playerParentNi=(gPlayerMeshIdx>=0)?kSceneMeshParentN3D[si][gPlayerMeshIdx]:-1;\n";
+                                mc << "    for(int ni=0; ni<gNode3DCount; ni++){\n";
+                                mc << "      DcNode3D* nd=&gNode3Ds[ni];\n";
+                                mc << "      if(!nd->physEnabled) continue;\n";
+                                mc << "      if(ni==playerParentNi) continue; /* player has its own physics loop */\n";
+                                mc << "      float preGravY=nd->pos[1];\n";
+                                mc << "      nd->velY += -29.4f * dt;\n";
+                                mc << "      nd->pos[1] += nd->velY * dt;\n";
+                                mc << "      nd->onFloor=0;\n";
+                                mc << "      float nHx=nd->extent[0], nHy=nd->extent[1], nHz=nd->extent[2];\n";
+                                mc << "      float nCx=nd->pos[0]+nd->boundPos[0], nCy=nd->pos[1]+nd->boundPos[1], nCz=nd->pos[2]+nd->boundPos[2];\n";
+                                mc << "      float nPrevBottomY=(preGravY+nd->boundPos[1])-nHy;\n";
+                                mc << "      for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){\n";
+                                mc << "        SceneMeshMeta* sm=&gSceneMeshes[mi]; RuntimeSceneMesh* rm=&meshRt[mi];\n";
+                                mc << "        if(!sm->collisionSource || !rm->loaded || !rm->base || rm->kVertCount<=0) continue;\n";
+                                mc << "        float fMinX=1e30f,fMaxX=-1e30f,fMinZ=1e30f,fMaxZ=-1e30f,fTopY=-1e30f;\n";
+                                mc << "        for(int vi=0; vi<rm->kVertCount; ++vi){\n";
+                                mc << "          float px=sm->pos[0]+rm->base[vi].x*sm->scale[0];\n";
+                                mc << "          float py=sm->pos[1]+rm->base[vi].y*sm->scale[1];\n";
+                                mc << "          float pz=sm->pos[2]+rm->base[vi].z*sm->scale[2];\n";
+                                mc << "          if(px<fMinX) fMinX=px; if(px>fMaxX) fMaxX=px;\n";
+                                mc << "          if(pz<fMinZ) fMinZ=pz; if(pz>fMaxZ) fMaxZ=pz;\n";
+                                mc << "          if(py>fTopY) fTopY=py;\n";
+                                mc << "        }\n";
+                                mc << "        if(fMinX>fMaxX) continue;\n";
+                                mc << "        if(nCx+nHx>=fMinX && nCx-nHx<=fMaxX && nCz+nHz>=fMinZ && nCz-nHz<=fMaxZ){\n";
+                                mc << "          float bottomY=nCy-nHy;\n";
+                                mc << "          if(bottomY<fTopY && fTopY<=nPrevBottomY+0.05f){\n";
+                                mc << "            nd->pos[1]+=(fTopY-bottomY);\n";
+                                mc << "            if(nd->velY<0.0f) nd->velY=0.0f;\n";
+                                mc << "            nd->onFloor=1;\n";
+                                mc << "          }\n";
+                                mc << "        }\n";
+                                mc << "      }\n";
+                                mc << "      /* Update child mesh positions to follow this Node3D */\n";
+                                mc << "      for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){\n";
+                                mc << "        if(kSceneMeshParentN3D[si][mi]==ni){\n";
+                                mc << "          gSceneMeshes[mi].pos[0]=nd->pos[0];\n";
+                                mc << "          gSceneMeshes[mi].pos[1]=nd->pos[1];\n";
+                                mc << "          gSceneMeshes[mi].pos[2]=nd->pos[2];\n";
+                                mc << "        }\n";
+                                mc << "      }\n";
+                                mc << "    }}\n";
                                 mc << "    if (sceneSwitchReq != 0) {\n";
                                 mc << "      int metaOk = (sceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
                                 mc << "      sceneSwitchReq = 0;\n";
                                 mc << "      sceneReady = 0;\n";
+                                mc << "      gCollCacheReady = 0;\n";
                                 mc << "      for(int mi=0; mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; for(int s=0;s<MAX_SLOT;++s){ if(rm->slotTx[s]){ pvr_mem_free(rm->slotTx[s]); rm->slotTx[s]=0; } dc_free_tex(&rm->diskTex[s]); } if(rm->trisFlipped){ free(rm->trisFlipped); rm->trisFlipped=0; } if(rm->triUvFlipped){ free(rm->triUvFlipped); rm->triUvFlipped=0; } runtime_anim_free(&rm->anim); dc_free_mesh(&rm->diskMesh); free(rm->weldGroups); free(rm->weldNrmBuf); memset(rm,0,sizeof(*rm)); }\n";
                                 mc << "      if (!metaOk) { dbgio_printf(\"[NEBULA][DC] Scene metadata switch failed\\n\"); }\n";
                                 mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kMeshMatUvScaleU[mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kMeshMatUvScaleV[mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: mesh not loaded\\n\",mi,sm->meshLogical); continue; } if(!sm->runtimeTest){ if(sm->animDisk[0]) dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s skipped: runtimeTest=0\\n\",mi,sm->meshLogical,sm->animDisk); continue; } if(!sm->animDisk[0]){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: no anim assigned\\n\",mi,sm->meshLogical); continue; } char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s try load %s\\n\",mi,sm->meshLogical,ap); if(!runtime_anim_load(ap,&rm->anim)){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s load failed (missing/unreadable/invalid)\\n\",mi,sm->meshLogical,sm->animDisk); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount>rm->kVertCount){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s vert mismatch clip=%d mesh=%d -> fallback static\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.vertCount,rm->kVertCount); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount<rm->kVertCount){ V3* np=(V3*)realloc(rm->anim.posed,(size_t)rm->kVertCount*sizeof(V3)); if(!np){ runtime_anim_free(&rm->anim); continue; } for(int vi=rm->anim.vertCount;vi<rm->kVertCount;++vi) np[vi]=rm->base[vi]; rm->anim.posed=np; dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] padded posed %d->%d\\n\",mi,rm->anim.vertCount,rm->kVertCount); } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s loaded frames=%d fps=%.2f verts=%d\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.frameCount,rm->anim.fps,rm->anim.vertCount); } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); free(gNrm); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); gNrm=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs||!gNrm){ free(gSv); free(gOk); free(gCs); free(gNrm); gSv=NULL; gOk=NULL; gCs=NULL; gNrm=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_Game_OnSceneSwitch(gSceneName); } }\n";

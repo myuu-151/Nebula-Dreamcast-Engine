@@ -9774,8 +9774,10 @@ int main(int, char**)
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
                         float savedYaw = n3.rotY;
 
-                        // Only snap to floor-like surfaces (< ~60° from horizontal).
-                        if (ny > 0.5f)
+                        // Only snap to floor-like surfaces (< ~45° from horizontal).
+                        // Rejects edge/seam triangles at geometry transitions that
+                        // have sideways normals causing unwanted side tilt.
+                        if (ny > 0.7f)
                         {
                             n3.rotX = atan2f(nz, ny) * kDeg;
                             n3.rotZ = atan2f(-nx, ny) * kDeg;

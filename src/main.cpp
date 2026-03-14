@@ -9766,41 +9766,54 @@ int main(int, char**)
                         }
                     }
 
-                    // Align pitch/roll to surface normal, preserving yaw.
-                    // Project the player's yaw-forward onto the slope plane,
-                    // build an orthonormal frame, extract rotX/rotZ only.
+                    // Solve for rotX/rotZ that align the local up axis with the
+                    // surface normal, given the current rotY (yaw).
+                    // Engine convention: R = Rz * Ry * Rx
+                    // Up vector (column 1) = (sx*sy*cz - cx*sz, sx*sy*sz + cx*cz, sx*cy)
+                    // We want up = (nx, ny, nz), solve for sx,cx (rotX) and sz,cz (rotZ).
                     {
                         const float kPI = 3.14159265f;
                         const float kDeg = 180.0f / kPI;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
-                        float savedYaw = n3.rotY; // preserve yaw — never overwrite
-
-                        // Player's forward from yaw (horizontal)
+                        float savedYaw = n3.rotY;
                         float yawRad = savedYaw * kPI / 180.0f;
-                        float flatFwdX = sinf(yawRad), flatFwdZ = cosf(yawRad);
+                        float cy = cosf(yawRad), sy = sinf(yawRad);
 
-                        // Project flat forward onto slope plane
-                        float dn = flatFwdX * nx + flatFwdZ * nz;
-                        float pfx = flatFwdX - dn * nx;
-                        float pfy = -dn * ny;
-                        float pfz = flatFwdZ - dn * nz;
-                        float pfLen = sqrtf(pfx * pfx + pfy * pfy + pfz * pfz);
-                        if (pfLen < 0.001f) { pfx = flatFwdX; pfy = 0.0f; pfz = flatFwdZ; pfLen = 1.0f; }
-                        { float inv = 1.0f / pfLen; pfx *= inv; pfy *= inv; pfz *= inv; }
-
-                        // Right = cross(normal, forward)
-                        float rrx = ny * pfz - nz * pfy;
-                        float rry = nz * pfx - nx * pfz;
-                        float rrz = nx * pfy - ny * pfx;
-                        float rrLen = sqrtf(rrx * rrx + rry * rry + rrz * rrz);
-                        if (rrLen > 0.001f) { float inv = 1.0f / rrLen; rrx *= inv; rry *= inv; rrz *= inv; }
-
-                        // Extract rotX and rotZ from the rotation matrix (keep rotY unchanged).
-                        // Matrix: right=(rrx,rry,rrz), up=(nx,ny,nz), fwd=(pfx,pfy,pfz)
-                        // m21=nz, m22=pfz → rotX = atan2(m21, m22)
-                        // m10=rry, m00=rrx → rotZ = atan2(m10, m00)
-                        n3.rotX = atan2f(nz, pfz) * kDeg;
-                        n3.rotZ = atan2f(rry, rrx) * kDeg;
+                        float newRotX, newRotZ;
+                        if (fabsf(cy) > 0.001f)
+                        {
+                            // From up.z = sx*cy = nz → sx = nz/cy
+                            float sxVal = nz / cy;
+                            if (sxVal > 1.0f) sxVal = 1.0f;
+                            if (sxVal < -1.0f) sxVal = -1.0f;
+                            newRotX = asinf(sxVal) * kDeg;
+                            float cx = cosf(asinf(sxVal));
+                            // Solve linear system for cz, sz:
+                            // A*cz - B*sz = nx  where A = sx*sy, B = cx
+                            // B*cz + A*sz = ny
+                            float A = sxVal * sy;
+                            float B = cx;
+                            float det = A * A + B * B;
+                            if (det > 0.0001f)
+                            {
+                                float invDet = 1.0f / det;
+                                float cz = (A * nx + B * ny) * invDet;
+                                float sz = (A * ny - B * nx) * invDet;
+                                newRotZ = atan2f(sz, cz) * kDeg;
+                            }
+                            else
+                            {
+                                newRotZ = 0.0f;
+                            }
+                        }
+                        else
+                        {
+                            // Gimbal lock near rotY = ±90°
+                            newRotX = 0.0f;
+                            newRotZ = atan2f(-nx, ny) * kDeg;
+                        }
+                        n3.rotX = newRotX;
+                        n3.rotZ = newRotZ;
                         n3.rotY = savedYaw;
                     }
                 }

@@ -6151,14 +6151,27 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
+        Vec3 right, up, forward;
+        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+
         for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
         {
             const auto& p0 = mesh->positions[mesh->indices[t]];
             const auto& p1 = mesh->positions[mesh->indices[t + 1]];
             const auto& p2 = mesh->positions[mesh->indices[t + 2]];
-            float ax = wx + p0.x * wsx, ay = wy + p0.y * wsy, az = wz + p0.z * wsz;
-            float bx = wx + p1.x * wsx, by = wy + p1.y * wsy, bz = wz + p1.z * wsz;
-            float cx = wx + p2.x * wsx, cy = wy + p2.y * wsy, cz = wz + p2.z * wsz;
+            // Scale then rotate then translate
+            float s0x = p0.x * wsx, s0y = p0.y * wsy, s0z = p0.z * wsz;
+            float s1x = p1.x * wsx, s1y = p1.y * wsy, s1z = p1.z * wsz;
+            float s2x = p2.x * wsx, s2y = p2.y * wsy, s2z = p2.z * wsz;
+            float ax = wx + right.x * s0x + up.x * s0y + forward.x * s0z;
+            float ay = wy + right.y * s0x + up.y * s0y + forward.y * s0z;
+            float az = wz + right.z * s0x + up.z * s0y + forward.z * s0z;
+            float bx = wx + right.x * s1x + up.x * s1y + forward.x * s1z;
+            float by = wy + right.y * s1x + up.y * s1y + forward.y * s1z;
+            float bz = wz + right.z * s1x + up.z * s1y + forward.z * s1z;
+            float cx = wx + right.x * s2x + up.x * s2y + forward.x * s2z;
+            float cy = wy + right.y * s2x + up.y * s2y + forward.y * s2z;
+            float cz = wz + right.z * s2x + up.z * s2y + forward.z * s2z;
 
             // 2D barycentric test in XZ plane (ray is vertical)
             float e1x = bx - ax, e1z = bz - az;
@@ -18467,6 +18480,7 @@ RenderImGuiOnly:
                 ImGui::TextUnformatted("Collision Bounds (local)");
                 ImGui::DragFloat3("XYZ Extents", &n.extentX, 0.01f, 0.0f, 1000.0f);
                 ImGui::DragFloat3("Bounds Position", &n.boundPosX, 0.01f);
+
             }
             else if (inspectNavMesh3D >= 0 && inspectNavMesh3D < (int)gNavMesh3DNodes.size())
             {

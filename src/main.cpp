@@ -14746,7 +14746,7 @@ RenderImGuiOnly:
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";
-                                    mk << "CFLAGS += -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS) -I. -Iscripts\n";
+                                    mk << "CFLAGS += -D__DREAMCAST__ -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS) -I. -Iscripts\n";
                                     mk << "all: rm-elf $(TARGET)\n";
                                     mk << "include $(KOS_BASE)/Makefile.rules\n";
                                     mk << "%.o: %.c\n";

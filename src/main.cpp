@@ -9777,12 +9777,22 @@ int main(int, char**)
                         float yawRad = savedYaw * kPI / 180.0f;
                         float sy = sinf(yawRad), cy = cosf(yawRad);
 
-                        // Normal projected onto character's forward and right directions
-                        float nFwd = nx * sy + nz * cy;   // dot(normal, forward)
-                        float nRgt = nx * cy - nz * sy;   // dot(normal, right)
+                        // Only snap to floor-like surfaces (< ~60° from horizontal).
+                        // Steeper faces are walls/edges — keep upright on those.
+                        if (ny > 0.5f)
+                        {
+                            // Normal projected onto character's forward and right directions
+                            float nFwd = nx * sy + nz * cy;   // dot(normal, forward)
+                            float nRgt = nx * cy - nz * sy;   // dot(normal, right)
 
-                        n3.rotX = atan2f(nFwd, ny) * kDeg;
-                        n3.rotZ = atan2f(-nRgt, ny) * kDeg;
+                            n3.rotX = atan2f(nFwd, ny) * kDeg;
+                            n3.rotZ = atan2f(-nRgt, ny) * kDeg;
+                        }
+                        else
+                        {
+                            n3.rotX = 0.0f;
+                            n3.rotZ = 0.0f;
+                        }
                         n3.rotY = savedYaw;
                     }
                 }

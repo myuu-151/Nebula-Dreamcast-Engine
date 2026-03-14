@@ -6194,6 +6194,18 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
             float hitY = ay + (by - ay) * u + (cy - ay) * v;
             if (hitY <= ry && hitY > bestY)
             {
+                // Skip wall-like triangles — only accept floor surfaces
+                float ex1 = bx - ax, ey1 = by - ay, ez1 = bz - az;
+                float ex2 = cx - ax, ey2 = cy - ay, ez2 = cz - az;
+                float fnx = ey1 * ez2 - ez1 * ey2;
+                float fny = ez1 * ex2 - ex1 * ez2;
+                float fnz = ex1 * ey2 - ey1 * ex2;
+                float nLen = sqrtf(fnx * fnx + fny * fny + fnz * fnz);
+                if (nLen > 1e-8f)
+                {
+                    fny = (fny < 0.0f) ? -fny : fny;
+                    if (fny / nLen < 0.7f) continue;
+                }
                 bestY = hitY;
                 hit = 1;
             }
@@ -6259,23 +6271,23 @@ NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float
             float hitY = ay + (by - ay) * u + (cy - ay) * v;
             if (hitY <= ry && hitY > bestY)
             {
-                bestY = hitY;
-                hit = 1;
                 // Compute face normal via cross product of triangle edges
                 float ex1 = bx - ax, ey1 = by - ay, ez1 = bz - az;
                 float ex2 = cx - ax, ey2 = cy - ay, ez2 = cz - az;
-                float nx = ey1 * ez2 - ez1 * ey2;
-                float ny = ez1 * ex2 - ex1 * ez2;
-                float nz = ex1 * ey2 - ey1 * ex2;
-                float nLen = sqrtf(nx * nx + ny * ny + nz * nz);
+                float fnx = ey1 * ez2 - ez1 * ey2;
+                float fny = ez1 * ex2 - ex1 * ez2;
+                float fnz = ex1 * ey2 - ey1 * ex2;
+                float nLen = sqrtf(fnx * fnx + fny * fny + fnz * fnz);
                 if (nLen > 1e-8f)
                 {
                     float nInv = 1.0f / nLen;
-                    bestNx = nx * nInv;
-                    bestNy = ny * nInv;
-                    bestNz = nz * nInv;
-                    // Ensure normal points upward
-                    if (bestNy < 0.0f) { bestNx = -bestNx; bestNy = -bestNy; bestNz = -bestNz; }
+                    fnx *= nInv; fny *= nInv; fnz *= nInv;
+                    if (fny < 0.0f) { fnx = -fnx; fny = -fny; fnz = -fnz; }
+                    // Skip wall-like triangles — only accept floor surfaces
+                    if (fny < 0.7f) continue;
+                    bestY = hitY;
+                    hit = 1;
+                    bestNx = fnx; bestNy = fny; bestNz = fnz;
                 }
             }
         }

@@ -9766,15 +9766,59 @@ int main(int, char**)
                         }
                     }
 
-                    // Align pitch/roll to surface normal (engine-level, applies to all physics nodes)
-                    float ny = hitNormal[1];
-                    if (ny < 0.01f) ny = 0.01f;
-                    float yawRad = n3.rotY * 3.14159f / 180.0f;
-                    float sYaw = sinf(yawRad), cYaw = cosf(yawRad);
-                    float nFwd = hitNormal[0] * sYaw + hitNormal[2] * cYaw;
-                    float nRgt = hitNormal[0] * cYaw - hitNormal[2] * sYaw;
-                    n3.rotX = atan2f(nFwd, ny) * 180.0f / 3.14159f;
-                    n3.rotZ = -atan2f(nRgt, ny) * 180.0f / 3.14159f;
+                    // Align rotation to surface normal.
+                    // Build orthonormal frame: up=normal, forward=yaw projected onto slope plane.
+                    // Then extract Euler angles matching engine convention (R = Rz * Ry * Rx).
+                    {
+                        const float kPI = 3.14159265f;
+                        const float kDeg = 180.0f / kPI;
+                        float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
+
+                        // Player's intended forward from yaw (horizontal)
+                        float yawRad = n3.rotY * kPI / 180.0f;
+                        float flatFwdX = sinf(yawRad), flatFwdZ = cosf(yawRad);
+
+                        // Project flat forward onto the slope plane: fwd = flatFwd - dot(flatFwd,n)*n
+                        float dn = flatFwdX * nx + flatFwdZ * nz; // flatFwdY=0
+                        float pfx = flatFwdX - dn * nx;
+                        float pfy = -dn * ny;
+                        float pfz = flatFwdZ - dn * nz;
+                        float pfLen = sqrtf(pfx * pfx + pfy * pfy + pfz * pfz);
+                        if (pfLen < 0.001f) { pfx = flatFwdX; pfy = 0.0f; pfz = flatFwdZ; pfLen = 1.0f; }
+                        { float inv = 1.0f / pfLen; pfx *= inv; pfy *= inv; pfz *= inv; }
+
+                        // Right = cross(forward, up)  (forward x normal)
+                        float rrx = pfy * nz - pfz * ny;
+                        float rry = pfz * nx - pfx * nz;
+                        float rrz = pfx * ny - pfy * nx;
+                        float rrLen = sqrtf(rrx * rrx + rry * rry + rrz * rrz);
+                        if (rrLen > 0.001f) { float inv = 1.0f / rrLen; rrx *= inv; rry *= inv; rrz *= inv; }
+
+                        // Matrix columns in GetLocalAxesFromEuler convention:
+                        //   right   = (m00, m10, m20) = (rrx, rry, rrz)
+                        //   up      = (m01, m11, m21) = (nx,  ny,  nz)
+                        //   forward = (m02, m12, m22) = (pfx, pfy, pfz)
+                        // Extract Euler: m20=-sin(ry), m21=cos(ry)*sin(rx), m22=cos(ry)*cos(rx)
+                        //                m10=cos(ry)*sin(rz), m00=cos(ry)*cos(rz)
+                        float m20 = rrz;  // right.z
+                        float sRotY = std::max(-1.0f, std::min(1.0f, -m20));
+                        float newRotY = asinf(sRotY) * kDeg;
+                        float cosRY = cosf(asinf(sRotY));
+                        float newRotX, newRotZ;
+                        if (cosRY > 0.001f)
+                        {
+                            newRotX = atan2f(nz, pfz) * kDeg;   // atan2(m21, m22)
+                            newRotZ = atan2f(rry, rrx) * kDeg;  // atan2(m10, m00)
+                        }
+                        else
+                        {
+                            newRotX = atan2f(-pfy, ny) * kDeg;
+                            newRotZ = 0.0f;
+                        }
+                        n3.rotX = newRotX;
+                        n3.rotY = newRotY;
+                        n3.rotZ = newRotZ;
+                    }
                 }
                 else if (!scriptManaged)
                 {

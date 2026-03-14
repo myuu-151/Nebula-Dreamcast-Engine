@@ -5247,15 +5247,19 @@ static float FromFixed16_16(int32_t v)
 
 static Vec3 ApplyImportBasis(const Vec3& v)
 {
+    Vec3 b;
     switch (gImportBasisMode)
     {
     case 1: // Blender (-Z forward, Y up) -> Nebula basis (flipped X to match viewport)
-        return Vec3{ -v.z, v.y, -v.x };
+        b = Vec3{ -v.z, v.y, -v.x }; break;
     case 2: // Maya-style (+Z forward, Y up, flipped X to match viewport)
-        return Vec3{ -v.y, -v.x, v.z };
+        b = Vec3{ -v.y, -v.x, v.z }; break;
     default:
-        return v;
+        b = v; break;
     }
+    // Bake 90-degree rotation matching standalone StaticMesh3D rotX=90 (GL Y-axis)
+    // so FBX meshes face correct direction at 0,0,0. R_Y(90): (x,y,z) -> (z, y, -x)
+    return Vec3{ b.z, b.y, -b.x };
 }
 
 static uint8_t ComputeFaceWindingHint(const Vec3& a, const Vec3& b, const Vec3& c)
@@ -12103,14 +12107,26 @@ RenderImGuiOnly:
                             StaticMesh3DNode meshSrc{};
                             bool haveMesh = false;
                             // Runtime currently renders one primary StaticMesh3D.
-                            // Prefer first non-cube mesh (user-authored content), fallback to first mesh.
+                            // Prefer mesh parented under a Node3D (player mesh), then first non-cube, then first mesh.
                             for (const auto& s : exportStatics)
                             {
-                                if (s.mesh.find("cube_primitive") == std::string::npos)
+                                if (!s.parent.empty() && s.mesh.find("cube_primitive") == std::string::npos)
                                 {
                                     meshSrc = s;
                                     haveMesh = true;
                                     break;
+                                }
+                            }
+                            if (!haveMesh)
+                            {
+                                for (const auto& s : exportStatics)
+                                {
+                                    if (s.mesh.find("cube_primitive") == std::string::npos)
+                                    {
+                                        meshSrc = s;
+                                        haveMesh = true;
+                                        break;
+                                    }
                                 }
                             }
                             if (!haveMesh && !exportStatics.empty()) { meshSrc = exportStatics[0]; haveMesh = true; }

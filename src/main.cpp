@@ -41,6 +41,7 @@
 #include "platform/dreamcast/build_helpers.h"
 #include "scene/SceneIO.h"
 #include "scene/NodeTypes.h"
+#include "navmesh/NavMeshBuilder.h"
 #include <GL/gl.h>
 
 enum class InspectorPlaybackMode : int;
@@ -617,6 +618,13 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ typedef void(*Fn)(const char*, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DVelocityY\"); if(fn) fn(name,vy); }\n";
     out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
     out << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_CheckAABBOverlap\"); return fn ? fn(name1,name2) : 0; }\n";
+    out << "int NB_RT_RaycastDown(float x, float y, float z, float* outHitY){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_RaycastDown\"); return fn ? fn(x,y,z,outHitY) : 0; }\n";
+    out << "int NB_RT_NavMeshBuild(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshBuild\"); return fn ? fn() : 0; }\n";
+    out << "void NB_RT_NavMeshClear(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshClear\"); if(fn) fn(); }\n";
+    out << "int NB_RT_NavMeshIsReady(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshIsReady\"); return fn ? fn() : 0; }\n";
+    out << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ typedef int(*Fn)(float,float,float,float,float,float,float*,int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindPath\"); return fn ? fn(sx,sy,sz,gx,gy,gz,outPath,maxPoints) : 0; }\n";
+    out << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ typedef int(*Fn)(float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindRandomPoint\"); return fn ? fn(outPos) : 0; }\n";
+    out << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindClosestPoint\"); return fn ? fn(px,py,pz,outPos) : 0; }\n";
     return true;
 }
 
@@ -2003,6 +2011,127 @@ NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
     if (ax + a.extentX < bx - b.extentX || ax - a.extentX > bx + b.extentX) return 0;
     if (ay + a.extentY < by - b.extentY || ay - a.extentY > by + b.extentY) return 0;
     if (az + a.extentZ < bz - b.extentZ || az - a.extentZ > bz + b.extentZ) return 0;
+    return 1;
+}
+
+// NB_RT_RaycastDown is implemented later in the file (after NebMesh definition).
+// See the implementation near the play-mode collision section.
+
+// ---------------------------------------------------------------------------
+// NavMesh runtime bridge (editor-side)
+// ---------------------------------------------------------------------------
+NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
+{
+    // Gather world-space triangles from collision-flagged StaticMesh3D nodes
+    std::vector<float> verts;
+    std::vector<int>   tris;
+    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+    {
+        const auto& sm = gStaticMeshNodes[si];
+        if (sm.mesh.empty()) continue;
+
+        // Load mesh data
+        std::ifstream mf(sm.mesh, std::ios::binary);
+        if (!mf.is_open()) continue;
+
+        // Read .nebmesh header
+        char magic[8] = {};
+        mf.read(magic, 7);
+        if (std::string(magic) != "NEBMESH") continue;
+
+        uint32_t vertCount = 0, triCount = 0;
+        mf.read(reinterpret_cast<char*>(&vertCount), 4);
+        mf.read(reinterpret_cast<char*>(&triCount), 4);
+
+        std::vector<float> meshVerts(vertCount * 3);
+        mf.read(reinterpret_cast<char*>(meshVerts.data()), vertCount * 3 * sizeof(float));
+
+        // Skip UVs (vertCount * 2 floats)
+        mf.seekg(vertCount * 2 * sizeof(float), std::ios::cur);
+
+        std::vector<uint16_t> meshIndices(triCount * 3);
+        mf.read(reinterpret_cast<char*>(meshIndices.data()), triCount * 3 * sizeof(uint16_t));
+
+        // Get world transform
+        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+        GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+        float rx = wrx * 3.14159265f / 180.0f;
+        float ry = wry * 3.14159265f / 180.0f;
+        float rz = wrz * 3.14159265f / 180.0f;
+        float cx = cosf(rx), sx2 = sinf(rx);
+        float cy = cosf(ry), sy = sinf(ry);
+        float cz = cosf(rz), sz = sinf(rz);
+
+        int baseVert = (int)(verts.size() / 3);
+        for (uint32_t v = 0; v < vertCount; ++v)
+        {
+            float lx = meshVerts[v * 3 + 0] * wsx;
+            float ly = meshVerts[v * 3 + 1] * wsy;
+            float lz = meshVerts[v * 3 + 2] * wsz;
+
+            // Euler rotation YXZ
+            float t1x = lx, t1y = ly * cx - lz * sx2, t1z = ly * sx2 + lz * cx;
+            float t2x = t1x * cy + t1z * sy, t2y = t1y, t2z = -t1x * sy + t1z * cy;
+            float t3x = t2x * cz - t2y * sz, t3y = t2x * sz + t2y * cz, t3z = t2z;
+
+            verts.push_back(t3x + wx);
+            verts.push_back(t3y + wy);
+            verts.push_back(t3z + wz);
+        }
+        for (uint32_t t = 0; t < triCount * 3; ++t)
+        {
+            tris.push_back(baseVert + (int)meshIndices[t]);
+        }
+    }
+
+    if (verts.empty() || tris.empty()) return 0;
+    return NavMeshBuild(verts.data(), (int)verts.size(), tris.data(), (int)tris.size()) ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_NavMeshClear(void)
+{
+    NavMeshClear();
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshIsReady(void)
+{
+    return NavMeshIsReady() ? 1 : 0;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindPath(float sx, float sy, float sz,
+                                        float gx, float gy, float gz,
+                                        float* outPath, int maxPoints)
+{
+    Vec3 start = {sx, sy, sz};
+    Vec3 goal  = {gx, gy, gz};
+    std::vector<Vec3> path;
+    if (!NavMeshFindPath(start, goal, path)) return 0;
+    int count = (int)path.size();
+    if (count > maxPoints) count = maxPoints;
+    for (int i = 0; i < count; ++i)
+    {
+        outPath[i * 3 + 0] = path[i].x;
+        outPath[i * 3 + 1] = path[i].y;
+        outPath[i * 3 + 2] = path[i].z;
+    }
+    return count;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindRandomPoint(float outPos[3])
+{
+    Vec3 pt;
+    if (!NavMeshFindRandomPoint(pt)) return 0;
+    outPos[0] = pt.x; outPos[1] = pt.y; outPos[2] = pt.z;
+    return 1;
+}
+
+NB_RT_EXPORT int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3])
+{
+    Vec3 pos = {px, py, pz};
+    Vec3 closest;
+    if (!NavMeshFindClosestPoint(pos, closest)) return 0;
+    outPos[0] = closest.x; outPos[1] = closest.y; outPos[2] = closest.z;
     return 1;
 }
 
@@ -5122,15 +5251,19 @@ static float FromFixed16_16(int32_t v)
 
 static Vec3 ApplyImportBasis(const Vec3& v)
 {
+    Vec3 b;
     switch (gImportBasisMode)
     {
     case 1: // Blender (-Z forward, Y up) -> Nebula basis (flipped X to match viewport)
-        return Vec3{ -v.z, v.y, -v.x };
+        b = Vec3{ -v.z, v.y, -v.x }; break;
     case 2: // Maya-style (+Z forward, Y up, flipped X to match viewport)
-        return Vec3{ -v.y, -v.x, v.z };
+        b = Vec3{ -v.y, -v.x, v.z }; break;
     default:
-        return v;
+        b = v; break;
     }
+    // Bake 90-degree rotation matching standalone StaticMesh3D rotX=90 (GL Y-axis)
+    // so FBX meshes face correct direction at 0,0,0. R_Y(90): (x,y,z) -> (z, y, -x)
+    return Vec3{ b.z, b.y, -b.x };
 }
 
 static uint8_t ComputeFaceWindingHint(const Vec3& a, const Vec3& b, const Vec3& c)
@@ -5994,6 +6127,60 @@ static int GetMeshUvLayerCountForMaterial(const std::filesystem::path& matPath)
         }
     }
     return 1; // default: assume at least UV0
+}
+
+// ---------------------------------------------------------------------------
+// NB_RT_RaycastDown — cast a vertical ray downward from (rx,ry,rz) and find
+// the highest collision-flagged StaticMesh3D triangle surface below that point.
+// ---------------------------------------------------------------------------
+NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
+{
+    if (!outHitY) return 0;
+    int hit = 0;
+    float bestY = -1e30f;
+    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+    {
+        const auto& s = gStaticMeshNodes[si];
+        if (s.mesh.empty() || gProjectDir.empty()) continue;
+        if (!s.collisionSource) continue;
+
+        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
+        const NebMesh* mesh = GetNebMesh(meshPath);
+        if (!mesh || !mesh->valid || mesh->positions.empty() || mesh->indices.empty()) continue;
+
+        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+        GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+        for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
+        {
+            const auto& p0 = mesh->positions[mesh->indices[t]];
+            const auto& p1 = mesh->positions[mesh->indices[t + 1]];
+            const auto& p2 = mesh->positions[mesh->indices[t + 2]];
+            float ax = wx + p0.x * wsx, ay = wy + p0.y * wsy, az = wz + p0.z * wsz;
+            float bx = wx + p1.x * wsx, by = wy + p1.y * wsy, bz = wz + p1.z * wsz;
+            float cx = wx + p2.x * wsx, cy = wy + p2.y * wsy, cz = wz + p2.z * wsz;
+
+            // 2D barycentric test in XZ plane (ray is vertical)
+            float e1x = bx - ax, e1z = bz - az;
+            float e2x = cx - ax, e2z = cz - az;
+            float det = e1x * e2z - e2x * e1z;
+            if (det > -1e-8f && det < 1e-8f) continue;
+            float inv = 1.0f / det;
+            float dx = rx - ax, dz = rz - az;
+            float u = (dx * e2z - dz * e2x) * inv;
+            if (u < 0.0f || u > 1.0f) continue;
+            float v = (e1x * dz - e1z * dx) * inv;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float hitY = ay + (by - ay) * u + (cy - ay) * v;
+            if (hitY <= ry && hitY > bestY)
+            {
+                bestY = hitY;
+                hit = 1;
+            }
+        }
+    }
+    if (hit) *outHitY = bestY;
+    return hit;
 }
 
 static std::filesystem::path ResolveProjectAssetPath(const std::string& relOrAbs)
@@ -9261,6 +9448,8 @@ int main(int, char**)
         }
 
         // Transform hotkeys (GLFW-level, toggles)
+        // Block when typing in an input field or hovering over any ImGui panel
+        // (Inspector, Scene, etc.) so keys like S don't trigger Scale while editing values.
         {
             auto edge = [](bool now, bool& prev) { bool pressed = (now && !prev); prev = now; return pressed; };
 
@@ -9273,30 +9462,40 @@ int main(int, char**)
             bool kEsc = (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
             bool kDel = (glfwGetKey(window, GLFW_KEY_DELETE) == GLFW_PRESS);
 
-            if (edge(kG, gKeyG))
+            bool blockTransformKeys = ImGui::GetIO().WantTextInput || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+
+            if (edge(kG, gKeyG) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Grab) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Grab; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kR, gKeyR))
+            if (edge(kR, gKeyR) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Rotate) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Rotate; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kS, gKeyS))
+            if (edge(kS, gKeyS) && !blockTransformKeys)
             {
                 EndTransformSnapshot();
                 if (gTransformMode == Transform_Scale) gTransformMode = Transform_None;
                 else { gTransformMode = Transform_Scale; BeginTransformSnapshot(); }
                 gAxisLock = 0;
             }
-            if (edge(kX, gKeyX)) gAxisLock = (gAxisLock == 'X') ? 0 : 'X';
-            if (edge(kY, gKeyY)) gAxisLock = (gAxisLock == 'Y') ? 0 : 'Y';
-            if (edge(kZ, gKeyZ)) gAxisLock = (gAxisLock == 'Z') ? 0 : 'Z';
+            if (!blockTransformKeys)
+            {
+                if (edge(kX, gKeyX)) gAxisLock = (gAxisLock == 'X') ? 0 : 'X';
+                if (edge(kY, gKeyY)) gAxisLock = (gAxisLock == 'Y') ? 0 : 'Y';
+                if (edge(kZ, gKeyZ)) gAxisLock = (gAxisLock == 'Z') ? 0 : 'Z';
+            }
+            else
+            {
+                // Still consume edges so we don't get a stale press when unblocked
+                edge(kX, gKeyX); edge(kY, gKeyY); edge(kZ, gKeyZ);
+            }
             if (edge(kEsc, gKeyEsc))
             {
                 if (gPlayMode)
@@ -10062,11 +10261,21 @@ int main(int, char**)
         glMatrixMode(GL_MODELVIEW);
         glLoadMatrixf(view.m);
 
-        // Background gradient
+        // Background gradient — fully reset GL state so vertex colors are not
+        // modulated by leftover lighting / material state from the previous frame.
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_ALPHA_TEST);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
+        glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);
+        glDisable(GL_COLOR_MATERIAL);
+        glDisable(GL_NORMALIZE);
+        glShadeModel(GL_SMOOTH);
+        glDisableClientState(GL_COLOR_ARRAY);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableClientState(GL_NORMAL_ARRAY);
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -11116,6 +11325,8 @@ int main(int, char**)
                                 glDisable(GL_TEXTURE_2D);
                                 glDisable(GL_LIGHTING);
                                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                glEnable(GL_POLYGON_OFFSET_LINE);
+                                glPolygonOffset(-1.0f, -1.0f);
                                 glLineWidth(overlayThick);
                                 glColor3f(overlayR, overlayG, overlayB);
                                 glBegin(GL_TRIANGLES);
@@ -11129,6 +11340,8 @@ int main(int, char**)
                     if (anyDrawn)
                     {
                         glEnd();
+                        glDisable(GL_POLYGON_OFFSET_LINE);
+                        glPolygonOffset(0.0f, 0.0f);
                         glLineWidth(1.0f);
                         glPolygonMode(GL_FRONT_AND_BACK, gWireframePreview ? GL_LINE : GL_FILL);
                     }
@@ -11227,6 +11440,15 @@ int main(int, char**)
             glDisable(GL_TEXTURE_2D);
         }
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+        // Clean up all GL state that mesh rendering may have enabled so it
+        // never leaks into the next frame's gradient or ImGui pass.
+        glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);
+        glDisable(GL_COLOR_MATERIAL);
+        glDisable(GL_NORMALIZE);
+        glDisable(GL_TEXTURE_2D);
+        glShadeModel(GL_SMOOTH);
 
 RenderImGuiOnly:
         // ImGui
@@ -11394,22 +11616,22 @@ RenderImGuiOnly:
             if (io.KeyShift) SaveAllProjectChanges();
             else SaveActiveScene();
         }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C))
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !ImGui::GetIO().WantTextInput)
         {
+            gHasCopiedNode = false;
+            gHasCopiedStatic = false;
             if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
             {
                 gHasCopiedNode = true;
-                gHasCopiedStatic = false;
                 gCopiedNode = gAudio3DNodes[gSelectedAudio3D];
             }
             else if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
             {
                 gHasCopiedStatic = true;
-                gHasCopiedNode = false;
                 gCopiedStatic = gStaticMeshNodes[gSelectedStaticMesh];
             }
         }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V))
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !ImGui::GetIO().WantTextInput)
         {
             if (gHasCopiedNode)
             {
@@ -11943,14 +12165,26 @@ RenderImGuiOnly:
                             StaticMesh3DNode meshSrc{};
                             bool haveMesh = false;
                             // Runtime currently renders one primary StaticMesh3D.
-                            // Prefer first non-cube mesh (user-authored content), fallback to first mesh.
+                            // Prefer mesh parented under a Node3D (player mesh), then first non-cube, then first mesh.
                             for (const auto& s : exportStatics)
                             {
-                                if (s.mesh.find("cube_primitive") == std::string::npos)
+                                if (!s.parent.empty() && s.mesh.find("cube_primitive") == std::string::npos)
                                 {
                                     meshSrc = s;
                                     haveMesh = true;
                                     break;
+                                }
+                            }
+                            if (!haveMesh)
+                            {
+                                for (const auto& s : exportStatics)
+                                {
+                                    if (s.mesh.find("cube_primitive") == std::string::npos)
+                                    {
+                                        meshSrc = s;
+                                        haveMesh = true;
+                                        break;
+                                    }
                                 }
                             }
                             if (!haveMesh && !exportStatics.empty()) { meshSrc = exportStatics[0]; haveMesh = true; }
@@ -12478,6 +12712,7 @@ RenderImGuiOnly:
                             std::filesystem::path cdMatDir = cdDataDir / "materials";
                             std::filesystem::path cdAnimDir = cdDataDir / "animations";
                             std::filesystem::path cdVmuDir = cdDataDir / "vmu";
+                            std::filesystem::path cdNavDir = cdDataDir / "navmesh";
                             std::error_code stageEc;
                             std::filesystem::remove_all(cdScenesDir, stageEc);
                             std::filesystem::remove_all(cdMeshesDir, stageEc);
@@ -12485,12 +12720,14 @@ RenderImGuiOnly:
                             std::filesystem::remove_all(cdMatDir, stageEc);
                             std::filesystem::remove_all(cdAnimDir, stageEc);
                             std::filesystem::remove_all(cdVmuDir, stageEc);
+                            std::filesystem::remove_all(cdNavDir, stageEc);
                             std::filesystem::create_directories(cdScenesDir);
                             std::filesystem::create_directories(cdMeshesDir);
                             std::filesystem::create_directories(cdTexturesDir);
                             std::filesystem::create_directories(cdMatDir);
                             std::filesystem::create_directories(cdAnimDir);
                             std::filesystem::create_directories(cdVmuDir);
+                            std::filesystem::create_directories(cdNavDir);
 
                             auto normalizeAbsKey = [](const std::filesystem::path& in)->std::string
                             {
@@ -12588,6 +12825,57 @@ RenderImGuiOnly:
                                     {
                                         loadedScenes[it->second].data = os;
                                         loadedScenes[it->second].sourcePath = os.path;
+                                    }
+                                }
+                            }
+
+                            // Filter staged scripts to only those referenced by nodes in
+                            // loaded scenes.  Prevents multiple-definition linker errors
+                            // when Scripts/ contains several .c files that each define
+                            // NB_Game_OnStart / OnUpdate / OnSceneSwitch.
+                            {
+                                std::set<std::string> referencedScripts;
+                                for (const auto& ls : loadedScenes)
+                                {
+                                    for (const auto& sm : ls.data.staticMeshes)
+                                    {
+                                        if (!sm.script.empty())
+                                        {
+                                            std::string fn = std::filesystem::path(sm.script).filename().string();
+                                            referencedScripts.insert(fn);
+                                        }
+                                    }
+                                    for (const auto& nd : ls.data.node3d)
+                                    {
+                                        if (!nd.script.empty())
+                                        {
+                                            std::string fn = std::filesystem::path(nd.script).filename().string();
+                                            referencedScripts.insert(fn);
+                                        }
+                                    }
+                                }
+                                if (!referencedScripts.empty())
+                                {
+                                    std::vector<std::string> filtered;
+                                    for (const auto& src : scriptSourcesForMake)
+                                    {
+                                        std::string fn = std::filesystem::path(src).filename().string();
+                                        if (referencedScripts.count(fn))
+                                            filtered.push_back(src);
+                                    }
+                                    scriptSourcesForMake = filtered;
+                                    // Remove unreferenced script files from build dir
+                                    std::error_code rmEc;
+                                    if (std::filesystem::exists(buildScriptsDir))
+                                    {
+                                        for (const auto& e : std::filesystem::directory_iterator(buildScriptsDir, rmEc))
+                                        {
+                                            if (rmEc) break;
+                                            if (!e.is_regular_file()) continue;
+                                            std::string fn = e.path().filename().string();
+                                            if (!referencedScripts.count(fn))
+                                                std::filesystem::remove(e.path(), rmEc);
+                                        }
                                     }
                                 }
                             }
@@ -12862,6 +13150,73 @@ RenderImGuiOnly:
                                         }
                                         stagedAnimByAbs[key] = outName;
                                         animStageMapEntries.push_back({ key, outName });
+                                    }
+                                }
+                                // Stage navmesh binary — build from all scene meshes and serialize
+                                if (!stagingNameCollision)
+                                {
+                                    // Build navmesh from all meshes in all loaded scenes
+                                    std::vector<float> navVerts;
+                                    std::vector<int>   navTris;
+                                    for (const auto& ls : loadedScenes)
+                                    {
+                                        for (const auto& sm : ls.data.staticMeshes)
+                                        {
+                                            if (sm.mesh.empty()) continue;
+                                            std::ifstream mf(sm.mesh, std::ios::binary);
+                                            if (!mf.is_open()) continue;
+                                            char magic[8] = {};
+                                            mf.read(magic, 7);
+                                            if (std::string(magic) != "NEBMESH") continue;
+                                            uint32_t vc = 0, tc = 0;
+                                            mf.read(reinterpret_cast<char*>(&vc), 4);
+                                            mf.read(reinterpret_cast<char*>(&tc), 4);
+                                            std::vector<float> mv(vc * 3);
+                                            mf.read(reinterpret_cast<char*>(mv.data()), vc * 3 * sizeof(float));
+                                            mf.seekg(vc * 2 * sizeof(float), std::ios::cur);
+                                            std::vector<uint16_t> mi(tc * 3);
+                                            mf.read(reinterpret_cast<char*>(mi.data()), tc * 3 * sizeof(uint16_t));
+
+                                            float sx = sm.scaleX, sy = sm.scaleY, sz = sm.scaleZ;
+                                            float rx = sm.rotX * 3.14159265f / 180.0f;
+                                            float ry = sm.rotY * 3.14159265f / 180.0f;
+                                            float rz = sm.rotZ * 3.14159265f / 180.0f;
+                                            float cx = cosf(rx), snx = sinf(rx);
+                                            float cy = cosf(ry), sny = sinf(ry);
+                                            float cz = cosf(rz), snz = sinf(rz);
+
+                                            int baseV = (int)(navVerts.size() / 3);
+                                            for (uint32_t v = 0; v < vc; ++v)
+                                            {
+                                                float lx = mv[v*3+0]*sx, ly = mv[v*3+1]*sy, lz = mv[v*3+2]*sz;
+                                                float t1x=lx, t1y=ly*cx-lz*snx, t1z=ly*snx+lz*cx;
+                                                float t2x=t1x*cy+t1z*sny, t2y=t1y, t2z=-t1x*sny+t1z*cy;
+                                                float t3x=t2x*cz-t2y*snz, t3y=t2x*snz+t2y*cz, t3z=t2z;
+                                                navVerts.push_back(t3x + sm.x);
+                                                navVerts.push_back(t3y + sm.y);
+                                                navVerts.push_back(t3z + sm.z);
+                                            }
+                                            for (uint32_t t = 0; t < tc * 3; ++t)
+                                                navTris.push_back(baseV + (int)mi[t]);
+                                        }
+                                    }
+                                    if (!navVerts.empty() && !navTris.empty())
+                                    {
+                                        if (NavMeshBuild(navVerts.data(), (int)navVerts.size(), navTris.data(), (int)navTris.size()))
+                                        {
+                                            std::vector<uint8_t> blob;
+                                            if (NavMeshSaveBinary(blob) && !blob.empty())
+                                            {
+                                                std::filesystem::path navOut = cdNavDir / "NAV00001.BIN";
+                                                std::ofstream nf(navOut, std::ios::binary);
+                                                if (nf.is_open())
+                                                {
+                                                    nf.write(reinterpret_cast<const char*>(blob.data()), blob.size());
+                                                    printf("[DreamcastBuild]   staged navmesh: NAV00001.BIN (%d bytes)\n", (int)blob.size());
+                                                }
+                                            }
+                                            NavMeshClear();
+                                        }
                                     }
                                 }
                                 if (!stagingNameCollision)
@@ -13281,6 +13636,7 @@ RenderImGuiOnly:
                                     mc << "static float gMeshRot[3] = {" << fstr(initRotX) << "," << fstr(initRotY) << "," << fstr(initRotZ) << "};\n";
                                     mc << "static float gMeshScale[3] = {" << fstr(initScX) << "," << fstr(initScY) << "," << fstr(initScZ) << "};\n";
                                 }
+                                mc << "static const float kPlayerChildRot[3] = {" << fstr(meshSrc.rotX) << "," << fstr(meshSrc.rotY) << "," << fstr(meshSrc.rotZ) << "};\n";
                                 mc << "static const char kPlayerMeshDisk[] = \"" << runtimeMeshDiskName << "\";\n";
                                 mc << "static int gPlayerMeshIdx = -1;\n";
                                 mc << "void NB_RT_GetMeshPosition(float outPos[3]){ if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
@@ -13348,6 +13704,41 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
+                                mc << "int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY){\n";
+                                mc << "  if(!outHitY) return 0;\n";
+                                mc << "  int hit=0; float bestY=-1e30f;\n";
+                                mc << "  int mc2=NB_DC_GetSceneMeshCount();\n";
+                                mc << "  for(int mi=0;mi<mc2;mi++){\n";
+                                mc << "    const char* mp=NB_DC_GetSceneMeshPathAt(mi);\n";
+                                mc << "    if(!mp||!mp[0]) continue;\n";
+                                mc << "    NB_Mesh m; if(!NB_DC_LoadMesh(mp,&m)){continue;}\n";
+                                mc << "    float sp[3],sr[3],ss[3]; NB_DC_GetSceneTransformAt(mi,sp,sr,ss);\n";
+                                mc << "    for(int t=0;t<m.tri_count;t++){\n";
+                                mc << "      int i0=m.indices[t*3],i1=m.indices[t*3+1],i2=m.indices[t*3+2];\n";
+                                mc << "      float ax=m.pos[i0].x*ss[0]+sp[0], ay=m.pos[i0].y*ss[1]+sp[1], az=m.pos[i0].z*ss[2]+sp[2];\n";
+                                mc << "      float bx=m.pos[i1].x*ss[0]+sp[0], by=m.pos[i1].y*ss[1]+sp[1], bz=m.pos[i1].z*ss[2]+sp[2];\n";
+                                mc << "      float cx=m.pos[i2].x*ss[0]+sp[0], cy=m.pos[i2].y*ss[1]+sp[1], cz=m.pos[i2].z*ss[2]+sp[2];\n";
+                                mc << "      float e1x=bx-ax,e1z=bz-az, e2x=cx-ax,e2z=cz-az;\n";
+                                mc << "      float det=e1x*e2z-e2x*e1z; if(det>-1e-8f&&det<1e-8f) continue;\n";
+                                mc << "      float inv=1.0f/det;\n";
+                                mc << "      float dx=rx-ax, dz=rz-az;\n";
+                                mc << "      float u=(dx*e2z-dz*e2x)*inv; if(u<0.0f||u>1.0f) continue;\n";
+                                mc << "      float v=(e1x*dz-e1z*dx)*inv; if(v<0.0f||u+v>1.0f) continue;\n";
+                                mc << "      float hitY=ay+(by-ay)*u+(cy-ay)*v;\n";
+                                mc << "      if(hitY<=ry&&hitY>bestY){bestY=hitY; hit=1;}\n";
+                                mc << "    }\n";
+                                mc << "    NB_DC_FreeMesh(&m);\n";
+                                mc << "  }\n";
+                                mc << "  if(hit) *outHitY=bestY;\n";
+                                mc << "  return hit;\n";
+                                mc << "}\n";
+                                mc << "static int gNavMeshLoaded = 0;\n";
+                                mc << "int NB_RT_NavMeshBuild(void){ if (!gNavMeshLoaded) { gNavMeshLoaded = NB_DC_LoadNavMesh(\"/cd/data/navmesh/NAV00001.BIN\"); } return gNavMeshLoaded; }\n";
+                                mc << "void NB_RT_NavMeshClear(void){ NB_DC_FreeNavMesh(); gNavMeshLoaded=0; }\n";
+                                mc << "int NB_RT_NavMeshIsReady(void){ return NB_DC_NavMeshIsLoaded(); }\n";
+                                mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ (void)sx; (void)sy; (void)sz; (void)gx; (void)gy; (void)gz; (void)outPath; (void)maxPoints; return 0; }\n";
+                                mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ (void)outPos; return 0; }\n";
+                                mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ (void)px; (void)py; (void)pz; (void)outPos; return 0; }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";
@@ -14046,7 +14437,7 @@ RenderImGuiOnly:
                                 mc << "      float smRot[3] = {sm->rot[0], sm->rot[1], sm->rot[2]};\n";
                                 mc << "      /* Child local rotation (visual offset only, zero for non-player meshes). */\n";
                                 mc << "      float cRx = 0, cRy = 0, cRz = 0;\n";
-                                mc << "      if (mi == gPlayerMeshIdx) { cRx = deg2rad(sm->rot[0]); cRy = deg2rad(sm->rot[1]); cRz = deg2rad(sm->rot[2]); smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
+                                mc << "      if (mi == gPlayerMeshIdx) { cRx = deg2rad(kPlayerChildRot[0]); cRy = deg2rad(kPlayerChildRot[1]); cRz = deg2rad(kPlayerChildRot[2]); smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2]; }\n";
                                 mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
                                 mc << "      /* Player mesh (parented under Node3D) uses identity remap — parent drives rotation. */\n";
                                 mc << "      float rxr = (mi == gPlayerMeshIdx) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
@@ -14206,7 +14597,12 @@ RenderImGuiOnly:
                                     mk << "TARGET = nebula_dreamcast.elf\n";
                                     mk << "NEBULA_DC_BINDINGS ?= " << bindingsPosix << "\n";
                                     mk << "VPATH += $(NEBULA_DC_BINDINGS)\n";
-                                    mk << "SCRIPT_SOURCES = $(wildcard scripts/*.c)\n";
+                                    // Emit explicit script list (only scene-referenced scripts)
+                                    // instead of wildcard to avoid multiple-definition linker errors.
+                                    mk << "SCRIPT_SOURCES =";
+                                    for (const auto& ss : scriptSourcesForMake)
+                                        mk << " " << ss;
+                                    mk << "\n";
                                     mk << "SOURCES = main.c KosBindings.c KosInput.c $(SCRIPT_SOURCES) NebulaGameStub.c\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
@@ -15643,59 +16039,188 @@ RenderImGuiOnly:
             float bestDist = 1e9f; // px
             int bestAudioIndex = -1;
             int bestStaticIndex = -1;
+            int bestCameraIndex = -1;
+            int bestNode3DIndex = -1;
+            int bestNavMeshIndex = -1;
+
+            auto pickNearest = [&](float sx, float sy) -> float {
+                float dx = io.MousePos.x - sx;
+                float dy = io.MousePos.y - sy;
+                return sqrtf(dx*dx + dy*dy);
+            };
+            auto clearBest = [&]() { bestAudioIndex = -1; bestStaticIndex = -1; bestCameraIndex = -1; bestNode3DIndex = -1; bestNavMeshIndex = -1; };
 
             for (int i = 0; i < (int)gAudio3DNodes.size(); ++i)
             {
-                const auto& n = gAudio3DNodes[i];
                 float sx, sy;
-                if (ProjectToScreenGL({ n.x, n.y, n.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                if (ProjectToScreenGL({ gAudio3DNodes[i].x, gAudio3DNodes[i].y, gAudio3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
                 {
-                    float dx = io.MousePos.x - sx;
-                    float dy = io.MousePos.y - sy;
-                    float d = sqrtf(dx*dx + dy*dy);
-                    if (d < bestDist)
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestAudioIndex = i; }
+                }
+            }
+            // StaticMesh3D: test mouse against projected triangles for accurate picking.
+            // Falls back to origin-point distance if mesh data is unavailable.
+            for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
+            {
+                const auto& s = gStaticMeshNodes[i];
+                bool hitMesh = false;
+
+                // Try triangle-based picking if mesh geometry is loaded
+                if (!s.mesh.empty() && !gProjectDir.empty())
+                {
+                    std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
+                    const NebMesh* mesh = GetNebMesh(meshPath);
+                    if (mesh && mesh->valid && !mesh->positions.empty() && mesh->indices.size() >= 3)
                     {
-                        bestDist = d;
-                        bestAudioIndex = i;
-                        bestStaticIndex = -1;
+                        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+                        GetStaticMeshWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+                        // Build rotation matrix (same axis remap as rendering)
+                        bool parentedNode3D = (!s.parent.empty() && FindNode3DByName(s.parent) >= 0);
+                        float arx, ary, arz;
+                        if (parentedNode3D) { arx = wrx; ary = wry; arz = wrz; }
+                        else { arx = wrz; ary = wrx; arz = wry; }
+                        float rrx = arx * 3.14159f / 180.0f, rry = ary * 3.14159f / 180.0f, rrz = arz * 3.14159f / 180.0f;
+                        float cx1 = cosf(rrx), sx1 = sinf(rrx), cy1 = cosf(rry), sy1 = sinf(rry), cz1 = cosf(rrz), sz1 = sinf(rrz);
+
+                        // Child local rotation for parented meshes
+                        float ccx = 1, csx2 = 0, ccy = 1, csy2 = 0, ccz = 1, csz2 = 0;
+                        if (parentedNode3D)
+                        {
+                            float crx = s.rotX * 3.14159f / 180.0f, cry = s.rotY * 3.14159f / 180.0f, crz = s.rotZ * 3.14159f / 180.0f;
+                            ccx = cosf(crx); csx2 = sinf(crx); ccy = cosf(cry); csy2 = sinf(cry); ccz = cosf(crz); csz2 = sinf(crz);
+                        }
+
+                        float scaleX = io.DisplayFramebufferScale.x, scaleY = io.DisplayFramebufferScale.y;
+                        float mx = io.MousePos.x, my = io.MousePos.y;
+
+                        for (size_t idx = 0; idx + 2 < mesh->indices.size(); idx += 3)
+                        {
+                            float svx[3], svy[3];
+                            bool allOk = true;
+                            for (int vi = 0; vi < 3; ++vi)
+                            {
+                                uint16_t ii = mesh->indices[idx + vi];
+                                if (ii >= mesh->positions.size()) { allOk = false; break; }
+                                Vec3 v = mesh->positions[ii];
+                                v.x *= wsx; v.y *= wsy; v.z *= wsz;
+
+                                if (parentedNode3D)
+                                {
+                                    // Child rotation first
+                                    float t;
+                                    t = v.x*ccz - v.y*csz2; v.y = v.x*csz2 + v.y*ccz; v.x = t;
+                                    t = v.x*ccy + v.z*csy2; v.z = -v.x*csy2 + v.z*ccy; v.x = t;
+                                    t = v.y*ccx - v.z*csx2; v.z = v.y*csx2 + v.z*ccx; v.y = t;
+                                }
+
+                                // Parent/standalone rotation
+                                float t;
+                                t = v.x*cz1 - v.y*sz1; v.y = v.x*sz1 + v.y*cz1; v.x = t;
+                                t = v.x*cy1 + v.z*sy1; v.z = -v.x*sy1 + v.z*cy1; v.x = t;
+                                t = v.y*cx1 - v.z*sx1; v.z = v.y*sx1 + v.z*cx1; v.y = t;
+
+                                v.x += wx; v.y += wy; v.z += wz;
+
+                                if (!ProjectToScreenGL(v, svx[vi], svy[vi], scaleX, scaleY))
+                                { allOk = false; break; }
+                            }
+                            if (!allOk) continue;
+
+                            // Point-in-triangle test (2D barycentric)
+                            float d0x = svx[1] - svx[0], d0y = svy[1] - svy[0];
+                            float d1x = svx[2] - svx[0], d1y = svy[2] - svy[0];
+                            float d2x = mx - svx[0], d2y = my - svy[0];
+                            float dot00 = d0x*d0x + d0y*d0y;
+                            float dot01 = d0x*d1x + d0y*d1y;
+                            float dot02 = d0x*d2x + d0y*d2y;
+                            float dot11 = d1x*d1x + d1y*d1y;
+                            float dot12 = d1x*d2x + d1y*d2y;
+                            float invDenom = dot00*dot11 - dot01*dot01;
+                            if (fabsf(invDenom) < 1e-10f) continue;
+                            invDenom = 1.0f / invDenom;
+                            float u = (dot11*dot02 - dot01*dot12) * invDenom;
+                            float v2 = (dot00*dot12 - dot01*dot02) * invDenom;
+                            if (u >= 0.0f && v2 >= 0.0f && (u + v2) <= 1.0f)
+                            {
+                                hitMesh = true;
+                                bestDist = 0.0f;
+                                clearBest();
+                                bestStaticIndex = i;
+                                break;
+                            }
+                        }
                     }
+                }
+
+                // Fallback to origin-point distance if no triangle hit
+                if (!hitMesh)
+                {
+                    float sx, sy;
+                    if (ProjectToScreenGL({ s.x, s.y, s.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                    {
+                        float d = pickNearest(sx, sy);
+                        if (d < bestDist) { bestDist = d; clearBest(); bestStaticIndex = i; }
+                    }
+                }
+            }
+            for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gCamera3DNodes[i].x, gCamera3DNodes[i].y, gCamera3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestCameraIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gNode3DNodes[i].x, gNode3DNodes[i].y, gNode3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestNode3DIndex = i; }
+                }
+            }
+            for (int i = 0; i < (int)gNavMesh3DNodes.size(); ++i)
+            {
+                float sx, sy;
+                if (ProjectToScreenGL({ gNavMesh3DNodes[i].x, gNavMesh3DNodes[i].y, gNavMesh3DNodes[i].z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+                {
+                    float d = pickNearest(sx, sy);
+                    if (d < bestDist) { bestDist = d; clearBest(); bestNavMeshIndex = i; }
                 }
             }
 
-            for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
-            {
-                const auto& n = gStaticMeshNodes[i];
-                float sx, sy;
-                if (ProjectToScreenGL({ n.x, n.y, n.z }, sx, sy, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
-                {
-                    float dx = io.MousePos.x - sx;
-                    float dy = io.MousePos.y - sy;
-                    float d = sqrtf(dx*dx + dy*dy);
-                    if (d < bestDist)
-                    {
-                        bestDist = d;
-                        bestAudioIndex = -1;
-                        bestStaticIndex = i;
-                    }
-                }
-            }
+            auto deselectAll = [&]() {
+                gSelectedAudio3D = -1; gSelectedStaticMesh = -1;
+                gSelectedCamera3D = -1; gSelectedNode3D = -1; gSelectedNavMesh3D = -1;
+            };
 
             if (gTransformMode == Transform_None)
             {
                 int prevAudioSel = gSelectedAudio3D;
                 int prevStaticSel = gSelectedStaticMesh;
+                int prevCameraSel = gSelectedCamera3D;
+                int prevNode3DSel = gSelectedNode3D;
+                int prevNavMeshSel = gSelectedNavMesh3D;
                 if (bestDist < 80.0f)
                 {
                     gSelectedAudio3D = bestAudioIndex;
                     gSelectedStaticMesh = bestStaticIndex;
+                    gSelectedCamera3D = bestCameraIndex;
+                    gSelectedNode3D = bestNode3DIndex;
+                    gSelectedNavMesh3D = bestNavMeshIndex;
                 }
                 else
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                 }
 
-                if (gSelectedAudio3D != prevAudioSel || gSelectedStaticMesh != prevStaticSel)
+                if (gSelectedAudio3D != prevAudioSel || gSelectedStaticMesh != prevStaticSel ||
+                    gSelectedCamera3D != prevCameraSel || gSelectedNode3D != prevNode3DSel ||
+                    gSelectedNavMesh3D != prevNavMeshSel)
                 {
                     gTransforming = false;
                     gTransformMode = Transform_None;
@@ -15708,8 +16233,7 @@ RenderImGuiOnly:
             {
                 if (bestDist >= 80.0f)
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
                     gHasRotatePreview = false;
@@ -15719,8 +16243,7 @@ RenderImGuiOnly:
             {
                 if (bestDist >= 80.0f)
                 {
-                    gSelectedAudio3D = -1;
-                    gSelectedStaticMesh = -1;
+                    deselectAll();
                     gTransformMode = Transform_None;
                     gAxisLock = 0;
                 }
@@ -15945,6 +16468,13 @@ RenderImGuiOnly:
                     strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                     gNodeRenameOpen = true;
                 }
+                if (ImGui::MenuItem("Duplicate"))
+                {
+                    Audio3DNode dup = n;
+                    dup.name = n.name + "_copy";
+                    dup.x += 1.0f;
+                    gAudio3DNodes.push_back(dup);
+                }
                 if (ImGui::MenuItem("Unlink Hierarchy"))
                 {
                     n.parent.clear();
@@ -16075,6 +16605,13 @@ RenderImGuiOnly:
                         gNodeRenameNode3D = false;
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
+                    }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        StaticMesh3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.x += 1.0f;
+                        gStaticMeshNodes.push_back(dup);
                     }
                     if (!n.parent.empty() && ImGui::MenuItem("Unparent"))
                     {
@@ -16246,6 +16783,14 @@ RenderImGuiOnly:
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
                     }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        Camera3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.main = false;
+                        dup.x += 1.0f;
+                        gCamera3DNodes.push_back(dup);
+                    }
                     if (ImGui::MenuItem("Unlink Hierarchy"))
                     {
                         n.parent.clear();
@@ -16387,6 +16932,13 @@ RenderImGuiOnly:
                         strncpy_s(gNodeRenameBuffer, n.name.c_str(), sizeof(gNodeRenameBuffer) - 1);
                         gNodeRenameOpen = true;
                     }
+                    if (ImGui::MenuItem("Duplicate"))
+                    {
+                        Node3DNode dup = n;
+                        dup.name = n.name + "_copy";
+                        dup.x += 1.0f;
+                        gNode3DNodes.push_back(dup);
+                    }
                     if (!n.parent.empty() && ImGui::MenuItem("Unparent"))
                     {
                         n.parent.clear();
@@ -16514,6 +17066,13 @@ RenderImGuiOnly:
             bool requestDelete = false;
             if (ImGui::BeginPopupContextItem("NavMesh3DContext"))
             {
+                if (ImGui::MenuItem("Duplicate"))
+                {
+                    NavMesh3DNode dup = n;
+                    dup.name = n.name + "_copy";
+                    dup.x += 1.0f;
+                    gNavMesh3DNodes.push_back(dup);
+                }
                 if (ImGui::MenuItem("Delete"))
                     requestDelete = true;
                 ImGui::EndPopup();

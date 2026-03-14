@@ -92,6 +92,7 @@ float NB_RT_GetNode3DVelocityY(const char* name);
 void  NB_RT_SetNode3DVelocityY(const char* name, float vy);
 int   NB_RT_IsNode3DOnFloor(const char* name);
 int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
+int   NB_RT_RaycastDown(float x, float y, float z, float* outHitY);
 ```
 
 - **CollisionBounds**: get/set the AABB half-extents (box size) of a Node3D's collision volume.
@@ -100,6 +101,27 @@ int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 - **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
 - **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).
+- **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for slope following and ground snapping.
+
+### NavMesh bridge
+
+```c
+int  NB_RT_NavMeshBuild(void);
+void NB_RT_NavMeshClear(void);
+int  NB_RT_NavMeshIsReady(void);
+int  NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints);
+int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
+int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
+```
+
+- **NavMeshBuild**: builds the navmesh from all StaticMesh3D geometry in the current scene. Returns 1 on success.
+- **NavMeshClear**: frees the current navmesh data.
+- **NavMeshIsReady**: returns 1 if a navmesh has been built and is available for queries.
+- **NavMeshFindPath**: finds a path between two world-space points. Writes up to `maxPoints` waypoints into `outPath` (packed xyz). Returns the number of waypoints, or 0 if no path found.
+- **NavMeshFindRandomPoint**: picks a random navigable point on the navmesh. Returns 1 on success.
+- **NavMeshFindClosestPoint**: projects a world position onto the nearest navmesh surface. Returns 1 on success.
+
+> **Note:** On Dreamcast, navmesh functions are currently stubbed (return 0). The editor-side implementations use Recast/Detour and are fully functional for in-editor script testing.
 
 ### Where `NB_RT_*` is implemented
 
@@ -181,6 +203,22 @@ void        NB_DC_GetSceneTransformAt(int meshIndex, float outPos[3], float outR
 ```
 
 Use `*At` variants for modern multi-StaticMesh scenes.
+
+### NavMesh asset loading
+
+```c
+int         NB_DC_LoadNavMesh(const char* navPath);
+void        NB_DC_FreeNavMesh(void);
+int         NB_DC_NavMeshIsLoaded(void);
+const void* NB_DC_GetNavMeshData(int* outSize);
+```
+
+- **LoadNavMesh**: loads a serialized navmesh binary (`.BIN`) from disc into memory. Returns 1 on success.
+- **FreeNavMesh**: releases the loaded navmesh data.
+- **NavMeshIsLoaded**: returns 1 if navmesh data is currently in memory.
+- **GetNavMeshData**: returns a pointer to the raw navmesh blob and its size. Used by future Detour integration for pathfinding queries on DC.
+
+The editor automatically builds and packages the navmesh binary (`NAV00001.BIN`) into `cd_root/data/navmesh/` during Dreamcast export.
 
 ---
 

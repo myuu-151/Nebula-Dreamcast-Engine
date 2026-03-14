@@ -586,3 +586,69 @@ int __attribute__((weak)) NB_RT_IsCameraUnderNode3D(const char* cameraName, cons
     (void)nodeName;
     return 0;
 }
+
+int __attribute__((weak)) NB_RT_RaycastDown(float x, float y, float z, float* outHitY) {
+    (void)x; (void)y; (void)z; (void)outHitY;
+    return 0;
+}
+
+/* ---- NavMesh DC asset storage ---- */
+
+static uint8_t* gNavMeshData = NULL;
+static int      gNavMeshDataSize = 0;
+
+int NB_DC_LoadNavMesh(const char* navPath) {
+    NB_DC_FreeNavMesh();
+    if (!navPath || !navPath[0]) return 0;
+
+    FILE* f = fopen(navPath, "rb");
+    if (!f) return 0;
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return 0; }
+
+    gNavMeshData = (uint8_t*)malloc((size_t)sz);
+    if (!gNavMeshData) { fclose(f); return 0; }
+
+    if ((long)fread(gNavMeshData, 1, (size_t)sz, f) != sz) {
+        free(gNavMeshData);
+        gNavMeshData = NULL;
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+    gNavMeshDataSize = (int)sz;
+    return 1;
+}
+
+void NB_DC_FreeNavMesh(void) {
+    free(gNavMeshData);
+    gNavMeshData = NULL;
+    gNavMeshDataSize = 0;
+}
+
+int NB_DC_NavMeshIsLoaded(void) {
+    return (gNavMeshData != NULL && gNavMeshDataSize > 0) ? 1 : 0;
+}
+
+const void* NB_DC_GetNavMeshData(int* outSize) {
+    if (outSize) *outSize = gNavMeshDataSize;
+    return gNavMeshData;
+}
+
+/* ---- Weak fallback stubs for NB_RT_NavMesh ---- */
+
+int __attribute__((weak)) NB_RT_NavMeshBuild(void) { return 0; }
+void __attribute__((weak)) NB_RT_NavMeshClear(void) {}
+int __attribute__((weak)) NB_RT_NavMeshIsReady(void) { return 0; }
+int __attribute__((weak)) NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints) {
+    (void)sx; (void)sy; (void)sz; (void)gx; (void)gy; (void)gz; (void)outPath; (void)maxPoints;
+    return 0;
+}
+int __attribute__((weak)) NB_RT_NavMeshFindRandomPoint(float outPos[3]) { (void)outPos; return 0; }
+int __attribute__((weak)) NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]) {
+    (void)px; (void)py; (void)pz; (void)outPos;
+    return 0;
+}

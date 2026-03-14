@@ -19,14 +19,14 @@
 // Recast build parameters — tweak these for your game scale.
 struct NavMeshParams
 {
-    float cellSize          = 0.3f;
-    float cellHeight        = 0.2f;
-    float walkableSlopeDeg  = 55.0f;
+    float cellSize          = 0.15f;
+    float cellHeight        = 0.1f;
+    float walkableSlopeDeg  = 89.0f;  // near-90 = capture all geometry including steep seams
     float walkableHeight    = 2.0f;   // agent height
-    float walkableClimb     = 0.9f;   // max step-up
-    float walkableRadius    = 0.4f;   // agent radius
+    float walkableClimb     = 2.0f;   // high = bridge height gaps at seams between connected surfaces
+    float walkableRadius    = 0.0f;   // zero = navmesh reaches geometry edges; agent radius handled at query time
     float maxEdgeLen        = 12.0f;
-    float maxSimplError     = 1.3f;
+    float maxSimplError     = 0.5f;   // low = preserve detail at edge seams
     int   minRegionArea     = 64;     // rcSqr(8)
     int   mergeRegionArea   = 400;    // rcSqr(20)
     int   maxVertsPerPoly   = 6;

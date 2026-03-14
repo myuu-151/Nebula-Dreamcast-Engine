@@ -1810,7 +1810,9 @@ NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
         return;
     const auto& n = gNode3DNodes[idx];
     outRot[0] = n.rotX;
-    outRot[1] = n.rotY;
+    // Return the base yaw (what the script last set), not the slope-decomposed rotY,
+    // so scripts don't feed slope alignment's rotY changes back into their yaw logic.
+    outRot[1] = (idx < (int)gNode3DBaseYaw.size()) ? gNode3DBaseYaw[idx] : n.rotY;
     outRot[2] = n.rotZ;
 }
 

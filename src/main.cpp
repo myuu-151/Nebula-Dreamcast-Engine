@@ -9788,10 +9788,10 @@ int main(int, char**)
                         if (pfLen < 0.001f) { pfx = flatFwdX; pfy = 0.0f; pfz = flatFwdZ; pfLen = 1.0f; }
                         { float inv = 1.0f / pfLen; pfx *= inv; pfy *= inv; pfz *= inv; }
 
-                        // Right = cross(forward, normal)
-                        float rrx = pfy * nz - pfz * ny;
-                        float rry = pfz * nx - pfx * nz;
-                        float rrz = pfx * ny - pfy * nx;
+                        // Right = cross(normal, forward)
+                        float rrx = ny * pfz - nz * pfy;
+                        float rry = nz * pfx - nx * pfz;
+                        float rrz = nx * pfy - ny * pfx;
                         float rrLen = sqrtf(rrx * rrx + rry * rry + rrz * rrz);
                         if (rrLen > 0.001f) { float inv = 1.0f / rrLen; rrx *= inv; rry *= inv; rrz *= inv; }
 

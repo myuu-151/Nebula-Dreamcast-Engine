@@ -9766,27 +9766,19 @@ int main(int, char**)
                         }
                     }
 
-                    // Snap pitch/roll to surface normal, preserving yaw exactly.
-                    // Project normal onto character's local forward/right axes
-                    // to get independent tilt angles — no Euler decomposition needed.
+                    // Snap pitch/roll to surface normal in world space.
+                    // Tilt direction is the same on the same slope regardless of
+                    // which way the character faces — no yaw dependency.
                     {
-                        const float kPI = 3.14159265f;
-                        const float kDeg = 180.0f / kPI;
+                        const float kDeg = 180.0f / 3.14159265f;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
                         float savedYaw = n3.rotY;
-                        float yawRad = savedYaw * kPI / 180.0f;
-                        float sy = sinf(yawRad), cy = cosf(yawRad);
 
                         // Only snap to floor-like surfaces (< ~60° from horizontal).
-                        // Steeper faces are walls/edges — keep upright on those.
                         if (ny > 0.5f)
                         {
-                            // Normal projected onto character's forward and right directions
-                            float nFwd = nx * sy + nz * cy;   // dot(normal, forward)
-                            float nRgt = nx * cy - nz * sy;   // dot(normal, right)
-
-                            n3.rotX = atan2f(nFwd, ny) * kDeg;
-                            n3.rotZ = atan2f(-nRgt, ny) * kDeg;
+                            n3.rotX = atan2f(nz, ny) * kDeg;
+                            n3.rotZ = atan2f(-nx, ny) * kDeg;
                         }
                         else
                         {

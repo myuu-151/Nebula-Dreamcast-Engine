@@ -275,8 +275,6 @@ static bool gEditorScriptActive = false;
 static bool gEditorScriptStarted = false;
 // Tracks which Node3Ds had their position set by a script this frame (skip editor AABB physics for those)
 static std::vector<bool> gNode3DScriptManaged;
-// Stores the intended yaw for each Node3D so slope alignment doesn't feed back into itself
-static std::vector<float> gNode3DBaseYaw;
 static double gEditorScriptNextTickLog = 0.0;
 // Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
 static bool useScriptController = true;
@@ -893,13 +891,6 @@ static void TickPlayScriptRuntime(float dt, double now)
 
     // Clear per-frame script-managed flags before script runs
     gNode3DScriptManaged.assign(gNode3DNodes.size(), false);
-    // Initialize base yaw on first tick or when node count changes
-    if (gNode3DBaseYaw.size() != gNode3DNodes.size())
-    {
-        gNode3DBaseYaw.resize(gNode3DNodes.size());
-        for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
-            gNode3DBaseYaw[i] = gNode3DNodes[i].rotY;
-    }
 
     gEditorScriptOnUpdate(dt);
     if (now >= gEditorScriptNextTickLog)
@@ -1810,9 +1801,7 @@ NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
         return;
     const auto& n = gNode3DNodes[idx];
     outRot[0] = n.rotX;
-    // Return the base yaw (what the script last set), not the slope-decomposed rotY,
-    // so scripts don't feed slope alignment's rotY changes back into their yaw logic.
-    outRot[1] = (idx < (int)gNode3DBaseYaw.size()) ? gNode3DBaseYaw[idx] : n.rotY;
+    outRot[1] = n.rotY;
     outRot[2] = n.rotZ;
 }
 
@@ -1827,7 +1816,6 @@ NB_RT_EXPORT void NB_RT_SetNode3DRotation(const char* name, float x, float y, fl
     n.rotX = x;
     n.rotY = y;
     n.rotZ = z;
-    if (idx < (int)gNode3DBaseYaw.size()) gNode3DBaseYaw[idx] = y;
 }
 
 NB_RT_EXPORT void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3])
@@ -9778,64 +9766,31 @@ int main(int, char**)
                         }
                     }
 
-                    // Snap to surface normal via frame construction.
-                    // Build orthonormal frame: up = normal, forward = yaw projected onto surface.
-                    // Decompose to Euler angles (R = Rz * Ry * Rx).
+                    // Snap pitch/roll to surface normal, preserving yaw exactly.
+                    // Project normal onto character's local forward/right axes
+                    // to get independent tilt angles — no Euler decomposition needed.
                     {
                         const float kPI = 3.14159265f;
                         const float kDeg = 180.0f / kPI;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
+                        float savedYaw = n3.rotY;
+                        float yawRad = savedYaw * kPI / 180.0f;
+                        float sy = sinf(yawRad), cy = cosf(yawRad);
 
-                        // Use the stored base yaw (set by script / editor, never by slope alignment)
-                        float baseYaw = (ni < (int)gNode3DBaseYaw.size()) ? gNode3DBaseYaw[ni] : n3.rotY;
-                        float yawRad = baseYaw * kPI / 180.0f;
-                        float yawDirX = sinf(yawRad);
-                        float yawDirZ = cosf(yawRad);
+                        // Normal projected onto character's forward and right directions
+                        float nFwd = nx * sy + nz * cy;   // dot(normal, forward)
+                        float nRgt = nx * cy - nz * sy;   // dot(normal, right)
 
-                        // right = normalize(cross(up, yawDir))
-                        // up = (nx, ny, nz), yawDir = (yawDirX, 0, yawDirZ)
-                        float rx = ny * yawDirZ;
-                        float ry = nz * yawDirX - nx * yawDirZ;
-                        float rz = -ny * yawDirX;
-                        float rLen = sqrtf(rx * rx + ry * ry + rz * rz);
-
-                        if (rLen > 0.001f)
-                        {
-                            rx /= rLen; ry /= rLen; rz /= rLen;
-
-                            // forward = cross(right, up)
-                            float fx = ry * nz - rz * ny;
-                            float fy = rz * nx - rx * nz;
-                            float fz = rx * ny - ry * nx;
-
-                            // Rotation matrix columns: right=(rx,ry,rz), up=(nx,ny,nz), forward=(fx,fy,fz)
-                            // m00=rx  m01=nx  m02=fx
-                            // m10=ry  m11=ny  m12=fy
-                            // m20=rz  m21=nz  m22=fz
-                            // Decompose: m20 = -sin(rotY), rotX = atan2(m21,m22), rotZ = atan2(m10,m00)
-                            float m20 = rz;
-                            if (m20 > 1.0f) m20 = 1.0f;
-                            if (m20 < -1.0f) m20 = -1.0f;
-                            n3.rotY = asinf(-m20) * kDeg;
-                            n3.rotX = atan2f(nz, fz) * kDeg;
-                            n3.rotZ = atan2f(ry, rx) * kDeg;
-                        }
-                        else
-                        {
-                            // Degenerate: normal is parallel to yaw direction (very steep / vertical)
-                            n3.rotX = 0.0f;
-                            n3.rotZ = 0.0f;
-                            n3.rotY = baseYaw;
-                        }
+                        n3.rotX = atan2f(nFwd, ny) * kDeg;
+                        n3.rotZ = atan2f(-nRgt, ny) * kDeg;
+                        n3.rotY = savedYaw;
                     }
                 }
                 else if (!scriptManaged)
                 {
                     // No ground hit — snap to upright
-                    float baseYaw = (ni < (int)gNode3DBaseYaw.size()) ? gNode3DBaseYaw[ni] : n3.rotY;
                     n3.rotX = 0.0f;
                     n3.rotZ = 0.0f;
-                    n3.rotY = baseYaw;
                 }
             }
         }

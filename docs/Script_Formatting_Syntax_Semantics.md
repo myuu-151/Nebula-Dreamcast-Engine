@@ -89,7 +89,6 @@ if (GetAsyncKeyState('W') & 0x8000) { /* pressed */ }
 Use `KosInput` wrappers (recommended), not raw Maple bit logic:
 
 ```c
-NB_KOS_PollInput();
 if (NB_KOS_HasController()) {
     if (NB_KOS_ButtonDown(NB_BTN_DPAD_UP)) { /* pressed */ }
     float ax = NB_KOS_GetStickX();
@@ -98,6 +97,22 @@ if (NB_KOS_HasController()) {
 ```
 
 Why: wrappers normalize button semantics and avoid active-low/raw-state mistakes.
+
+> **Note:** `NB_KOS_PollInput()` is called once per frame by the DC runtime before `NB_Game_OnUpdate(dt)`. Scripts do **not** need to call it themselves — just use the query functions (`NB_KOS_HasController`, `NB_KOS_GetStickX`, `NB_KOS_ButtonDown`, etc.) directly.
+
+### Platform guard and `__DREAMCAST__`
+
+The generated Dreamcast Makefile defines `-D__DREAMCAST__` in CFLAGS. Scripts should use this to guard platform-specific input:
+
+```c
+#if defined(__DREAMCAST__)
+    // DC input: NB_KOS_HasController(), NB_KOS_GetStickX(), etc.
+#elif defined(_WIN32)
+    // Editor input: GetAsyncKeyState(), etc.
+#endif
+```
+
+**Important:** The DC cross-compiler (`sh-elf-gcc`) does not define `_WIN32` or `__DREAMCAST__` on its own — the engine's generated Makefile provides `-D__DREAMCAST__`. If neither macro is defined, both input blocks are skipped and the script receives zero input every frame (compiles without errors but produces no movement). This is the most common cause of "script works in editor but does nothing on hardware."
 
 ---
 
@@ -147,6 +162,7 @@ Why: wrappers normalize button semantics and avoid active-low/raw-state mistakes
   - Input read path wrong for target platform
 
 - **Works in editor, fails on Dreamcast**:
+  - `__DREAMCAST__` not defined — DC input block skipped silently (most common cause)
   - Windows-only input path accidentally used
   - Build is compiling stale script copy
   - Dreamcast Makefile not including script file(s)
@@ -166,7 +182,6 @@ NB_SCRIPT_EXPORT void NB_Game_OnUpdate(float dt)
     if (GetAsyncKeyState('A') & 0x8000) inX -= 1.0f;
     if (GetAsyncKeyState('D') & 0x8000) inX += 1.0f;
 #elif defined(__DREAMCAST__)
-    NB_KOS_PollInput();
     if (NB_KOS_HasController()) {
         if (NB_KOS_ButtonDown(NB_BTN_DPAD_LEFT))  inX -= 1.0f;
         if (NB_KOS_ButtonDown(NB_BTN_DPAD_RIGHT)) inX += 1.0f;
@@ -195,7 +210,8 @@ If multiple `.c` scripts are auto-compiled in one build:
 
 - [ ] Hook functions exported with `NB_SCRIPT_EXPORT`
 - [ ] Node names match scene exactly
-- [ ] Dreamcast path uses `NB_KOS_*` wrappers
+- [ ] Dreamcast path uses `NB_KOS_*` wrappers inside `#if defined(__DREAMCAST__)`
+- [ ] Generated Makefile includes `-D__DREAMCAST__` in CFLAGS
 - [ ] Script file included in Dreamcast `SOURCES`
 - [ ] Build uses updated script copy (not stale staged copy)
 - [ ] Runtime logging confirms `OnStart` and `OnUpdate` are executing

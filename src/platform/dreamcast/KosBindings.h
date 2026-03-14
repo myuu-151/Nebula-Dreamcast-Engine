@@ -90,6 +90,7 @@ void NB_RT_SetNode3DVelocityY(const char* name, float vy);
 int NB_RT_IsNode3DOnFloor(const char* name);
 int NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 int NB_RT_RaycastDown(float x, float y, float z, float* outHitY);
+int NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]);
 
 // NavMesh bridge
 int  NB_RT_NavMeshBuild(void);

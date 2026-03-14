@@ -592,6 +592,11 @@ int __attribute__((weak)) NB_RT_RaycastDown(float x, float y, float z, float* ou
     return 0;
 }
 
+int __attribute__((weak)) NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]) {
+    (void)x; (void)y; (void)z; (void)outHitY; (void)outNormal;
+    return 0;
+}
+
 /* ---- NavMesh DC asset storage ---- */
 
 static uint8_t* gNavMeshData = NULL;

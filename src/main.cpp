@@ -273,6 +273,8 @@ static HMODULE gEditorScriptModule = nullptr;
 static std::string gEditorScriptPath;
 static bool gEditorScriptActive = false;
 static bool gEditorScriptStarted = false;
+// Tracks which Node3Ds had their position set by a script this frame (skip editor AABB physics for those)
+static std::vector<bool> gNode3DScriptManaged;
 static double gEditorScriptNextTickLog = 0.0;
 // Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
 static bool useScriptController = true;
@@ -619,6 +621,7 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
     out << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ typedef int(*Fn)(const char*, const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_CheckAABBOverlap\"); return fn ? fn(name1,name2) : 0; }\n";
     out << "int NB_RT_RaycastDown(float x, float y, float z, float* outHitY){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_RaycastDown\"); return fn ? fn(x,y,z,outHitY) : 0; }\n";
+    out << "int NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]){ typedef int(*Fn)(float,float,float,float*,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_RaycastDownWithNormal\"); return fn ? fn(x,y,z,outHitY,outNormal) : 0; }\n";
     out << "int NB_RT_NavMeshBuild(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshBuild\"); return fn ? fn() : 0; }\n";
     out << "void NB_RT_NavMeshClear(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshClear\"); if(fn) fn(); }\n";
     out << "int NB_RT_NavMeshIsReady(void){ typedef int(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshIsReady\"); return fn ? fn() : 0; }\n";
@@ -885,6 +888,9 @@ static void TickPlayScriptRuntime(float dt, double now)
 {
     if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnUpdate || !useScriptController)
         return;
+
+    // Clear per-frame script-managed flags before script runs
+    gNode3DScriptManaged.assign(gNode3DNodes.size(), false);
 
     gEditorScriptOnUpdate(dt);
     if (now >= gEditorScriptNextTickLog)
@@ -1780,6 +1786,7 @@ NB_RT_EXPORT void NB_RT_SetNode3DPosition(const char* name, float x, float y, fl
     n.x = x;
     n.y = y;
     n.z = z;
+    if (idx < (int)gNode3DScriptManaged.size()) gNode3DScriptManaged[idx] = true;
 }
 
 NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
@@ -6196,6 +6203,91 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
     return hit;
 }
 
+// NB_RT_RaycastDownWithNormal — same as RaycastDown but also returns the
+// surface normal of the hit triangle so scripts can align to slopes.
+// ---------------------------------------------------------------------------
+NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float* outHitY, float outNormal[3])
+{
+    if (!outHitY) return 0;
+    int hit = 0;
+    float bestY = -1e30f;
+    float bestNx = 0.0f, bestNy = 1.0f, bestNz = 0.0f;
+    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+    {
+        const auto& s = gStaticMeshNodes[si];
+        if (s.mesh.empty() || gProjectDir.empty()) continue;
+        if (!s.collisionSource) continue;
+
+        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
+        const NebMesh* mesh = GetNebMesh(meshPath);
+        if (!mesh || !mesh->valid || mesh->positions.empty() || mesh->indices.empty()) continue;
+
+        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+        GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+        Vec3 right, up, forward;
+        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+
+        for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
+        {
+            const auto& p0 = mesh->positions[mesh->indices[t]];
+            const auto& p1 = mesh->positions[mesh->indices[t + 1]];
+            const auto& p2 = mesh->positions[mesh->indices[t + 2]];
+            float s0x = p0.x * wsx, s0y = p0.y * wsy, s0z = p0.z * wsz;
+            float s1x = p1.x * wsx, s1y = p1.y * wsy, s1z = p1.z * wsz;
+            float s2x = p2.x * wsx, s2y = p2.y * wsy, s2z = p2.z * wsz;
+            float ax = wx + right.x * s0x + up.x * s0y + forward.x * s0z;
+            float ay = wy + right.y * s0x + up.y * s0y + forward.y * s0z;
+            float az = wz + right.z * s0x + up.z * s0y + forward.z * s0z;
+            float bx = wx + right.x * s1x + up.x * s1y + forward.x * s1z;
+            float by = wy + right.y * s1x + up.y * s1y + forward.y * s1z;
+            float bz = wz + right.z * s1x + up.z * s1y + forward.z * s1z;
+            float cx = wx + right.x * s2x + up.x * s2y + forward.x * s2z;
+            float cy = wy + right.y * s2x + up.y * s2y + forward.y * s2z;
+            float cz = wz + right.z * s2x + up.z * s2y + forward.z * s2z;
+
+            float e1x = bx - ax, e1z = bz - az;
+            float e2x = cx - ax, e2z = cz - az;
+            float det = e1x * e2z - e2x * e1z;
+            if (det > -1e-8f && det < 1e-8f) continue;
+            float inv = 1.0f / det;
+            float dx = rx - ax, dz = rz - az;
+            float u = (dx * e2z - dz * e2x) * inv;
+            if (u < 0.0f || u > 1.0f) continue;
+            float v = (e1x * dz - e1z * dx) * inv;
+            if (v < 0.0f || u + v > 1.0f) continue;
+            float hitY = ay + (by - ay) * u + (cy - ay) * v;
+            if (hitY <= ry && hitY > bestY)
+            {
+                bestY = hitY;
+                hit = 1;
+                // Compute face normal via cross product of triangle edges
+                float ex1 = bx - ax, ey1 = by - ay, ez1 = bz - az;
+                float ex2 = cx - ax, ey2 = cy - ay, ez2 = cz - az;
+                float nx = ey1 * ez2 - ez1 * ey2;
+                float ny = ez1 * ex2 - ex1 * ez2;
+                float nz = ex1 * ey2 - ey1 * ex2;
+                float nLen = sqrtf(nx * nx + ny * ny + nz * nz);
+                if (nLen > 1e-8f)
+                {
+                    float nInv = 1.0f / nLen;
+                    bestNx = nx * nInv;
+                    bestNy = ny * nInv;
+                    bestNz = nz * nInv;
+                    // Ensure normal points upward
+                    if (bestNy < 0.0f) { bestNx = -bestNx; bestNy = -bestNy; bestNz = -bestNz; }
+                }
+            }
+        }
+    }
+    if (hit)
+    {
+        *outHitY = bestY;
+        if (outNormal) { outNormal[0] = bestNx; outNormal[1] = bestNy; outNormal[2] = bestNz; }
+    }
+    return hit;
+}
+
 static std::filesystem::path ResolveProjectAssetPath(const std::string& relOrAbs)
 {
     if (relOrAbs.empty()) return {};
@@ -9637,118 +9729,46 @@ int main(int, char**)
 
         // Debug overlay/HUD moved below once viewport layout is known.
 
-        // Quick Node3D gravity + floor-plane collision test in play mode.
-        // Collision is edge/bounds-based (quad perimeter/AABB), ignores mesh subdivision.
+        // Node3D gravity + per-triangle ground collision in play mode.
         if (gPlayMode)
         {
-            struct FloorCollider
-            {
-                float minX, maxX;
-                float minZ, maxZ;
-                float y;
-                int ownerNode3D = -1;
-            };
-            std::vector<FloorCollider> floorColliders;
-
-            for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
-            {
-                const auto& s = gStaticMeshNodes[si];
-                if (s.mesh.empty() || gProjectDir.empty()) continue;
-
-                if (!s.collisionSource) continue;
-
-                std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
-                const NebMesh* mesh = GetNebMesh(meshPath);
-                if (!mesh || !mesh->valid || mesh->positions.empty()) continue;
-
-                float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
-                GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
-
-                float minX = 1e30f, maxX = -1e30f;
-                float minZ = 1e30f, maxZ = -1e30f;
-                float topY = -1e30f;
-                for (const auto& v : mesh->positions)
-                {
-                    // Edge/bounds-only collision approximation (no per-triangle subdivision tests)
-                    float px = wx + v.x * wsx;
-                    float py = wy + v.y * wsy;
-                    float pz = wz + v.z * wsz;
-                    if (px < minX) minX = px;
-                    if (px > maxX) maxX = px;
-                    if (pz < minZ) minZ = pz;
-                    if (pz > maxZ) maxZ = pz;
-                    if (py > topY) topY = py;
-                }
-
-                if (minX <= maxX && minZ <= maxZ)
-                    floorColliders.push_back({ minX, maxX, minZ, maxZ, topY, -1 });
-            }
-
-            for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
-            {
-                const auto& s = gNode3DNodes[ni];
-                if (!s.collisionSource) continue;
-
-                float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
-                GetNode3DWorldTRS(ni, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
-
-                // Local bounds center offset, rotated by world orientation, independent from hierarchy transforms.
-                Vec3 right{}, up{}, forward{};
-                GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
-                wx += right.x * s.boundPosX + up.x * s.boundPosY + forward.x * s.boundPosZ;
-                wy += right.y * s.boundPosX + up.y * s.boundPosY + forward.y * s.boundPosZ;
-                wz += right.z * s.boundPosX + up.z * s.boundPosY + forward.z * s.boundPosZ;
-
-                const float hx = std::max(0.0f, s.extentX * wsx);
-                const float hy = std::max(0.0f, s.extentY * wsy);
-                const float hz = std::max(0.0f, s.extentZ * wsz);
-
-                float minX = wx - hx, maxX = wx + hx;
-                float minZ = wz - hz, maxZ = wz + hz;
-                float topY = wy + hy;
-
-                if (minX <= maxX && minZ <= maxZ)
-                    floorColliders.push_back({ minX, maxX, minZ, maxZ, topY, ni });
-            }
-
-            const float gravity = -29.4f; // snappy arcade fall
+            const float gravity = -29.4f;
             const float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
             for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
-                float preGravY = n3.y;
+                // Skip nodes whose position was set by a script this frame
+                if (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]) continue;
+
                 n3.velY += gravity * dt;
                 n3.y += n3.velY * dt;
 
-                // Compute physics node's collision box in world space
+                // Raycast down from node's bound center to find ground
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
-                Vec3 pRight{}, pUp{}, pForward{};
-                GetLocalAxesFromEuler(pwrx, pwry, pwrz, pRight, pUp, pForward);
-                float cx = pwx + pRight.x * n3.boundPosX + pUp.x * n3.boundPosY + pForward.x * n3.boundPosZ;
-                float cy = pwy + pRight.y * n3.boundPosX + pUp.y * n3.boundPosY + pForward.y * n3.boundPosZ;
-                float cz = pwz + pRight.z * n3.boundPosX + pUp.z * n3.boundPosY + pForward.z * n3.boundPosZ;
-                const float phx = std::max(0.0f, n3.extentX * pwsx);
-                const float phy = std::max(0.0f, n3.extentY * pwsy);
-                const float phz = std::max(0.0f, n3.extentZ * pwsz);
-                // Pre-gravity collision center Y (gravity only changes n3.y which flows into pwy/cy)
-                float gravDelta = n3.y - preGravY;
-                float prevBottomY = (cy - gravDelta) - phy;
-
-                for (const auto& fc : floorColliders)
+                float hy = std::max(0.0f, n3.extentY * pwsy);
+                float castY = pwy + n3.boundPosY;
+                float hitY = 0.0f;
+                float hitNormal[3] = {0.0f, 1.0f, 0.0f};
+                if (NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal))
                 {
-                    if (fc.ownerNode3D == ni) continue; // ignore self-collision source
-                    // AABB overlap test using physics node's bounds
-                    if (cx + phx >= fc.minX && cx - phx <= fc.maxX && cz + phz >= fc.minZ && cz - phz <= fc.maxZ)
+                    float feetY = pwy + n3.boundPosY - hy;
+                    float groundY = hitY - n3.boundPosY + hy;
+                    if (n3.y <= groundY)
                     {
-                        // Floor response: only land on surfaces that were below feet before gravity
-                        float bottomY = cy - phy;
-                        if (bottomY < fc.y && fc.y <= prevBottomY + 0.05f)
-                        {
-                            n3.y += (fc.y - bottomY);
-                            if (n3.velY < 0.0f) n3.velY = 0.0f;
-                        }
+                        n3.y = groundY;
+                        if (n3.velY < 0.0f) n3.velY = 0.0f;
+
+                        // Align rotation to surface normal
+                        float ny = hitNormal[1];
+                        if (ny < 0.01f) ny = 0.01f;
+                        float yawRad = n3.rotY * 3.14159f / 180.0f;
+                        float sYaw = sinf(yawRad), cYaw = cosf(yawRad);
+                        float nFwd = hitNormal[0] * sYaw + hitNormal[2] * cYaw;
+                        float nRgt = hitNormal[0] * cYaw - hitNormal[2] * sYaw;
+                        n3.rotX = atan2f(nFwd, ny) * 180.0f / 3.14159f;
+                        n3.rotZ = -atan2f(nRgt, ny) * 180.0f / 3.14159f;
                     }
                 }
             }
@@ -14139,6 +14159,36 @@ RenderImGuiOnly:
                                 mc << "    }\n";
                                 mc << "  }\n";
                                 mc << "  if(hit) *outHitY=bestY;\n";
+                                mc << "  return hit;\n";
+                                mc << "}\n";
+                                mc << "int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float* outHitY, float outNormal[3]){\n";
+                                mc << "  if(!outHitY) return 0;\n";
+                                mc << "  if(!gCollCacheReady) NB_RT_BuildCollCache();\n";
+                                mc << "  int hit=0; float bestY=-1e30f; float bnx=0,bny=1,bnz=0;\n";
+                                mc << "  for(int ci=0;ci<gCollCacheCount;ci++){\n";
+                                mc << "    CollMeshCache* c=&gCollCache[ci];\n";
+                                mc << "    for(int t=0;t<c->tc;t++){\n";
+                                mc << "      int i0=c->idx[t*3],i1=c->idx[t*3+1],i2=c->idx[t*3+2];\n";
+                                mc << "      float ax=c->pos[i0].x*c->ss[0]+c->sp[0], ay=c->pos[i0].y*c->ss[1]+c->sp[1], az=c->pos[i0].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float bx=c->pos[i1].x*c->ss[0]+c->sp[0], by=c->pos[i1].y*c->ss[1]+c->sp[1], bz=c->pos[i1].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float cx=c->pos[i2].x*c->ss[0]+c->sp[0], cy=c->pos[i2].y*c->ss[1]+c->sp[1], cz=c->pos[i2].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float e1x=bx-ax,e1z=bz-az, e2x=cx-ax,e2z=cz-az;\n";
+                                mc << "      float det=e1x*e2z-e2x*e1z; if(det>-1e-8f&&det<1e-8f) continue;\n";
+                                mc << "      float inv=1.0f/det;\n";
+                                mc << "      float dx=rx-ax, dz=rz-az;\n";
+                                mc << "      float u=(dx*e2z-dz*e2x)*inv; if(u<0.0f||u>1.0f) continue;\n";
+                                mc << "      float v=(e1x*dz-e1z*dx)*inv; if(v<0.0f||u+v>1.0f) continue;\n";
+                                mc << "      float hitY=ay+(by-ay)*u+(cy-ay)*v;\n";
+                                mc << "      if(hitY<=ry&&hitY>bestY){\n";
+                                mc << "        bestY=hitY; hit=1;\n";
+                                mc << "        float ex1=bx-ax,ey1=by-ay,ez1=bz-az, ex2=cx-ax,ey2=cy-ay,ez2=cz-az;\n";
+                                mc << "        float nx=ey1*ez2-ez1*ey2, ny=ez1*ex2-ex1*ez2, nz=ex1*ey2-ey1*ex2;\n";
+                                mc << "        float nl=sqrtf(nx*nx+ny*ny+nz*nz);\n";
+                                mc << "        if(nl>1e-8f){ float ni=1.0f/nl; bnx=nx*ni; bny=ny*ni; bnz=nz*ni; if(bny<0){bnx=-bnx;bny=-bny;bnz=-bnz;} }\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
+                                mc << "  if(hit){ *outHitY=bestY; if(outNormal){outNormal[0]=bnx;outNormal[1]=bny;outNormal[2]=bnz;} }\n";
                                 mc << "  return hit;\n";
                                 mc << "}\n";
                                 mc << "\n";

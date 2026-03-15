@@ -9783,27 +9783,31 @@ int main(int, char**)
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
                         float savedYaw = n3.rotY;
 
+                        float targetRotX, targetRotZ;
                         if (ny > 0.9f)
                         {
-                            n3.rotX = atan2f(nz, ny) * kDeg;
-                            // Flip side tilt with facing direction so it
-                            // stays correct when the character turns around
+                            targetRotX = atan2f(nz, ny) * kDeg;
                             float cy = cosf(savedYaw * (3.14159265f / 180.0f));
-                            n3.rotZ = atan2f(-nx * cy, ny) * kDeg;
+                            targetRotZ = atan2f(-nx * cy, ny) * kDeg;
                         }
                         else
                         {
-                            n3.rotX = 0.0f;
-                            n3.rotZ = 0.0f;
+                            targetRotX = 0.0f;
+                            targetRotZ = 0.0f;
                         }
+                        // Smooth interpolation toward target orientation
+                        float t = 1.0f - powf(0.0001f, dt);
+                        n3.rotX += (targetRotX - n3.rotX) * t;
+                        n3.rotZ += (targetRotZ - n3.rotZ) * t;
                         n3.rotY = savedYaw;
                     }
                 }
                 else if (!scriptManaged)
                 {
-                    // No ground hit — snap to upright
-                    n3.rotX = 0.0f;
-                    n3.rotZ = 0.0f;
+                    // No ground hit — smooth back to upright
+                    float t = 1.0f - powf(0.0001f, dt);
+                    n3.rotX += (0.0f - n3.rotX) * t;
+                    n3.rotZ += (0.0f - n3.rotZ) * t;
                 }
             }
         }
@@ -18649,14 +18653,11 @@ RenderImGuiOnly:
                 if (shadingMode == 1)
                 {
                     float lightRot = LoadMaterialLightRotation(gMaterialInspectorPath);
-                    if (ImGui::DragFloat("Light Rotation", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                    if (ImGui::DragFloat("Light X", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
                         SaveMaterialLightRotation(gMaterialInspectorPath, lightRot);
                     float lightPit = LoadMaterialLightPitch(gMaterialInspectorPath);
-                    if (ImGui::DragFloat("Light Pitch", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                    if (ImGui::DragFloat("Light Y", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
                         SaveMaterialLightPitch(gMaterialInspectorPath, lightPit);
-                    float lightRol = LoadMaterialLightRoll(gMaterialInspectorPath);
-                    if (ImGui::DragFloat("Light Roll", &lightRol, 1.0f, -360.0f, 360.0f, "%.0f deg"))
-                        SaveMaterialLightRoll(gMaterialInspectorPath, lightRol);
                     float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath);
                     if (ImGui::SliderFloat("Shadow Intensity", &shadInt, 0.0f, 1.0f, "%.2f"))
                         SaveMaterialShadowIntensity(gMaterialInspectorPath, shadInt);
@@ -18796,14 +18797,11 @@ RenderImGuiOnly:
                 if (shadingMode == 1)
                 {
                     float lightRot = LoadMaterialLightRotation(gMaterialInspectorPath2);
-                    if (ImGui::DragFloat("Light Rotation##B", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                    if (ImGui::DragFloat("Light X##B", &lightRot, 1.0f, -360.0f, 360.0f, "%.0f deg"))
                         SaveMaterialLightRotation(gMaterialInspectorPath2, lightRot);
                     float lightPit = LoadMaterialLightPitch(gMaterialInspectorPath2);
-                    if (ImGui::DragFloat("Light Pitch##B", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
+                    if (ImGui::DragFloat("Light Y##B", &lightPit, 1.0f, -360.0f, 360.0f, "%.0f deg"))
                         SaveMaterialLightPitch(gMaterialInspectorPath2, lightPit);
-                    float lightRol = LoadMaterialLightRoll(gMaterialInspectorPath2);
-                    if (ImGui::DragFloat("Light Roll##B", &lightRol, 1.0f, -360.0f, 360.0f, "%.0f deg"))
-                        SaveMaterialLightRoll(gMaterialInspectorPath2, lightRol);
                     float shadInt = LoadMaterialShadowIntensity(gMaterialInspectorPath2);
                     if (ImGui::SliderFloat("Shadow Intensity##B", &shadInt, 0.0f, 1.0f, "%.2f"))
                         SaveMaterialShadowIntensity(gMaterialInspectorPath2, shadInt);

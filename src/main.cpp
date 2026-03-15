@@ -6204,7 +6204,7 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
                 if (nLen > 1e-8f)
                 {
                     fny = (fny < 0.0f) ? -fny : fny;
-                    if (fny / nLen < 0.7f) continue;
+                    if (fny / nLen < 0.9f) continue;
                 }
                 bestY = hitY;
                 hit = 1;
@@ -6284,7 +6284,7 @@ NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float
                     fnx *= nInv; fny *= nInv; fnz *= nInv;
                     if (fny < 0.0f) { fnx = -fnx; fny = -fny; fnz = -fnz; }
                     // Skip wall-like triangles — only accept floor surfaces
-                    if (fny < 0.7f) continue;
+                    if (fny < 0.9f) continue;
                     bestY = hitY;
                     hit = 1;
                     bestNx = fnx; bestNy = fny; bestNz = fnz;
@@ -9759,7 +9759,7 @@ int main(int, char**)
                     n3.y += n3.velY * dt;
                 }
 
-                // Slope alignment: always raycast and align rotation for ALL physics nodes
+                // Slope alignment: snap to face normal.
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
                 float hy = std::max(0.0f, n3.extentY * pwsy);
@@ -9778,18 +9778,12 @@ int main(int, char**)
                         }
                     }
 
-                    // Snap pitch/roll to surface normal in world space.
-                    // Tilt direction is the same on the same slope regardless of
-                    // which way the character faces — no yaw dependency.
                     {
                         const float kDeg = 180.0f / 3.14159265f;
                         float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
                         float savedYaw = n3.rotY;
 
-                        // Only snap to floor-like surfaces (< ~45° from horizontal).
-                        // Rejects edge/seam triangles at geometry transitions that
-                        // have sideways normals causing unwanted side tilt.
-                        if (ny > 0.7f)
+                        if (ny > 0.9f)
                         {
                             n3.rotX = atan2f(nz, ny) * kDeg;
                             n3.rotZ = atan2f(-nx, ny) * kDeg;
@@ -9810,6 +9804,7 @@ int main(int, char**)
                 }
             }
         }
+
 
         // Transform interaction
         if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())

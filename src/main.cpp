@@ -920,6 +920,24 @@ static void GetNode3DWorldTRS(int idx, float& ox, float& oy, float& oz, float& o
     NebulaNodes::GetNode3DWorldTRS(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, orx, ory, orz, osx, osy, osz);
 }
 
+static void GetNode3DWorldTRSQuat(int idx, float& ox, float& oy, float& oz, float& oqw, float& oqx, float& oqy, float& oqz, float& osx, float& osy, float& osz)
+{
+    NebulaNodes::GetNode3DWorldTRSQuat(gStaticMeshNodes, gNode3DNodes, idx, ox, oy, oz, oqw, oqx, oqy, oqz, osx, osy, osz);
+}
+
+// Build a column-major 4x4 rotation matrix from a quaternion for use with glMultMatrixf
+static void QuatToGLMatrix(float qw, float qx, float qy, float qz, float m[16])
+{
+    float xx = qx*qx, yy = qy*qy, zz = qz*qz;
+    float xy = qx*qy, xz = qx*qz, yz = qy*qz;
+    float wx = qw*qx, wy = qw*qy, wz = qw*qz;
+    // Column-major for OpenGL
+    m[ 0] = 1 - 2*(yy+zz); m[ 1] = 2*(xy+wz);     m[ 2] = 2*(xz-wy);     m[ 3] = 0;
+    m[ 4] = 2*(xy-wz);     m[ 5] = 1 - 2*(xx+zz); m[ 6] = 2*(yz+wx);     m[ 7] = 0;
+    m[ 8] = 2*(xz+wy);     m[ 9] = 2*(yz-wx);     m[10] = 1 - 2*(xx+yy); m[11] = 0;
+    m[12] = 0;              m[13] = 0;              m[14] = 0;              m[15] = 1;
+}
+
 static void GetCamera3DWorldTR(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz)
 {
     if (idx < 0 || idx >= (int)gCamera3DNodes.size())
@@ -1803,6 +1821,13 @@ NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
     outRot[0] = n.rotX;
     outRot[1] = n.rotY;
     outRot[2] = n.rotZ;
+    if (n.physicsEnabled)
+    {
+        // Use atan2-based yaw extraction (full [-180,180] range, no asin ambiguity)
+        float fx = 2.0f * (n.qx * n.qz + n.qw * n.qy);
+        float fz = 1.0f - 2.0f * (n.qx * n.qx + n.qy * n.qy);
+        outRot[1] = atan2f(fx, fz) * (180.0f / 3.14159265f);
+    }
 }
 
 NB_RT_EXPORT void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z)
@@ -1813,6 +1838,87 @@ NB_RT_EXPORT void NB_RT_SetNode3DRotation(const char* name, float x, float y, fl
     if (idx < 0)
         return;
     auto& n = gNode3DNodes[idx];
+    bool didPhysicsYaw = false;
+    if (n.physicsEnabled)
+    {
+        // Physics owns tilt — only update yaw, preserve current up vector
+        float curUpX = 2.0f * (n.qx * n.qy - n.qw * n.qz);
+        float curUpY = 1.0f - 2.0f * (n.qx * n.qx + n.qz * n.qz);
+        float curUpZ = 2.0f * (n.qy * n.qz + n.qw * n.qx);
+        float uLen = sqrtf(curUpX*curUpX + curUpY*curUpY + curUpZ*curUpZ);
+        if (uLen > 0.0001f) { curUpX /= uLen; curUpY /= uLen; curUpZ /= uLen; }
+        else { curUpX = 0.0f; curUpY = 1.0f; curUpZ = 0.0f; }
+        // Build quat from preserved tilt + new yaw
+        float yawRad = y * 3.14159265f / 180.0f;
+        float fwdX = sinf(yawRad), fwdZ = cosf(yawRad);
+        // Project forward onto plane perpendicular to up
+        float dot = fwdX * curUpX + fwdZ * curUpZ;
+        float pfx = fwdX - dot * curUpX;
+        float pfy = -dot * curUpY;
+        float pfz = fwdZ - dot * curUpZ;
+        float pfLen = sqrtf(pfx*pfx + pfy*pfy + pfz*pfz);
+        if (pfLen > 0.0001f)
+        {
+            pfx /= pfLen; pfy /= pfLen; pfz /= pfLen;
+            float rx = curUpY * pfz - curUpZ * pfy;
+            float ry = curUpZ * pfx - curUpX * pfz;
+            float rz = curUpX * pfy - curUpY * pfx;
+            float rLen = sqrtf(rx*rx + ry*ry + rz*rz);
+            if (rLen > 0.0001f) { rx /= rLen; ry /= rLen; rz /= rLen; }
+            // Matrix [right, up, forward] → quaternion
+            float m00=rx, m01=curUpX, m02=pfx;
+            float m10=ry, m11=curUpY, m12=pfy;
+            float m20=rz, m21=curUpZ, m22=pfz;
+            float trace = m00 + m11 + m22;
+            if (trace > 0)
+            {
+                float s = 0.5f / sqrtf(trace + 1.0f);
+                n.qw = 0.25f / s;
+                n.qx = (m21 - m12) * s;
+                n.qy = (m02 - m20) * s;
+                n.qz = (m10 - m01) * s;
+            }
+            else if (m00 > m11 && m00 > m22)
+            {
+                float s = 2.0f * sqrtf(1.0f + m00 - m11 - m22);
+                n.qw = (m21 - m12) / s;
+                n.qx = 0.25f * s;
+                n.qy = (m01 + m10) / s;
+                n.qz = (m02 + m20) / s;
+            }
+            else if (m11 > m22)
+            {
+                float s = 2.0f * sqrtf(1.0f + m11 - m00 - m22);
+                n.qw = (m02 - m20) / s;
+                n.qx = (m01 + m10) / s;
+                n.qy = 0.25f * s;
+                n.qz = (m12 + m21) / s;
+            }
+            else
+            {
+                float s = 2.0f * sqrtf(1.0f + m22 - m00 - m11);
+                n.qw = (m10 - m01) / s;
+                n.qx = (m02 + m20) / s;
+                n.qy = (m12 + m21) / s;
+                n.qz = 0.25f * s;
+            }
+            didPhysicsYaw = true;
+        }
+    }
+    if (!didPhysicsYaw)
+    {
+        // No physics or degenerate case — full Euler→quat sync
+        float hrx = x * 3.14159265f / 180.0f * 0.5f;
+        float hry = y * 3.14159265f / 180.0f * 0.5f;
+        float hrz = z * 3.14159265f / 180.0f * 0.5f;
+        float cx = cosf(hrx), sx = sinf(hrx);
+        float cy = cosf(hry), sy = sinf(hry);
+        float cz = cosf(hrz), sz = sinf(hrz);
+        n.qw = cz*cy*cx + sz*sy*sx;
+        n.qx = cz*cy*sx - sz*sy*cx;
+        n.qy = cz*sy*cx + sz*cy*sx;
+        n.qz = sz*cy*cx - cz*sy*sx;
+    }
     n.rotX = x;
     n.rotY = y;
     n.rotZ = z;
@@ -6204,7 +6310,7 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
                 if (nLen > 1e-8f)
                 {
                     fny = (fny < 0.0f) ? -fny : fny;
-                    if (fny / nLen < 0.9f) continue;
+                    if (fny / nLen < 0.0f) continue;
                 }
                 bestY = hitY;
                 hit = 1;
@@ -6284,7 +6390,7 @@ NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float
                     fnx *= nInv; fny *= nInv; fnz *= nInv;
                     if (fny < 0.0f) { fnx = -fnx; fny = -fny; fnz = -fnz; }
                     // Skip wall-like triangles — only accept floor surfaces
-                    if (fny < 0.9f) continue;
+                    if (fny < 0.0f) continue;
                     bestY = hitY;
                     hit = 1;
                     bestNx = fnx; bestNy = fny; bestNz = fnz;
@@ -8579,6 +8685,167 @@ static void GetLocalAxesFromEuler(float rotX, float rotY, float rotZ, Vec3& righ
     forward = { m02, m12, m22 };
 }
 
+// ── Quaternion utilities for Node3D orientation ──
+
+struct Quat { float w, x, y, z; };
+
+static Quat QuatFromAxisAngle(float ax, float ay, float az, float angleDeg)
+{
+    float half = angleDeg * 3.14159265f / 180.0f * 0.5f;
+    float s = sinf(half);
+    return { cosf(half), ax * s, ay * s, az * s };
+}
+
+static Quat QuatMultiply(Quat a, Quat b)
+{
+    return {
+        a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+        a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+        a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+        a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w
+    };
+}
+
+static void QuatNormalize(Quat& q)
+{
+    float len = sqrtf(q.w*q.w + q.x*q.x + q.y*q.y + q.z*q.z);
+    if (len > 0.0001f) { q.w /= len; q.x /= len; q.y /= len; q.z /= len; }
+}
+
+static void QuatToEuler(float qw, float qx, float qy, float qz, float& rotX, float& rotY, float& rotZ)
+{
+    // ZYX Euler extraction matching R = Rz * Ry * Rx convention
+    const float kDeg = 180.0f / 3.14159265f;
+    float m20 = 2.0f * (qx * qz - qw * qy);
+    float sy = -m20;
+    if (sy > 0.9999f) sy = 0.9999f;
+    if (sy < -0.9999f) sy = -0.9999f;
+    rotY = asinf(sy) * kDeg;
+    float m21 = 2.0f * (qy * qz + qw * qx);
+    float m22 = 1.0f - 2.0f * (qx * qx + qy * qy);
+    rotX = atan2f(m21, m22) * kDeg;
+    float m10 = 2.0f * (qx * qy + qw * qz);
+    float m00 = 1.0f - 2.0f * (qy * qy + qz * qz);
+    rotZ = atan2f(m10, m00) * kDeg;
+}
+
+static Quat EulerToQuat(float rotX, float rotY, float rotZ)
+{
+    // R = Rz * Ry * Rx → q = qZ * qY * qX
+    Quat qX = QuatFromAxisAngle(1, 0, 0, rotX);
+    Quat qY = QuatFromAxisAngle(0, 1, 0, rotY);
+    Quat qZ = QuatFromAxisAngle(0, 0, 1, rotZ);
+    return QuatMultiply(QuatMultiply(qZ, qY), qX);
+}
+
+static void SyncNode3DQuatFromEuler(Node3DNode& n)
+{
+    Quat q = EulerToQuat(n.rotX, n.rotY, n.rotZ);
+    n.qw = q.w; n.qx = q.x; n.qy = q.y; n.qz = q.z;
+}
+
+static void SyncNode3DEulerFromQuat(Node3DNode& n)
+{
+    // Standard ZYX Euler extraction — matches glRotatef Rz*Ry*Rx convention
+    QuatToEuler(n.qw, n.qx, n.qy, n.qz, n.rotX, n.rotY, n.rotZ);
+}
+
+static float QuatYawDeg(float qw, float qx, float qy, float qz)
+{
+    // Rotate (0,0,1) by the quaternion to get the forward vector,
+    // then extract yaw = atan2(forward.x, forward.z).
+    // forward = q * (0,0,1) * q^-1
+    float fx = 2.0f * (qx * qz + qw * qy);
+    float fz = 1.0f - 2.0f * (qx * qx + qy * qy);
+    return atan2f(fx, fz) * (180.0f / 3.14159265f);
+}
+
+static Quat QuatFromNormalAndYaw(float nx, float ny, float nz, float yawDeg)
+{
+    // Build orientation from surface normal (desired up) and yaw angle
+    float len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (len < 0.0001f) return {1, 0, 0, 0};
+    float ux = nx/len, uy = ny/len, uz = nz/len;
+
+    // Yaw direction on XZ plane
+    float yawRad = yawDeg * 3.14159265f / 180.0f;
+    float fwdX = sinf(yawRad);
+    float fwdZ = cosf(yawRad);
+
+    // Project forward onto surface plane: F' = F - dot(F, N)*N
+    float dot = fwdX * ux + fwdZ * uz;
+    float pfx = fwdX - dot * ux;
+    float pfy = -dot * uy;
+    float pfz = fwdZ - dot * uz;
+    float pfLen = sqrtf(pfx*pfx + pfy*pfy + pfz*pfz);
+    if (pfLen < 0.0001f)
+        return EulerToQuat(0.0f, yawDeg, 0.0f);
+    pfx /= pfLen; pfy /= pfLen; pfz /= pfLen;
+
+    // Right = cross(up, forward)
+    float rx = uy * pfz - uz * pfy;
+    float ry = uz * pfx - ux * pfz;
+    float rz = ux * pfy - uy * pfx;
+    float rLen = sqrtf(rx*rx + ry*ry + rz*rz);
+    if (rLen > 0.0001f) { rx /= rLen; ry /= rLen; rz /= rLen; }
+
+    // Rotation matrix columns: [right, up, forward]
+    float m00=rx, m01=ux, m02=pfx;
+    float m10=ry, m11=uy, m12=pfy;
+    float m20=rz, m21=uz, m22=pfz;
+
+    // Matrix to quaternion (Shepperd's method)
+    float trace = m00 + m11 + m22;
+    Quat q;
+    if (trace > 0)
+    {
+        float s = 0.5f / sqrtf(trace + 1.0f);
+        q.w = 0.25f / s;
+        q.x = (m21 - m12) * s;
+        q.y = (m02 - m20) * s;
+        q.z = (m10 - m01) * s;
+    }
+    else if (m00 > m11 && m00 > m22)
+    {
+        float s = 2.0f * sqrtf(1.0f + m00 - m11 - m22);
+        q.w = (m21 - m12) / s;
+        q.x = 0.25f * s;
+        q.y = (m01 + m10) / s;
+        q.z = (m02 + m20) / s;
+    }
+    else if (m11 > m22)
+    {
+        float s = 2.0f * sqrtf(1.0f + m11 - m00 - m22);
+        q.w = (m02 - m20) / s;
+        q.x = (m01 + m10) / s;
+        q.y = 0.25f * s;
+        q.z = (m12 + m21) / s;
+    }
+    else
+    {
+        float s = 2.0f * sqrtf(1.0f + m22 - m00 - m11);
+        q.w = (m10 - m01) / s;
+        q.x = (m02 + m20) / s;
+        q.y = (m12 + m21) / s;
+        q.z = 0.25f * s;
+    }
+    QuatNormalize(q);
+    return q;
+}
+
+static void QuatNlerp(Quat& cur, const Quat& target, float t)
+{
+    // Ensure shortest path
+    float dot = cur.w*target.w + cur.x*target.x + cur.y*target.y + cur.z*target.z;
+    float tw = target.w, tx = target.x, ty = target.y, tz = target.z;
+    if (dot < 0) { tw = -tw; tx = -tx; ty = -ty; tz = -tz; }
+    cur.w += (tw - cur.w) * t;
+    cur.x += (tx - cur.x) * t;
+    cur.y += (ty - cur.y) * t;
+    cur.z += (tz - cur.z) * t;
+    QuatNormalize(cur);
+}
+
 // Canonical camera basis/view/projection helpers now live in src/camera/Camera3D.
 
 static void GetLocalAxes(const Audio3DNode& n, Vec3& right, Vec3& up, Vec3& forward)
@@ -9779,35 +10046,48 @@ int main(int, char**)
                     }
 
                     {
-                        const float kDeg = 180.0f / 3.14159265f;
-                        float nx = hitNormal[0], ny = hitNormal[1], nz = hitNormal[2];
-                        float savedYaw = n3.rotY;
+                        float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
+                        // Extract yaw from quat (script controls yaw, slope controls tilt)
+                        float savedYaw = QuatYawDeg(n3.qw, n3.qx, n3.qy, n3.qz);
 
-                        float targetRotX, targetRotZ;
-                        if (ny > 0.9f)
-                        {
-                            targetRotX = atan2f(nz, ny) * kDeg;
-                            float cy = cosf(savedYaw * (3.14159265f / 180.0f));
-                            targetRotZ = atan2f(-nx * cy, ny) * kDeg;
-                        }
-                        else
-                        {
-                            targetRotX = 0.0f;
-                            targetRotZ = 0.0f;
-                        }
-                        // Smooth interpolation toward target orientation
+                        // Extract current up vector from quat (the smoothed normal)
+                        float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
+                        float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
+                        float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
+
+                        // Smooth the normal toward hit normal (tilt only, yaw is instant)
                         float t = 1.0f - powf(0.0001f, dt);
-                        n3.rotX += (targetRotX - n3.rotX) * t;
-                        n3.rotZ += (targetRotZ - n3.rotZ) * t;
-                        n3.rotY = savedYaw;
+                        float targetNX = (hny > 0.0f) ? hnx : 0.0f;
+                        float targetNY = (hny > 0.0f) ? hny : 1.0f;
+                        float targetNZ = (hny > 0.0f) ? hnz : 0.0f;
+                        float smX = curUpX + (targetNX - curUpX) * t;
+                        float smY = curUpY + (targetNY - curUpY) * t;
+                        float smZ = curUpZ + (targetNZ - curUpZ) * t;
+                        float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
+                        if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
+
+                        // Build quat from smoothed normal + instant yaw
+                        Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
+                        n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
+                        SyncNode3DEulerFromQuat(n3);
                     }
                 }
                 else if (!scriptManaged)
                 {
-                    // No ground hit — smooth back to upright
+                    // No ground hit — smooth tilt back to upright
+                    float savedYaw = QuatYawDeg(n3.qw, n3.qx, n3.qy, n3.qz);
+                    float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
+                    float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
+                    float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
                     float t = 1.0f - powf(0.0001f, dt);
-                    n3.rotX += (0.0f - n3.rotX) * t;
-                    n3.rotZ += (0.0f - n3.rotZ) * t;
+                    float smX = curUpX + (0.0f - curUpX) * t;
+                    float smY = curUpY + (1.0f - curUpY) * t;
+                    float smZ = curUpZ + (0.0f - curUpZ) * t;
+                    float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
+                    if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
+                    Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
+                    n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
+                    SyncNode3DEulerFromQuat(n3);
                 }
             }
         }
@@ -10164,6 +10444,7 @@ int main(int, char**)
                         n.rotX = gRotatePreviewX;
                         n.rotY = gRotatePreviewY;
                         n.rotZ = gRotatePreviewZ;
+                        SyncNode3DQuatFromEuler(n);
                         gRotateStartX = n.rotX;
                         gRotateStartY = n.rotY;
                         gRotateStartZ = n.rotZ;
@@ -10743,13 +11024,11 @@ int main(int, char**)
             if (selected) glColor3f(1.0f, 1.0f, 1.0f);
             else glColor3f(0.55f, 0.9f, 1.0f);
 
-            float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
-            GetNode3DWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+            float wx, wy, wz, wqw, wqx, wqy, wqz, wsx, wsy, wsz;
+            GetNode3DWorldTRSQuat(i, wx, wy, wz, wqw, wqx, wqy, wqz, wsx, wsy, wsz);
             glPushMatrix();
             glTranslatef(wx, wy, wz);
-            glRotatef(wrx, 1.0f, 0.0f, 0.0f);
-            glRotatef(wry, 0.0f, 1.0f, 0.0f);
-            glRotatef(wrz, 0.0f, 0.0f, 1.0f);
+            { float rm[16]; QuatToGLMatrix(wqw, wqx, wqy, wqz, rm); glMultMatrixf(rm); }
             // Apply local bounds offset (collision-only, does not affect parent/child transforms).
             glTranslatef(n.boundPosX, n.boundPosY, n.boundPosZ);
             // Apply local collision extents to Node3D box size, without affecting hierarchy inheritance.
@@ -11095,15 +11374,16 @@ int main(int, char**)
             GetStaticMeshWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
             glPushMatrix();
             glTranslatef(wx, wy, wz);
-            // If parented under Node3D, Node3D drives world rotation and the
-            // child's local rotation is applied on top for visual orientation only.
-            if (!s.parent.empty() && FindNode3DByName(s.parent) >= 0)
+            // If parented under Node3D, use quaternion rotation (avoids Euler gimbal lock)
+            int parentNode3DIdx = -1;
+            if (!s.parent.empty()) parentNode3DIdx = FindNode3DByName(s.parent);
+            if (parentNode3DIdx >= 0)
             {
-                // Parent (Node3D) rotation first
-                glRotatef(wrx, 1.0f, 0.0f, 0.0f);
-                glRotatef(wry, 0.0f, 1.0f, 0.0f);
-                glRotatef(wrz, 0.0f, 0.0f, 1.0f);
-                // Child local rotation on top (visual offset, uses same axis basis as Node3D)
+                // Parent (Node3D) rotation via quaternion matrix
+                float pqw, pqx, pqy, pqz, _px, _py, _pz, _psx, _psy, _psz;
+                GetNode3DWorldTRSQuat(parentNode3DIdx, _px, _py, _pz, pqw, pqx, pqy, pqz, _psx, _psy, _psz);
+                { float rm[16]; QuatToGLMatrix(pqw, pqx, pqy, pqz, rm); glMultMatrixf(rm); }
+                // Child local rotation on top (visual offset)
                 glRotatef(s.rotX, 1.0f, 0.0f, 0.0f);
                 glRotatef(s.rotY, 0.0f, 1.0f, 0.0f);
                 glRotatef(s.rotZ, 0.0f, 0.0f, 1.0f);
@@ -16318,12 +16598,29 @@ RenderImGuiOnly:
                         GetStaticMeshWorldTRS(i, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
                         // Build rotation matrix (same axis remap as rendering)
-                        bool parentedNode3D = (!s.parent.empty() && FindNode3DByName(s.parent) >= 0);
-                        float arx, ary, arz;
-                        if (parentedNode3D) { arx = wrx; ary = wry; arz = wrz; }
-                        else { arx = wrz; ary = wrx; arz = wry; }
-                        float rrx = arx * 3.14159f / 180.0f, rry = ary * 3.14159f / 180.0f, rrz = arz * 3.14159f / 180.0f;
-                        float cx1 = cosf(rrx), sx1 = sinf(rrx), cy1 = cosf(rry), sy1 = sinf(rry), cz1 = cosf(rrz), sz1 = sinf(rrz);
+                        int pickParentN3D = (!s.parent.empty()) ? FindNode3DByName(s.parent) : -1;
+                        bool parentedNode3D = (pickParentN3D >= 0);
+                        // Parent quaternion rotation matrix (3x3, row-major) for Node3D parents
+                        float pr00=1,pr01=0,pr02=0, pr10=0,pr11=1,pr12=0, pr20=0,pr21=0,pr22=1;
+                        // Euler trig for standalone meshes
+                        float cx1=1,sx1=0,cy1=1,sy1=0,cz1=1,sz1=0;
+                        if (parentedNode3D)
+                        {
+                            float pqw2, pqx2, pqy2, pqz2, _px2, _py2, _pz2, _psx2, _psy2, _psz2;
+                            GetNode3DWorldTRSQuat(pickParentN3D, _px2, _py2, _pz2, pqw2, pqx2, pqy2, pqz2, _psx2, _psy2, _psz2);
+                            float xx2=pqx2*pqx2, yy2=pqy2*pqy2, zz2=pqz2*pqz2;
+                            float xy2=pqx2*pqy2, xz2=pqx2*pqz2, yz2=pqy2*pqz2;
+                            float wx2=pqw2*pqx2, wy2=pqw2*pqy2, wz2=pqw2*pqz2;
+                            pr00=1-2*(yy2+zz2); pr01=2*(xy2-wz2); pr02=2*(xz2+wy2);
+                            pr10=2*(xy2+wz2); pr11=1-2*(xx2+zz2); pr12=2*(yz2-wx2);
+                            pr20=2*(xz2-wy2); pr21=2*(yz2+wx2); pr22=1-2*(xx2+yy2);
+                        }
+                        else
+                        {
+                            float arx = wrz, ary = wrx, arz = wry;
+                            float rrx = arx * 3.14159f / 180.0f, rry = ary * 3.14159f / 180.0f, rrz = arz * 3.14159f / 180.0f;
+                            cx1 = cosf(rrx); sx1 = sinf(rrx); cy1 = cosf(rry); sy1 = sinf(rry); cz1 = cosf(rrz); sz1 = sinf(rrz);
+                        }
 
                         // Child local rotation for parented meshes
                         float ccx = 1, csx2 = 0, ccy = 1, csy2 = 0, ccz = 1, csz2 = 0;
@@ -16354,13 +16651,20 @@ RenderImGuiOnly:
                                     t = v.x*ccz - v.y*csz2; v.y = v.x*csz2 + v.y*ccz; v.x = t;
                                     t = v.x*ccy + v.z*csy2; v.z = -v.x*csy2 + v.z*ccy; v.x = t;
                                     t = v.y*ccx - v.z*csx2; v.z = v.y*csx2 + v.z*ccx; v.y = t;
+                                    // Parent rotation via quaternion matrix
+                                    float vx2 = pr00*v.x + pr01*v.y + pr02*v.z;
+                                    float vy2 = pr10*v.x + pr11*v.y + pr12*v.z;
+                                    float vz2 = pr20*v.x + pr21*v.y + pr22*v.z;
+                                    v.x = vx2; v.y = vy2; v.z = vz2;
                                 }
-
-                                // Parent/standalone rotation
-                                float t;
-                                t = v.x*cz1 - v.y*sz1; v.y = v.x*sz1 + v.y*cz1; v.x = t;
-                                t = v.x*cy1 + v.z*sy1; v.z = -v.x*sy1 + v.z*cy1; v.x = t;
-                                t = v.y*cx1 - v.z*sx1; v.z = v.y*sx1 + v.z*cx1; v.y = t;
+                                else
+                                {
+                                    // Standalone rotation via Euler
+                                    float t;
+                                    t = v.x*cz1 - v.y*sz1; v.y = v.x*sz1 + v.y*cz1; v.x = t;
+                                    t = v.x*cy1 + v.z*sy1; v.z = -v.x*sy1 + v.z*cy1; v.x = t;
+                                    t = v.y*cx1 - v.z*sx1; v.z = v.y*sx1 + v.z*cx1; v.y = t;
+                                }
 
                                 v.x += wx; v.y += wy; v.z += wz;
 
@@ -18563,6 +18867,7 @@ RenderImGuiOnly:
                     n.rotY = rotArrNode[0];
                     n.rotZ = rotArrNode[1];
                     n.rotX = rotArrNode[2];
+                    SyncNode3DQuatFromEuler(n);
                 }
                 ImGui::DragFloat3("Scale", &n.scaleX, 0.01f, 0.01f, 100.0f);
                 ImGui::Separator();

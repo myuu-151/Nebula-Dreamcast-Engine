@@ -68,6 +68,9 @@ struct Node3DNode
     float rotX = 0.0f;
     float rotY = 0.0f;
     float rotZ = 0.0f;
+    // Quaternion orientation (source of truth for slope alignment).
+    // rotX/rotY/rotZ are cached Euler for UI, serialization, and script compat.
+    float qw = 1.0f, qx = 0.0f, qy = 0.0f, qz = 0.0f;
     float scaleX = 1.0f;
     float scaleY = 1.0f;
     float scaleZ = 1.0f;
@@ -167,6 +170,21 @@ namespace NebulaNodes
         float& orx,
         float& ory,
         float& orz,
+        float& osx,
+        float& osy,
+        float& osz);
+    // Quaternion variant — outputs world rotation as quaternion (no Euler gimbal lock)
+    void GetNode3DWorldTRSQuat(
+        const std::vector<StaticMesh3DNode>& staticMeshNodes,
+        const std::vector<Node3DNode>& node3DNodes,
+        int idx,
+        float& ox,
+        float& oy,
+        float& oz,
+        float& oqw,
+        float& oqx,
+        float& oqy,
+        float& oqz,
         float& osx,
         float& osy,
         float& osz);

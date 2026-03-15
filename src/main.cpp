@@ -2186,7 +2186,47 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
         return true;
     };
 
-    // Gather world-space triangles from all StaticMesh3D nodes
+    // Collect NavMesh3D bounding volumes
+    struct NavBounds { float minX, minY, minZ, maxX, maxY, maxZ; bool negator; };
+    std::vector<NavBounds> navVolumes;
+    for (const auto& nm : gNavMesh3DNodes)
+    {
+        if (!nm.navBounds && !nm.navNegator) continue;
+        float hx = nm.extentX * 0.5f;
+        float hy = nm.extentY * 0.5f;
+        float hz = nm.extentZ * 0.5f;
+        navVolumes.push_back({
+            nm.x - hx, nm.y - hy, nm.z - hz,
+            nm.x + hx, nm.y + hy, nm.z + hz,
+            nm.navNegator
+        });
+    }
+    printf("[NavMesh] %d nav volumes\n", (int)navVolumes.size());
+
+    // Test if a point is inside any navBounds and not inside any navNegator
+    auto pointInNavBounds = [&](float px, float py, float pz) -> bool {
+        bool inBounds = false;
+        for (const auto& vol : navVolumes)
+        {
+            if (vol.negator) continue;
+            if (px >= vol.minX && px <= vol.maxX &&
+                py >= vol.minY && py <= vol.maxY &&
+                pz >= vol.minZ && pz <= vol.maxZ)
+            { inBounds = true; break; }
+        }
+        if (!inBounds) return false;
+        for (const auto& vol : navVolumes)
+        {
+            if (!vol.negator) continue;
+            if (px >= vol.minX && px <= vol.maxX &&
+                py >= vol.minY && py <= vol.maxY &&
+                pz >= vol.minZ && pz <= vol.maxZ)
+                return false;
+        }
+        return true;
+    };
+
+    // Gather world-space triangles from all StaticMesh3D nodes, clipped to nav bounds
     std::vector<float> verts;
     std::vector<int>   tris;
     printf("[NavMesh] Building from %d static meshes (project=%s)\n", (int)gStaticMeshNodes.size(), gProjectDir.c_str());
@@ -2241,21 +2281,43 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
         Vec3 right, up, forward;
         GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
 
-        int baseVert = (int)(verts.size() / 3);
+        // Transform all vertices to world space
+        std::vector<Vec3> worldPos(vertexCount);
         for (uint32_t v = 0; v < vertexCount; ++v)
         {
             float lx = positions[v].x * wsx;
             float ly = positions[v].y * wsy;
             float lz = positions[v].z * wsz;
-            verts.push_back(wx + right.x * lx + up.x * ly + forward.x * lz);
-            verts.push_back(wy + right.y * lx + up.y * ly + forward.y * lz);
-            verts.push_back(wz + right.z * lx + up.z * ly + forward.z * lz);
+            worldPos[v].x = wx + right.x * lx + up.x * ly + forward.x * lz;
+            worldPos[v].y = wy + right.y * lx + up.y * ly + forward.y * lz;
+            worldPos[v].z = wz + right.z * lx + up.z * ly + forward.z * lz;
         }
-        for (uint32_t t = 0; t < indexCount; ++t)
+
+        // Only include triangles where at least one vertex is inside nav bounds
+        int addedTris = 0;
+        for (uint32_t t = 0; t + 2 < indexCount; t += 3)
         {
-            tris.push_back(baseVert + (int)indices[t]);
+            uint16_t i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
+            if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount) continue;
+            const Vec3& v0 = worldPos[i0];
+            const Vec3& v1 = worldPos[i1];
+            const Vec3& v2 = worldPos[i2];
+            bool inside = navVolumes.empty() ||
+                          pointInNavBounds(v0.x, v0.y, v0.z) ||
+                          pointInNavBounds(v1.x, v1.y, v1.z) ||
+                          pointInNavBounds(v2.x, v2.y, v2.z);
+            if (!inside) continue;
+
+            int baseVert = (int)(verts.size() / 3);
+            verts.push_back(v0.x); verts.push_back(v0.y); verts.push_back(v0.z);
+            verts.push_back(v1.x); verts.push_back(v1.y); verts.push_back(v1.z);
+            verts.push_back(v2.x); verts.push_back(v2.y); verts.push_back(v2.z);
+            tris.push_back(baseVert);
+            tris.push_back(baseVert + 1);
+            tris.push_back(baseVert + 2);
+            ++addedTris;
         }
-        printf("[NavMesh]   [%d] %s — %u verts, %u tris\n", si, sm.name.c_str(), vertexCount, indexCount / 3);
+        printf("[NavMesh]   [%d] %s — %d/%u tris (in bounds)\n", si, sm.name.c_str(), addedTris, indexCount / 3);
     }
 
     printf("[NavMesh] Total: %d verts, %d tris\n", (int)(verts.size() / 3), (int)(tris.size() / 3));

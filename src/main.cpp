@@ -10005,28 +10005,31 @@ int main(int, char**)
         if (gPlayMode)
         {
             const float gravity = -29.4f;
-            const float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
+            float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
+            if (dt > 0.1f) dt = 0.1f;
             for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
                 bool scriptManaged = (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]);
 
-                // Script-managed nodes handle their own gravity/position — only apply for non-script nodes
+                // Apply gravity first for non-script-managed nodes
                 if (!scriptManaged)
                 {
                     n3.velY += gravity * dt;
                     n3.y += n3.velY * dt;
                 }
 
-                // Slope alignment: snap to face normal.
+                // Raycast from top of bounding box to find ground
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
                 float hy = std::max(0.0f, n3.extentY * pwsy);
-                float castY = pwy + n3.boundPosY;
+                float castY = pwy + n3.boundPosY + hy + 0.1f;
                 float hitY = 0.0f;
                 float hitNormal[3] = {0.0f, 1.0f, 0.0f};
-                if (NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal))
+                bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
+
+                if (groundHit)
                 {
                     if (!scriptManaged)
                     {

@@ -66,6 +66,11 @@ void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z);
 
 Script-side movement/rotation for named Node3D objects.
 
+**Physics-enabled rotation behavior:** When a Node3D has `physicsEnabled`, the engine uses an internal quaternion for orientation and automatically aligns the node to the ground surface normal (slope alignment). In this mode:
+- `SetNode3DRotation` only updates **yaw** (the `y` parameter). Tilt (pitch/roll from slope alignment) is preserved automatically — the `x` and `z` parameters are accepted but slope alignment overrides them each frame.
+- `GetNode3DRotation` returns the script's last-set yaw in `outRot[1]`, not a value extracted from the internal quaternion. This ensures the script always reads back exactly what it wrote, with no drift or snapping at extreme angles.
+- Rendering uses the quaternion directly (converted to a rotation matrix), bypassing Euler angles entirely to avoid gimbal lock.
+
 ### Camera bridge
 
 ```c

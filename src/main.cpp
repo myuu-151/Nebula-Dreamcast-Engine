@@ -10020,11 +10020,11 @@ int main(int, char**)
                     n3.y += n3.velY * dt;
                 }
 
-                // Raycast from top of bounding box to find ground
+                // Raycast from just above feet (bottom of bounding box) to find ground
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
                 float hy = std::max(0.0f, n3.extentY * pwsy);
-                float castY = pwy + n3.boundPosY + hy + 0.1f;
+                float castY = pwy + n3.boundPosY - hy + 0.5f;
                 float hitY = 0.0f;
                 float hitNormal[3] = {0.0f, 1.0f, 0.0f};
                 bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);

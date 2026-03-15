@@ -269,10 +269,22 @@ static std::string gScriptHotReloadTrackedProjectDir;
 static double gScriptHotReloadNextPollAt = 0.0;
 static unsigned long long gScriptHotReloadGeneration = 0;
 
-static HMODULE gEditorScriptModule = nullptr;
-static std::string gEditorScriptPath;
+// Multi-script runtime: each Node3D with a script field gets its own DLL slot.
+using EditorScriptStartFn = void(*)(void);
+using EditorScriptUpdateFn = void(*)(float);
+using EditorScriptSceneSwitchFn = void(*)(const char*);
+struct ScriptSlot
+{
+    HMODULE module = nullptr;
+    std::string path;
+    EditorScriptStartFn onStart = nullptr;
+    EditorScriptUpdateFn onUpdate = nullptr;
+    EditorScriptSceneSwitchFn onSceneSwitch = nullptr;
+    bool active = false;
+    bool started = false;
+};
+static std::vector<ScriptSlot> gEditorScripts;
 static bool gEditorScriptActive = false;
-static bool gEditorScriptStarted = false;
 // Tracks which Node3Ds had their position set by a script this frame (skip editor AABB physics for those)
 static std::vector<bool> gNode3DScriptManaged;
 static double gEditorScriptNextTickLog = 0.0;
@@ -281,12 +293,6 @@ static bool useScriptController = true;
 // Keep script-owned controls on desktop, but keep C++ fallback enabled on Dreamcast
 // until full runtime script parity is confirmed.
 static bool gEnableCppPlayFallbackControls = false;
-using EditorScriptStartFn = void(*)(void);
-using EditorScriptUpdateFn = void(*)(float);
-using EditorScriptSceneSwitchFn = void(*)(const char*);
-static EditorScriptStartFn gEditorScriptOnStart = nullptr;
-static EditorScriptUpdateFn gEditorScriptOnUpdate = nullptr;
-static EditorScriptSceneSwitchFn gEditorScriptOnSceneSwitch = nullptr;
 
 // Optional editor runtime hook. v1 only signals "scripts changed"; no compile/rebind yet.
 using ScriptHotReloadCallback = void(*)(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger);
@@ -552,10 +558,11 @@ static void PollScriptHotReloadV1(double now)
     }
 }
 
-static std::filesystem::path ResolveGameplayScriptPath()
+static std::vector<std::filesystem::path> ResolveAllScriptPaths()
 {
+    std::vector<std::filesystem::path> result;
     if (gProjectDir.empty())
-        return {};
+        return result;
 
     printf("[ScriptRuntime] ProjectDir=%s\n", gProjectDir.c_str());
 
@@ -568,28 +575,44 @@ static std::filesystem::path ResolveGameplayScriptPath()
         return std::filesystem::path(gProjectDir) / p;
     };
 
-    if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
-    {
-        std::filesystem::path p = resolvePath(gNode3DNodes[gSelectedNode3D].script);
-        if (!p.empty() && std::filesystem::exists(p))
-            return p;
-    }
-
+    // Collect unique script paths from all Node3D nodes
+    std::vector<std::string> seen;
     for (const auto& n : gNode3DNodes)
     {
         std::filesystem::path p = resolvePath(n.script);
-        if (!p.empty() && std::filesystem::exists(p))
-            return p;
+        if (p.empty() || !std::filesystem::exists(p))
+            continue;
+        std::string canonical = p.generic_string();
+        bool dup = false;
+        for (const auto& s : seen)
+            if (s == canonical) { dup = true; break; }
+        if (!dup)
+        {
+            seen.push_back(canonical);
+            result.push_back(p);
+            printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
+        }
     }
 
-    std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
-    if (std::filesystem::exists(fallback))
+    // Fallback: if no scripts found on any node, try the default script
+    if (result.empty())
     {
-        printf("[ScriptRuntime] ResolvedScript=%s\n", fallback.string().c_str());
-        return fallback;
+        std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
+        if (std::filesystem::exists(fallback))
+        {
+            printf("[ScriptRuntime] ResolvedScript (fallback)=%s\n", fallback.string().c_str());
+            result.push_back(fallback);
+        }
     }
 
-    return {};
+    return result;
+}
+
+// Legacy single-path resolver (used by hot reload and other callers)
+static std::filesystem::path ResolveGameplayScriptPath()
+{
+    auto all = ResolveAllScriptPaths();
+    return all.empty() ? std::filesystem::path{} : all[0];
 }
 
 static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
@@ -631,7 +654,7 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     return true;
 }
 
-static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesystem::path& outDllPath, std::string& outError)
+static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesystem::path& outDllPath, std::string& outError, int slotIdx = 0)
 {
     if (scriptPath.empty())
     {
@@ -659,12 +682,13 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
         return false;
     }
 
-    outDllPath = outDir / "nb_script.dll";
+    std::string dllName = "nb_script_" + std::to_string(slotIdx);
+    outDllPath = outDir / (dllName + ".dll");
     std::filesystem::remove(outDllPath, ec);
     std::filesystem::remove(buildLogPath, ec);
-    std::filesystem::remove(outDir / "nb_script.exp", ec);
-    std::filesystem::remove(outDir / "nb_script.lib", ec);
-    std::filesystem::remove(outDir / "nb_script.pdb", ec);
+    std::filesystem::remove(outDir / (dllName + ".exp"), ec);
+    std::filesystem::remove(outDir / (dllName + ".lib"), ec);
+    std::filesystem::remove(outDir / (dllName + ".pdb"), ec);
 
     auto SanitizeCmdPath = [](const std::filesystem::path& p) -> std::string
     {
@@ -788,35 +812,32 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
 
 static void UnloadEditorScriptRuntime()
 {
-    if (gEditorScriptModule)
+    for (auto& slot : gEditorScripts)
     {
-        FreeLibrary(gEditorScriptModule);
-        gEditorScriptModule = nullptr;
+        if (slot.module)
+        {
+            FreeLibrary(slot.module);
+            slot.module = nullptr;
+        }
     }
-    gEditorScriptOnStart = nullptr;
-    gEditorScriptOnUpdate = nullptr;
-    gEditorScriptOnSceneSwitch = nullptr;
+    gEditorScripts.clear();
     gEditorScriptActive = false;
-    gEditorScriptStarted = false;
-    gEditorScriptPath.clear();
 }
 
-static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
+static bool LoadEditorScriptSlot(const std::filesystem::path& scriptPath, int slotIdx)
 {
-    UnloadEditorScriptRuntime();
-
     std::filesystem::path dllPath;
     std::string err;
-    if (!CompileEditorScriptDLL(scriptPath, dllPath, err))
+    if (!CompileEditorScriptDLL(scriptPath, dllPath, err, slotIdx))
     {
-        printf("[ScriptRuntime] compile failed: %s\n", err.c_str());
+        printf("[ScriptRuntime] compile failed [%d]: %s\n", slotIdx, err.c_str());
         gViewportToast = std::string("Script runtime failed: ") + err;
         gViewportToastUntil = glfwGetTime() + 2.5;
         return false;
     }
 
-    gEditorScriptModule = LoadLibraryA(dllPath.string().c_str());
-    if (!gEditorScriptModule)
+    HMODULE mod = LoadLibraryA(dllPath.string().c_str());
+    if (!mod)
     {
         printf("[ScriptRuntime] LoadLibrary failed for %s\n", dllPath.string().c_str());
         gViewportToast = "Script runtime failed: LoadLibrary";
@@ -824,21 +845,23 @@ static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
         return false;
     }
 
-    gEditorScriptOnStart = (EditorScriptStartFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnStart");
-    gEditorScriptOnUpdate = (EditorScriptUpdateFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnUpdate");
-    gEditorScriptOnSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnSceneSwitch");
+    ScriptSlot slot;
+    slot.module = mod;
+    slot.path = scriptPath.string();
+    slot.onStart = (EditorScriptStartFn)GetProcAddress(mod, "NB_Game_OnStart");
+    slot.onUpdate = (EditorScriptUpdateFn)GetProcAddress(mod, "NB_Game_OnUpdate");
+    slot.onSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(mod, "NB_Game_OnSceneSwitch");
+    slot.active = true;
+    slot.started = false;
 
-    printf("[ScriptRuntime] loaded %s\n", scriptPath.string().c_str());
+    printf("[ScriptRuntime] loaded [%d] %s\n", slotIdx, scriptPath.string().c_str());
     printf("[ScriptRuntime] DLL=%s\n", dllPath.string().c_str());
     printf("[ScriptRuntime] symbols: start=%s update=%s scene=%s\n",
-        gEditorScriptOnStart ? "yes" : "no",
-        gEditorScriptOnUpdate ? "yes" : "no",
-        gEditorScriptOnSceneSwitch ? "yes" : "no");
+        slot.onStart ? "yes" : "no",
+        slot.onUpdate ? "yes" : "no",
+        slot.onSceneSwitch ? "yes" : "no");
 
-    gEditorScriptActive = true;
-    gEditorScriptPath = scriptPath.string();
-    gViewportToast = std::string("Script runtime active: ") + scriptPath.filename().string();
-    gViewportToastUntil = glfwGetTime() + 2.5;
+    gEditorScripts.push_back(slot);
     return true;
 }
 
@@ -847,36 +870,45 @@ static void BeginPlayScriptRuntime()
     if (!useScriptController)
     {
         gEditorScriptActive = false;
-        gEditorScriptStarted = false;
         printf("[ScriptRuntime] skipped (engine-owned controls mode)\n");
         return;
     }
 
-    std::filesystem::path scriptPath = ResolveGameplayScriptPath();
-    if (scriptPath.empty())
+    std::vector<std::filesystem::path> scriptPaths = ResolveAllScriptPaths();
+    if (scriptPaths.empty())
     {
-        printf("[ScriptRuntime] no gameplay script resolved\n");
-        gViewportToast = "Script runtime failed: no script";
+        printf("[ScriptRuntime] no gameplay scripts resolved\n");
+        gViewportToast = "Script runtime failed: no scripts";
         gViewportToastUntil = glfwGetTime() + 2.5;
         return;
     }
 
-    if (!LoadEditorScriptRuntime(scriptPath))
+    UnloadEditorScriptRuntime();
+    int loaded = 0;
+    for (int i = 0; i < (int)scriptPaths.size(); ++i)
+    {
+        if (LoadEditorScriptSlot(scriptPaths[i], i))
+            ++loaded;
+    }
+
+    if (loaded == 0)
         return;
 
+    gEditorScriptActive = true;
     gEditorScriptNextTickLog = 0.0;
 
-    if (gEditorScriptOnStart && useScriptController)
+    for (auto& slot : gEditorScripts)
     {
-        gEditorScriptOnStart();
-        gEditorScriptStarted = true;
-        printf("[ScriptRuntime] OnStart called\n");
+        if (slot.onStart)
+        {
+            slot.onStart();
+            slot.started = true;
+            printf("[ScriptRuntime] OnStart called for %s\n", slot.path.c_str());
+        }
     }
-    else
-    {
-        gEditorScriptStarted = false;
-        printf("[ScriptRuntime] OnStart missing or skipped\n");
-    }
+
+    gViewportToast = "Script runtime active: " + std::to_string(loaded) + " script(s)";
+    gViewportToastUntil = glfwGetTime() + 2.5;
 }
 
 static void EndPlayScriptRuntime()
@@ -886,28 +918,37 @@ static void EndPlayScriptRuntime()
 
 static void TickPlayScriptRuntime(float dt, double now)
 {
-    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnUpdate || !useScriptController)
+    if (!gPlayMode || !gEditorScriptActive || !useScriptController)
         return;
 
-    // Clear per-frame script-managed flags before script runs
+    // Clear per-frame script-managed flags before scripts run
     gNode3DScriptManaged.assign(gNode3DNodes.size(), false);
 
-    gEditorScriptOnUpdate(dt);
+    for (auto& slot : gEditorScripts)
+    {
+        if (slot.active && slot.onUpdate)
+            slot.onUpdate(dt);
+    }
     if (now >= gEditorScriptNextTickLog)
     {
         gEditorScriptNextTickLog = now + 1.0;
-        printf("[ScriptRuntime] OnUpdate tick\n");
+        printf("[ScriptRuntime] OnUpdate tick (%d scripts)\n", (int)gEditorScripts.size());
     }
 }
 
 static void NotifyScriptSceneSwitch()
 {
-    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnSceneSwitch || !useScriptController)
+    if (!gPlayMode || !gEditorScriptActive || !useScriptController)
         return;
     if (gActiveScene < 0 || gActiveScene >= (int)gOpenScenes.size())
         return;
-    gEditorScriptOnSceneSwitch(gOpenScenes[gActiveScene].name.c_str());
-    printf("[ScriptRuntime] OnSceneSwitch: %s\n", gOpenScenes[gActiveScene].name.c_str());
+    const char* sceneName = gOpenScenes[gActiveScene].name.c_str();
+    for (auto& slot : gEditorScripts)
+    {
+        if (slot.active && slot.onSceneSwitch)
+            slot.onSceneSwitch(sceneName);
+    }
+    printf("[ScriptRuntime] OnSceneSwitch: %s\n", sceneName);
 }
 
 static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
@@ -2128,71 +2169,104 @@ NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
 // ---------------------------------------------------------------------------
 NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
 {
-    // Gather world-space triangles from collision-flagged StaticMesh3D nodes
+    // Inline BE readers (LoadNebMesh helpers are defined later in the file)
+    auto readU32BE = [](std::ifstream& f, uint32_t& v) -> bool {
+        uint8_t b[4]; if (!f.read((char*)b, 4)) return false;
+        v = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+        return true;
+    };
+    auto readS16BE = [](std::ifstream& f, int16_t& v) -> bool {
+        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+        v = (int16_t)(((uint16_t)b[0] << 8) | b[1]);
+        return true;
+    };
+    auto readU16BE = [](std::ifstream& f, uint16_t& v) -> bool {
+        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+        v = ((uint16_t)b[0] << 8) | b[1];
+        return true;
+    };
+
+    // Gather world-space triangles from all StaticMesh3D nodes
     std::vector<float> verts;
     std::vector<int>   tris;
+    printf("[NavMesh] Building from %d static meshes (project=%s)\n", (int)gStaticMeshNodes.size(), gProjectDir.c_str());
     for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
     {
         const auto& sm = gStaticMeshNodes[si];
-        if (sm.mesh.empty()) continue;
+        if (sm.mesh.empty() || gProjectDir.empty()) continue;
 
-        // Load mesh data
-        std::ifstream mf(sm.mesh, std::ios::binary);
-        if (!mf.is_open()) continue;
+        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / sm.mesh;
+        std::ifstream mf(meshPath, std::ios::binary);
+        if (!mf.is_open()) { printf("[NavMesh]   [%d] %s — file not found\n", si, sm.name.c_str()); continue; }
 
-        // Read .nebmesh header
-        char magic[8] = {};
-        mf.read(magic, 7);
-        if (std::string(magic) != "NEBMESH") continue;
+        // Read NEBM header (4-byte magic, then BE u32: version, flags, vertexCount, indexCount, posFracBits)
+        char magic[4];
+        if (!mf.read(magic, 4) || magic[0] != 'N' || magic[1] != 'E' || magic[2] != 'B' || magic[3] != 'M')
+        { printf("[NavMesh]   [%d] %s — bad magic\n", si, sm.name.c_str()); continue; }
 
-        uint32_t vertCount = 0, triCount = 0;
-        mf.read(reinterpret_cast<char*>(&vertCount), 4);
-        mf.read(reinterpret_cast<char*>(&triCount), 4);
+        uint32_t version = 0, flags = 0, vertexCount = 0, indexCount = 0, posFracBits = 8;
+        if (!readU32BE(mf, version) || !readU32BE(mf, flags) || !readU32BE(mf, vertexCount) ||
+            !readU32BE(mf, indexCount) || !readU32BE(mf, posFracBits))
+        { printf("[NavMesh]   [%d] %s — header read failed\n", si, sm.name.c_str()); continue; }
 
-        std::vector<float> meshVerts(vertCount * 3);
-        mf.read(reinterpret_cast<char*>(meshVerts.data()), vertCount * 3 * sizeof(float));
+        // Read positions (fixed-point s16 BE)
+        float invScale = 1.0f / (float)(1 << posFracBits);
+        std::vector<Vec3> positions(vertexCount);
+        for (uint32_t v = 0; v < vertexCount; ++v)
+        {
+            int16_t x, y, z;
+            if (!readS16BE(mf, x) || !readS16BE(mf, y) || !readS16BE(mf, z)) break;
+            positions[v] = { x * invScale, y * invScale, z * invScale };
+        }
 
-        // Skip UVs (vertCount * 2 floats)
-        mf.seekg(vertCount * 2 * sizeof(float), std::ios::cur);
+        // Skip UVs
+        bool hasUv = (flags & 1u) != 0;
+        bool hasUv1 = (flags & 16u) != 0;
+        if (hasUv) mf.seekg(vertexCount * 4, std::ios::cur);  // 2x s16 per vertex
+        if (hasUv1) mf.seekg(vertexCount * 4, std::ios::cur);
 
-        std::vector<uint16_t> meshIndices(triCount * 3);
-        mf.read(reinterpret_cast<char*>(meshIndices.data()), triCount * 3 * sizeof(uint16_t));
+        // Read indices (u16 BE)
+        std::vector<uint16_t> indices(indexCount);
+        for (uint32_t i = 0; i < indexCount; ++i)
+        {
+            if (!readU16BE(mf, indices[i])) break;
+        }
+
+        if (positions.empty() || indices.empty()) continue;
 
         // Get world transform
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
-        float rx = wrx * 3.14159265f / 180.0f;
-        float ry = wry * 3.14159265f / 180.0f;
-        float rz = wrz * 3.14159265f / 180.0f;
-        float cx = cosf(rx), sx2 = sinf(rx);
-        float cy = cosf(ry), sy = sinf(ry);
-        float cz = cosf(rz), sz = sinf(rz);
+        Vec3 right, up, forward;
+        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
 
         int baseVert = (int)(verts.size() / 3);
-        for (uint32_t v = 0; v < vertCount; ++v)
+        for (uint32_t v = 0; v < vertexCount; ++v)
         {
-            float lx = meshVerts[v * 3 + 0] * wsx;
-            float ly = meshVerts[v * 3 + 1] * wsy;
-            float lz = meshVerts[v * 3 + 2] * wsz;
-
-            // Euler rotation YXZ
-            float t1x = lx, t1y = ly * cx - lz * sx2, t1z = ly * sx2 + lz * cx;
-            float t2x = t1x * cy + t1z * sy, t2y = t1y, t2z = -t1x * sy + t1z * cy;
-            float t3x = t2x * cz - t2y * sz, t3y = t2x * sz + t2y * cz, t3z = t2z;
-
-            verts.push_back(t3x + wx);
-            verts.push_back(t3y + wy);
-            verts.push_back(t3z + wz);
+            float lx = positions[v].x * wsx;
+            float ly = positions[v].y * wsy;
+            float lz = positions[v].z * wsz;
+            verts.push_back(wx + right.x * lx + up.x * ly + forward.x * lz);
+            verts.push_back(wy + right.y * lx + up.y * ly + forward.y * lz);
+            verts.push_back(wz + right.z * lx + up.z * ly + forward.z * lz);
         }
-        for (uint32_t t = 0; t < triCount * 3; ++t)
+        for (uint32_t t = 0; t < indexCount; ++t)
         {
-            tris.push_back(baseVert + (int)meshIndices[t]);
+            tris.push_back(baseVert + (int)indices[t]);
         }
+        printf("[NavMesh]   [%d] %s — %u verts, %u tris\n", si, sm.name.c_str(), vertexCount, indexCount / 3);
     }
 
-    if (verts.empty() || tris.empty()) return 0;
-    return NavMeshBuild(verts.data(), (int)verts.size(), tris.data(), (int)tris.size()) ? 1 : 0;
+    printf("[NavMesh] Total: %d verts, %d tris\n", (int)(verts.size() / 3), (int)(tris.size() / 3));
+    if (verts.empty() || tris.empty())
+    {
+        printf("[NavMesh] No geometry — build failed\n");
+        return 0;
+    }
+    int ok = NavMeshBuild(verts.data(), (int)(verts.size() / 3), tris.data(), (int)(tris.size() / 3)) ? 1 : 0;
+    printf("[NavMesh] Build result: %s\n", ok ? "success" : "failed");
+    return ok;
 }
 
 NB_RT_EXPORT void NB_RT_NavMeshClear(void)
@@ -10005,28 +10079,31 @@ int main(int, char**)
         if (gPlayMode)
         {
             const float gravity = -29.4f;
-            const float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
+            float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
+            if (dt > 0.1f) dt = 0.1f;
             for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
                 bool scriptManaged = (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]);
 
-                // Script-managed nodes handle their own gravity/position — only apply for non-script nodes
+                // Apply gravity first for non-script-managed nodes
                 if (!scriptManaged)
                 {
                     n3.velY += gravity * dt;
                     n3.y += n3.velY * dt;
                 }
 
-                // Slope alignment: snap to face normal.
+                // Raycast from just above feet (bottom of bounding box) to find ground
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
                 GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
                 float hy = std::max(0.0f, n3.extentY * pwsy);
-                float castY = pwy + n3.boundPosY;
+                float castY = pwy + n3.boundPosY - hy + 0.5f;
                 float hitY = 0.0f;
                 float hitNormal[3] = {0.0f, 1.0f, 0.0f};
-                if (NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal))
+                bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
+
+                if (groundHit)
                 {
                     if (!scriptManaged)
                     {

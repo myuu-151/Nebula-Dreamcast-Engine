@@ -1821,13 +1821,6 @@ NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
     outRot[0] = n.rotX;
     outRot[1] = n.rotY;
     outRot[2] = n.rotZ;
-    if (n.physicsEnabled)
-    {
-        // Use atan2-based yaw extraction (full [-180,180] range, no asin ambiguity)
-        float fx = 2.0f * (n.qx * n.qz + n.qw * n.qy);
-        float fz = 1.0f - 2.0f * (n.qx * n.qx + n.qy * n.qy);
-        outRot[1] = atan2f(fx, fz) * (180.0f / 3.14159265f);
-    }
 }
 
 NB_RT_EXPORT void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z)
@@ -10047,8 +10040,8 @@ int main(int, char**)
 
                     {
                         float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
-                        // Extract yaw from quat (script controls yaw, slope controls tilt)
-                        float savedYaw = QuatYawDeg(n3.qw, n3.qx, n3.qy, n3.qz);
+                        // Use script's yaw directly (not QuatYawDeg which distorts on slopes)
+                        float savedYaw = n3.rotY;
 
                         // Extract current up vector from quat (the smoothed normal)
                         float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
@@ -10070,12 +10063,13 @@ int main(int, char**)
                         Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
                         n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
                         SyncNode3DEulerFromQuat(n3);
+                        n3.rotY = savedYaw; // preserve script's yaw (QuatToEuler distorts it)
                     }
                 }
                 else if (!scriptManaged)
                 {
                     // No ground hit — smooth tilt back to upright
-                    float savedYaw = QuatYawDeg(n3.qw, n3.qx, n3.qy, n3.qz);
+                    float savedYaw = n3.rotY;
                     float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
                     float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
                     float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
@@ -10088,6 +10082,7 @@ int main(int, char**)
                     Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
                     n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
                     SyncNode3DEulerFromQuat(n3);
+                    n3.rotY = savedYaw;
                 }
             }
         }

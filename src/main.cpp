@@ -9786,7 +9786,10 @@ int main(int, char**)
                         if (ny > 0.9f)
                         {
                             n3.rotX = atan2f(nz, ny) * kDeg;
-                            n3.rotZ = atan2f(-nx, ny) * kDeg;
+                            // Flip side tilt with facing direction so it
+                            // stays correct when the character turns around
+                            float cy = cosf(savedYaw * (3.14159265f / 180.0f));
+                            n3.rotZ = atan2f(-nx * cy, ny) * kDeg;
                         }
                         else
                         {

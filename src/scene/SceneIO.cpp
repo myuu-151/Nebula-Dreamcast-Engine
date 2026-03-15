@@ -2,9 +2,28 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+
+namespace
+{
+    static void SyncNode3DQuatFromEuler(Node3DNode& n)
+    {
+        float rx = n.rotX * 3.14159265f / 180.0f * 0.5f;
+        float ry = n.rotY * 3.14159265f / 180.0f * 0.5f;
+        float rz = n.rotZ * 3.14159265f / 180.0f * 0.5f;
+        float cx = cosf(rx), sx = sinf(rx);
+        float cy = cosf(ry), sy = sinf(ry);
+        float cz = cosf(rz), sz = sinf(rz);
+        // R = Rz * Ry * Rx → q = qZ * qY * qX
+        n.qw = cz*cy*cx + sz*sy*sx;
+        n.qx = cz*cy*sx - sz*sy*cx;
+        n.qy = cz*sy*cx + sz*cy*sx;
+        n.qz = sz*cy*cx - cz*sy*sx;
+    }
+}
 
 namespace NebulaScene
 {
@@ -496,6 +515,7 @@ namespace NebulaScene
                     n.boundPosY = (float)atof(toks[19].c_str());
                     n.boundPosZ = (float)atof(toks[20].c_str());
                 }
+                SyncNode3DQuatFromEuler(n);
                 outScene.node3d.push_back(n);
             }
             else if (type == "NavMesh3D")

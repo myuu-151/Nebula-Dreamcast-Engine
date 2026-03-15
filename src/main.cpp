@@ -285,8 +285,6 @@ struct ScriptSlot
 };
 static std::vector<ScriptSlot> gEditorScripts;
 static bool gEditorScriptActive = false;
-// Tracks which Node3Ds had their position set by a script this frame (skip editor AABB physics for those)
-static std::vector<bool> gNode3DScriptManaged;
 static double gEditorScriptNextTickLog = 0.0;
 // Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
 static bool useScriptController = true;
@@ -922,7 +920,6 @@ static void TickPlayScriptRuntime(float dt, double now)
         return;
 
     // Clear per-frame script-managed flags before scripts run
-    gNode3DScriptManaged.assign(gNode3DNodes.size(), false);
 
     for (auto& slot : gEditorScripts)
     {
@@ -1845,7 +1842,6 @@ NB_RT_EXPORT void NB_RT_SetNode3DPosition(const char* name, float x, float y, fl
     n.x = x;
     n.y = y;
     n.z = z;
-    if (idx < (int)gNode3DScriptManaged.size()) gNode3DScriptManaged[idx] = true;
 }
 
 NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
@@ -10147,14 +10143,9 @@ int main(int, char**)
             {
                 auto& n3 = gNode3DNodes[ni];
                 if (!n3.physicsEnabled) continue;
-                bool scriptManaged = (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]);
-
-                // Apply gravity first for non-script-managed nodes
-                if (!scriptManaged)
-                {
-                    n3.velY += gravity * dt;
-                    n3.y += n3.velY * dt;
-                }
+                // Apply gravity
+                n3.velY += gravity * dt;
+                n3.y += n3.velY * dt;
 
                 // Raycast from just above feet (bottom of bounding box) to find ground
                 float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
@@ -10167,14 +10158,11 @@ int main(int, char**)
 
                 if (groundHit)
                 {
-                    if (!scriptManaged)
+                    float groundY = hitY - n3.boundPosY + hy;
+                    if (n3.y <= groundY)
                     {
-                        float groundY = hitY - n3.boundPosY + hy;
-                        if (n3.y <= groundY)
-                        {
-                            n3.y = groundY;
-                            if (n3.velY < 0.0f) n3.velY = 0.0f;
-                        }
+                        n3.y = groundY;
+                        if (n3.velY < 0.0f) n3.velY = 0.0f;
                     }
 
                     {
@@ -10205,7 +10193,7 @@ int main(int, char**)
                         n3.rotY = savedYaw; // preserve script's yaw (QuatToEuler distorts it)
                     }
                 }
-                else if (!scriptManaged)
+                else
                 {
                     // No ground hit — smooth tilt back to upright
                     float savedYaw = n3.rotY;

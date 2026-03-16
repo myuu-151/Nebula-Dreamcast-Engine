@@ -71,8 +71,15 @@ void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]);
 ```
 
 ### Naming semantics
-- `name` must match scene node names exactly (e.g. `"PlayerRoot"`, `"Camera3D1"`).
-- If name mismatch occurs, behavior depends on runtime implementation (often no-op/fallback).
+- `name` must match scene node names (e.g. `"PlayerRoot"`, `"Camera3D1"`, `"AINode"`). Matching is case-insensitive.
+- Each script should define its target node name as a constant and pass it to all `NB_RT_*` calls:
+  ```c
+  static const char* PLAYER_NODE = "PlayerRoot";
+  NB_RT_GetNode3DPosition(PLAYER_NODE, pos);
+  NB_RT_SetNode3DPosition(PLAYER_NODE, pos[0], pos[1], pos[2]);
+  ```
+- On Dreamcast, the runtime maintains a name-indexed table of all Node3D nodes. The player's parent Node3D routes to the player globals (physics, rendering, camera). All other names route to independent per-node data in the table.
+- If `name` doesn't match any Node3D in the scene, get functions return zeros and set functions are no-ops.
 
 ---
 
@@ -199,10 +206,24 @@ NB_SCRIPT_EXPORT void NB_Game_OnUpdate(float dt)
 
 ## 9) Multi-script semantics
 
-If multiple `.c` scripts are auto-compiled in one build:
-- Avoid implementing the same hook in multiple files unless intentional.
-- If multiple define `NB_Game_OnUpdate`, linker behavior may fail or choose one unexpectedly.
-- Recommended: one primary gameplay hook file, others as utility modules.
+Multiple scripts can run simultaneously, each controlling different Node3D nodes by name:
+
+```c
+// Control4.c — assigned to PlayerRoot's child mesh
+static const char* PLAYER_NODE = "PlayerRoot";
+NB_RT_SetNode3DPosition(PLAYER_NODE, x, y, z);
+
+// airoam.c — assigned to AINode's child mesh
+static const char* AI_NODE = "AINode";
+NB_RT_SetNode3DPosition(AI_NODE, x, y, z);
+```
+
+Each script defines `NB_Game_OnStart`, `NB_Game_OnUpdate`, and `NB_Game_OnSceneSwitch`. On Windows, each unique script compiles to its own DLL. On Dreamcast, the export pipeline auto-renames hooks to avoid symbol collisions (see `docs/Multi_Script_Runtime.md`).
+
+**Key rules:**
+- Each script controls nodes by name string — it does not automatically control the Node3D it's assigned to. The `script` field on a Node3D just tells the engine to load that script.
+- Multiple scripts can read the same node. A single script can control multiple nodes.
+- Scripts share the same navmesh and raycast data — `NB_RT_NavMeshBuild()` only needs to be called once (by any script).
 
 ---
 

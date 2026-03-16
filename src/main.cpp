@@ -13699,53 +13699,171 @@ RenderImGuiOnly:
                                 if (!stagingNameCollision)
                                 {
                                     // Build navmesh from all meshes in all loaded scenes
+                                    // Uses same NEBM binary format reader as editor NavMeshBuild (line ~2274)
                                     std::vector<float> navVerts;
                                     std::vector<int>   navTris;
+
+                                    // BE reader helpers (same as LoadNebMesh)
+                                    auto dcReadU32BE = [](std::ifstream& f, uint32_t& v) -> bool {
+                                        uint8_t b[4]; if (!f.read((char*)b, 4)) return false;
+                                        v = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+                                        return true;
+                                    };
+                                    auto dcReadS16BE = [](std::ifstream& f, int16_t& v) -> bool {
+                                        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+                                        v = (int16_t)(((uint16_t)b[0] << 8) | b[1]);
+                                        return true;
+                                    };
+                                    auto dcReadU16BE = [](std::ifstream& f, uint16_t& v) -> bool {
+                                        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+                                        v = ((uint16_t)b[0] << 8) | b[1];
+                                        return true;
+                                    };
+
+                                    // Collect NavMesh3D bounding volumes from all scenes
+                                    struct DCNavBounds { float minX, minY, minZ, maxX, maxY, maxZ; bool negator; };
+                                    std::vector<DCNavBounds> dcNavVolumes;
                                     for (const auto& ls : loadedScenes)
                                     {
+                                        for (const auto& nm : ls.data.navMeshes)
+                                        {
+                                            if (!nm.navBounds && !nm.navNegator) continue;
+                                            float hx = nm.extentX * 0.5f;
+                                            float hy = nm.extentY * 0.5f;
+                                            float hz = nm.extentZ * 0.5f;
+                                            dcNavVolumes.push_back({
+                                                nm.x - hx, nm.y - hy, nm.z - hz,
+                                                nm.x + hx, nm.y + hy, nm.z + hz,
+                                                nm.navNegator
+                                            });
+                                        }
+                                    }
+                                    auto dcPointInNavBounds = [&](float px, float py, float pz) -> bool {
+                                        bool inBounds = false;
+                                        for (const auto& vol : dcNavVolumes)
+                                        {
+                                            if (vol.negator) continue;
+                                            if (px >= vol.minX && px <= vol.maxX &&
+                                                py >= vol.minY && py <= vol.maxY &&
+                                                pz >= vol.minZ && pz <= vol.maxZ)
+                                            { inBounds = true; break; }
+                                        }
+                                        if (!inBounds) return false;
+                                        for (const auto& vol : dcNavVolumes)
+                                        {
+                                            if (!vol.negator) continue;
+                                            if (px >= vol.minX && px <= vol.maxX &&
+                                                py >= vol.minY && py <= vol.maxY &&
+                                                pz >= vol.minZ && pz <= vol.maxZ)
+                                                return false;
+                                        }
+                                        return true;
+                                    };
+
+                                    printf("[DreamcastBuild] navmesh export: %d loaded scenes, %d nav volumes\n", (int)loadedScenes.size(), (int)dcNavVolumes.size());
+                                    for (const auto& ls : loadedScenes)
+                                    {
+                                        printf("[DreamcastBuild] navmesh: scene has %d static meshes\n", (int)ls.data.staticMeshes.size());
                                         for (const auto& sm : ls.data.staticMeshes)
                                         {
                                             if (sm.mesh.empty()) continue;
-                                            std::ifstream mf(sm.mesh, std::ios::binary);
-                                            if (!mf.is_open()) continue;
-                                            char magic[8] = {};
-                                            mf.read(magic, 7);
-                                            if (std::string(magic) != "NEBMESH") continue;
-                                            uint32_t vc = 0, tc = 0;
-                                            mf.read(reinterpret_cast<char*>(&vc), 4);
-                                            mf.read(reinterpret_cast<char*>(&tc), 4);
-                                            std::vector<float> mv(vc * 3);
-                                            mf.read(reinterpret_cast<char*>(mv.data()), vc * 3 * sizeof(float));
-                                            mf.seekg(vc * 2 * sizeof(float), std::ios::cur);
-                                            std::vector<uint16_t> mi(tc * 3);
-                                            mf.read(reinterpret_cast<char*>(mi.data()), tc * 3 * sizeof(uint16_t));
+                                            std::filesystem::path meshAbs = sm.mesh;
+                                            if (meshAbs.is_relative())
+                                                meshAbs = std::filesystem::path(gProjectDir) / meshAbs;
+                                            std::ifstream mf(meshAbs, std::ios::binary);
+                                            if (!mf.is_open()) { printf("[DreamcastBuild] navmesh: FAILED to open '%s'\n", meshAbs.string().c_str()); continue; }
 
+                                            // Read NEBM header: 4-byte magic, then BE u32: version, flags, vertexCount, indexCount, posFracBits
+                                            char magic[4];
+                                            if (!mf.read(magic, 4) || magic[0] != 'N' || magic[1] != 'E' || magic[2] != 'B' || magic[3] != 'M')
+                                            { printf("[DreamcastBuild] navmesh: bad magic in '%s'\n", meshAbs.string().c_str()); continue; }
+
+                                            uint32_t version = 0, flags = 0, vertexCount = 0, indexCount = 0, posFracBits = 8;
+                                            if (!dcReadU32BE(mf, version) || !dcReadU32BE(mf, flags) || !dcReadU32BE(mf, vertexCount) ||
+                                                !dcReadU32BE(mf, indexCount) || !dcReadU32BE(mf, posFracBits))
+                                            { printf("[DreamcastBuild] navmesh: header read failed '%s'\n", meshAbs.string().c_str()); continue; }
+
+                                            // Read positions (fixed-point s16 BE)
+                                            float invScale = 1.0f / (float)(1 << posFracBits);
+                                            std::vector<float> positions(vertexCount * 3);
+                                            for (uint32_t v = 0; v < vertexCount; ++v)
+                                            {
+                                                int16_t px, py, pz;
+                                                if (!dcReadS16BE(mf, px) || !dcReadS16BE(mf, py) || !dcReadS16BE(mf, pz)) break;
+                                                positions[v * 3 + 0] = px * invScale;
+                                                positions[v * 3 + 1] = py * invScale;
+                                                positions[v * 3 + 2] = pz * invScale;
+                                            }
+
+                                            // Skip UV layers
+                                            bool hasUv = (flags & 1u) != 0;
+                                            bool hasUv1 = (flags & 16u) != 0;
+                                            if (hasUv) mf.seekg(vertexCount * 4, std::ios::cur);
+                                            if (hasUv1) mf.seekg(vertexCount * 4, std::ios::cur);
+
+                                            // Read indices (u16 BE)
+                                            std::vector<uint16_t> indices(indexCount);
+                                            for (uint32_t i = 0; i < indexCount; ++i)
+                                            {
+                                                if (!dcReadU16BE(mf, indices[i])) break;
+                                            }
+
+                                            if (vertexCount == 0 || indexCount == 0) continue;
+
+                                            // Transform vertices to world space
                                             float sx = sm.scaleX, sy = sm.scaleY, sz = sm.scaleZ;
                                             float rx = sm.rotX * 3.14159265f / 180.0f;
                                             float ry = sm.rotY * 3.14159265f / 180.0f;
                                             float rz = sm.rotZ * 3.14159265f / 180.0f;
-                                            float cx = cosf(rx), snx = sinf(rx);
-                                            float cy = cosf(ry), sny = sinf(ry);
-                                            float cz = cosf(rz), snz = sinf(rz);
+                                            float cxr = cosf(rx), snxr = sinf(rx);
+                                            float cyr = cosf(ry), snyr = sinf(ry);
+                                            float czr = cosf(rz), snzr = sinf(rz);
 
-                                            int baseV = (int)(navVerts.size() / 3);
-                                            for (uint32_t v = 0; v < vc; ++v)
+                                            std::vector<float> worldPos(vertexCount * 3);
+                                            for (uint32_t v = 0; v < vertexCount; ++v)
                                             {
-                                                float lx = mv[v*3+0]*sx, ly = mv[v*3+1]*sy, lz = mv[v*3+2]*sz;
-                                                float t1x=lx, t1y=ly*cx-lz*snx, t1z=ly*snx+lz*cx;
-                                                float t2x=t1x*cy+t1z*sny, t2y=t1y, t2z=-t1x*sny+t1z*cy;
-                                                float t3x=t2x*cz-t2y*snz, t3y=t2x*snz+t2y*cz, t3z=t2z;
-                                                navVerts.push_back(t3x + sm.x);
-                                                navVerts.push_back(t3y + sm.y);
-                                                navVerts.push_back(t3z + sm.z);
+                                                float lx = positions[v*3+0]*sx, ly = positions[v*3+1]*sy, lz = positions[v*3+2]*sz;
+                                                float t1x=lx, t1y=ly*cxr-lz*snxr, t1z=ly*snxr+lz*cxr;
+                                                float t2x=t1x*cyr+t1z*snyr, t2y=t1y, t2z=-t1x*snyr+t1z*cyr;
+                                                float t3x=t2x*czr-t2y*snzr, t3y=t2x*snzr+t2y*czr, t3z=t2z;
+                                                worldPos[v*3+0] = t3x + sm.x;
+                                                worldPos[v*3+1] = t3y + sm.y;
+                                                worldPos[v*3+2] = t3z + sm.z;
                                             }
-                                            for (uint32_t t = 0; t < tc * 3; ++t)
-                                                navTris.push_back(baseV + (int)mi[t]);
+
+                                            // Only include triangles where at least one vertex is inside nav bounds
+                                            int addedTris = 0;
+                                            for (uint32_t t = 0; t + 2 < indexCount; t += 3)
+                                            {
+                                                uint16_t i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
+                                                if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount) continue;
+                                                float v0x = worldPos[i0*3+0], v0y = worldPos[i0*3+1], v0z = worldPos[i0*3+2];
+                                                float v1x = worldPos[i1*3+0], v1y = worldPos[i1*3+1], v1z = worldPos[i1*3+2];
+                                                float v2x = worldPos[i2*3+0], v2y = worldPos[i2*3+1], v2z = worldPos[i2*3+2];
+                                                bool inside = dcNavVolumes.empty() ||
+                                                              dcPointInNavBounds(v0x, v0y, v0z) ||
+                                                              dcPointInNavBounds(v1x, v1y, v1z) ||
+                                                              dcPointInNavBounds(v2x, v2y, v2z);
+                                                if (!inside) continue;
+
+                                                int baseV = (int)(navVerts.size() / 3);
+                                                navVerts.push_back(v0x); navVerts.push_back(v0y); navVerts.push_back(v0z);
+                                                navVerts.push_back(v1x); navVerts.push_back(v1y); navVerts.push_back(v1z);
+                                                navVerts.push_back(v2x); navVerts.push_back(v2y); navVerts.push_back(v2z);
+                                                navTris.push_back(baseV);
+                                                navTris.push_back(baseV + 1);
+                                                navTris.push_back(baseV + 2);
+                                                ++addedTris;
+                                            }
+                                            printf("[DreamcastBuild] navmesh:   %s — %d verts, %d/%u tris\n", sm.name.c_str(), (int)vertexCount, addedTris, indexCount / 3);
                                         }
                                     }
+                                    printf("[DreamcastBuild] navmesh: collected %d verts, %d tris\n", (int)(navVerts.size()/3), (int)(navTris.size()/3));
                                     if (!navVerts.empty() && !navTris.empty())
                                     {
-                                        if (NavMeshBuild(navVerts.data(), (int)navVerts.size(), navTris.data(), (int)navTris.size()))
+                                        bool buildOk = NavMeshBuild(navVerts.data(), (int)(navVerts.size() / 3), navTris.data(), (int)(navTris.size() / 3));
+                                        printf("[DreamcastBuild] navmesh: NavMeshBuild returned %s\n", buildOk ? "SUCCESS" : "FAILED");
+                                        if (buildOk)
                                         {
                                             std::vector<uint8_t> blob;
                                             if (NavMeshSaveBinary(blob) && !blob.empty())
@@ -14262,16 +14380,30 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetMeshPosition(float x,float y,float z){ gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; }\n";
                                 mc << "void NB_RT_AddMeshPositionDelta(float dx,float dy,float dz){ gMeshPos[0]+=dx; gMeshPos[1]+=dy; gMeshPos[2]+=dz; }\n";
                                 mc << "\n";
-                                mc << "/* Script runtime bridge (name-tolerant fallback for DC runtime) */\n";
+                                // Emit DcNode3D struct, array, and lookup BEFORE bridge functions that use them
+                                {
+                                    int earlyMaxN3D = 0;
+                                    for (const auto& sn : runtimeSceneNode3Ds)
+                                        if ((int)sn.size() > earlyMaxN3D) earlyMaxN3D = (int)sn.size();
+                                    if (earlyMaxN3D < 1) earlyMaxN3D = 1;
+                                    mc << "#define MAX_NODE3D " << earlyMaxN3D << "\n";
+                                    mc << "typedef struct { const char* name; float pos[3]; float rot[3]; float velY; int onFloor; float extent[3]; float boundPos[3]; int physEnabled; int collisionSource; int simpleCollision; float qw,qx,qy,qz; } DcNode3D;\n";
+                                    mc << "static DcNode3D gNode3Ds[MAX_NODE3D];\n";
+                                    mc << "static int gNode3DCount = 0;\n";
+                                    mc << "static int dc_find_node3d(const char* name){ if(!name||!name[0]) return -1; for(int i=0;i<gNode3DCount;i++){ if(gNode3Ds[i].name && dc_eq_nocase(name,gNode3Ds[i].name)) return i; } return -1; }\n";
+                                }
+                                mc << "/* Script runtime bridge — name-based Node3D lookup for multi-node support */\n";
+                                mc << "static const char kPlayerParentName[] = \"" << meshSrc.parent << "\";\n";
                                 mc << "static float gRtOrbit[3] = {0.0f, 0.0f, 0.0f};\n";
                                 mc << "static float gRtCamRot[3] = {0.0f, 0.0f, 0.0f};\n";
                                 mc << "static int gOrbitInited = 0;\n";
                                 mc << "static int gFollowAlign = 0;\n";
                                 mc << "static const int kDcDebug = 0;\n";
-                                mc << "void NB_RT_GetNode3DPosition(const char* name, float outPos[3]){ (void)name; if(!outPos) return; outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; }\n";
-                                mc << "void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z){ (void)name; gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; }\n";
-                                mc << "void NB_RT_GetNode3DRotation(const char* name, float outRot[3]){ (void)name; if(!outRot) return; outRot[0]=gMeshRot[0]; outRot[1]=gMeshRot[1]; outRot[2]=gMeshRot[2]; }\n";
-                                mc << "void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z){ (void)name; gMeshRot[0]=x; gMeshRot[1]=y; gMeshRot[2]=z; }\n";
+                                mc << "static int dc_is_player_node(const char* name){ return (name && kPlayerParentName[0] && dc_eq_nocase(name, kPlayerParentName)); }\n";
+                                mc << "void NB_RT_GetNode3DPosition(const char* name, float outPos[3]){ if(!outPos) return; if(dc_is_player_node(name)){ outPos[0]=gMeshPos[0]; outPos[1]=gMeshPos[1]; outPos[2]=gMeshPos[2]; return; } int idx=dc_find_node3d(name); if(idx>=0){ outPos[0]=gNode3Ds[idx].pos[0]; outPos[1]=gNode3Ds[idx].pos[1]; outPos[2]=gNode3Ds[idx].pos[2]; } else { outPos[0]=outPos[1]=outPos[2]=0; } }\n";
+                                mc << "void NB_RT_SetNode3DPosition(const char* name, float x, float y, float z){ if(dc_is_player_node(name)){ gMeshPos[0]=x; gMeshPos[1]=y; gMeshPos[2]=z; return; } int idx=dc_find_node3d(name); if(idx>=0){ gNode3Ds[idx].pos[0]=x; gNode3Ds[idx].pos[1]=y; gNode3Ds[idx].pos[2]=z; } }\n";
+                                mc << "void NB_RT_GetNode3DRotation(const char* name, float outRot[3]){ if(!outRot) return; if(dc_is_player_node(name)){ outRot[0]=gMeshRot[0]; outRot[1]=gMeshRot[1]; outRot[2]=gMeshRot[2]; return; } int idx=dc_find_node3d(name); if(idx>=0){ outRot[0]=gNode3Ds[idx].rot[0]; outRot[1]=gNode3Ds[idx].rot[1]; outRot[2]=gNode3Ds[idx].rot[2]; } else { outRot[0]=outRot[1]=outRot[2]=0; } }\n";
+                                mc << "void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z){ if(dc_is_player_node(name)){ gMeshRot[0]=x; gMeshRot[1]=y; gMeshRot[2]=z; return; } int idx=dc_find_node3d(name); if(idx>=0){ gNode3Ds[idx].rot[0]=x; gNode3Ds[idx].rot[1]=y; gNode3Ds[idx].rot[2]=z; } }\n";
                                 mc << "void NB_RT_GetCameraOrbit(const char* name, float outOrbit[3]){ (void)name; if(!outOrbit) return; outOrbit[0]=gRtOrbit[0]; outOrbit[1]=gRtOrbit[1]; outOrbit[2]=gRtOrbit[2]; }\n";
                                 mc << "void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z){ (void)name; gRtOrbit[0]=x; gRtOrbit[1]=y; gRtOrbit[2]=z; gOrbitInited=1; { float tx=gMeshPos[0], ty=gMeshPos[1]+1.2f, tz=gMeshPos[2]; gCamPos[0]=tx + gRtOrbit[0]; gCamPos[1]=ty + gRtOrbit[1]; gCamPos[2]=tz + gRtOrbit[2]; { float fx=tx-gCamPos[0], fy=ty-gCamPos[1], fz=tz-gCamPos[2]; float fl=sqrtf(fx*fx+fy*fy+fz*fz); if(fl<1e-6f) fl=1.0f; fx/=fl; fy/=fl; fz/=fl; gCamForward[0]=fx; gCamForward[1]=fy; gCamForward[2]=fz; gCamUp[0]=0.0f; gCamUp[1]=1.0f; gCamUp[2]=0.0f; { float rx=-fz, ry=0.0f, rz=fx; float rl=sqrtf(rx*rx+ry*ry+rz*rz); if(rl<1e-6f){ rx=1.0f; ry=0.0f; rz=0.0f; rl=1.0f; } gCamRight[0]=rx/rl; gCamRight[1]=ry/rl; gCamRight[2]=rz/rl; } } } }\n";
                                 mc << "void NB_RT_GetCameraRotation(const char* name, float outRot[3]){ (void)name; if(!outRot) return; outRot[0]=gRtCamRot[0]; outRot[1]=gRtCamRot[1]; outRot[2]=gRtCamRot[2]; }\n";
@@ -14306,8 +14438,8 @@ RenderImGuiOnly:
                                 }
                                 mc << "static float gVelY = 0.0f;\n";
                                 mc << "static int gOnFloor = 0;\n";
-                                mc << "void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]){ (void)name; if(!outExtents) return; outExtents[0]=gCollExtent[0]; outExtents[1]=gCollExtent[1]; outExtents[2]=gCollExtent[2]; }\n";
-                                mc << "void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez){ (void)name; gCollExtent[0]=ex; gCollExtent[1]=ey; gCollExtent[2]=ez; }\n";
+                                mc << "void NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]){ if(!outExtents) return; if(dc_is_player_node(name)){ outExtents[0]=gCollExtent[0]; outExtents[1]=gCollExtent[1]; outExtents[2]=gCollExtent[2]; return; } int idx=dc_find_node3d(name); if(idx>=0){ outExtents[0]=gNode3Ds[idx].extent[0]; outExtents[1]=gNode3Ds[idx].extent[1]; outExtents[2]=gNode3Ds[idx].extent[2]; } else { outExtents[0]=outExtents[1]=outExtents[2]=0.5f; } }\n";
+                                mc << "void NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez){ if(dc_is_player_node(name)){ gCollExtent[0]=ex; gCollExtent[1]=ey; gCollExtent[2]=ez; return; } int idx=dc_find_node3d(name); if(idx>=0){ gNode3Ds[idx].extent[0]=ex; gNode3Ds[idx].extent[1]=ey; gNode3Ds[idx].extent[2]=ez; } }\n";
                                 {
                                     float bpX = 0.0f, bpY = 0.0f, bpZ = 0.0f;
                                     std::string parentName = meshSrc.parent;
@@ -14321,17 +14453,17 @@ RenderImGuiOnly:
                                     }
                                     mc << "static float gBoundPos[3] = {" << fstr(bpX) << "," << fstr(bpY) << "," << fstr(bpZ) << "};\n";
                                 }
-                                mc << "void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]){ (void)name; if(!outPos) return; outPos[0]=gBoundPos[0]; outPos[1]=gBoundPos[1]; outPos[2]=gBoundPos[2]; }\n";
-                                mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ (void)name; gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; }\n";
-                                mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ (void)name; return gPhysicsEnabled; }\n";
-                                mc << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ (void)name; gPhysicsEnabled=enabled; }\n";
-                                mc << "int NB_RT_GetNode3DCollisionSource(const char* name){ (void)name; return gCollisionSource; }\n";
-                                mc << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ (void)name; gCollisionSource=enabled; }\n";
-                                mc << "int NB_RT_GetNode3DSimpleCollision(const char* name){ (void)name; return gSimpleCollision; }\n";
-                                mc << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ (void)name; gSimpleCollision=enabled; }\n";
-                                mc << "float NB_RT_GetNode3DVelocityY(const char* name){ (void)name; return gVelY; }\n";
-                                mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
-                                mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
+                                mc << "void NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]){ if(!outPos) return; if(dc_is_player_node(name)){ outPos[0]=gBoundPos[0]; outPos[1]=gBoundPos[1]; outPos[2]=gBoundPos[2]; return; } int idx=dc_find_node3d(name); if(idx>=0){ outPos[0]=gNode3Ds[idx].boundPos[0]; outPos[1]=gNode3Ds[idx].boundPos[1]; outPos[2]=gNode3Ds[idx].boundPos[2]; } else { outPos[0]=outPos[1]=outPos[2]=0; } }\n";
+                                mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ if(dc_is_player_node(name)){ gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; return; } int idx=dc_find_node3d(name); if(idx>=0){ gNode3Ds[idx].boundPos[0]=bx; gNode3Ds[idx].boundPos[1]=by; gNode3Ds[idx].boundPos[2]=bz; } }\n";
+                                mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ if(dc_is_player_node(name)) return gPhysicsEnabled; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].physEnabled:0; }\n";
+                                mc << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ if(dc_is_player_node(name)){ gPhysicsEnabled=enabled; return; } int idx=dc_find_node3d(name); if(idx>=0) gNode3Ds[idx].physEnabled=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DCollisionSource(const char* name){ if(dc_is_player_node(name)) return gCollisionSource; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].collisionSource:0; }\n";
+                                mc << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ if(dc_is_player_node(name)){ gCollisionSource=enabled; return; } int idx=dc_find_node3d(name); if(idx>=0) gNode3Ds[idx].collisionSource=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DSimpleCollision(const char* name){ if(dc_is_player_node(name)) return gSimpleCollision; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].simpleCollision:0; }\n";
+                                mc << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ if(dc_is_player_node(name)){ gSimpleCollision=enabled; return; } int idx=dc_find_node3d(name); if(idx>=0) gNode3Ds[idx].simpleCollision=enabled; }\n";
+                                mc << "float NB_RT_GetNode3DVelocityY(const char* name){ if(dc_is_player_node(name)) return gVelY; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].velY:0.0f; }\n";
+                                mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ if(dc_is_player_node(name)){ gVelY=vy; return; } int idx=dc_find_node3d(name); if(idx>=0) gNode3Ds[idx].velY=vy; }\n";
+                                mc << "int NB_RT_IsNode3DOnFloor(const char* name){ if(dc_is_player_node(name)) return gOnFloor; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].onFloor:0; }\n";
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
                                 // NB_RT_RaycastDown emitted after MAX_MESHES/gSceneMeshes declarations
                                 mc << "static int gNavMeshLoaded = 0;\n";
@@ -14538,13 +14670,31 @@ RenderImGuiOnly:
                                     for (const auto& sn : runtimeSceneNode3Ds)
                                         if ((int)sn.size() > maxN3D) maxN3D = (int)sn.size();
                                     if (maxN3D < 1) maxN3D = 1; // at least 1 to avoid zero-size arrays
-                                    mc << "#define MAX_NODE3D " << maxN3D << "\n";
+                                    // MAX_NODE3D, DcNode3D, gNode3Ds, dc_find_node3d already emitted above bridge functions
                                     // Node3D count per scene
                                     mc << "static const int kSceneNode3DCount[" << sceneCount << "] = {";
                                     for (int si = 0; si < sceneCount; ++si)
                                     {
                                         mc << (int)runtimeSceneNode3Ds[si].size();
                                         if (si + 1 < sceneCount) mc << ",";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D names [scene][node3d] — for script name-based lookup
+                                    mc << "static const char* kSceneNode3DNames[" << sceneCount << "][" << maxN3D << "] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            if (ni < (int)runtimeSceneNode3Ds[si].size())
+                                                mc << "\"" << runtimeSceneNode3Ds[si][ni].name << "\"";
+                                            else
+                                                mc << "\"\"";
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
                                     }
                                     mc << "};\n";
                                     // Node3D initial positions [scene][node3d][3]
@@ -14638,21 +14788,21 @@ RenderImGuiOnly:
                                         mc << "\n";
                                     }
                                     mc << "};\n";
-                                    // DcNode3D runtime struct and arrays
-                                    mc << "typedef struct { float pos[3]; float rot[3]; float velY; int onFloor; float extent[3]; float boundPos[3]; int physEnabled; } DcNode3D;\n";
-                                    mc << "static DcNode3D gNode3Ds[MAX_NODE3D];\n";
-                                    mc << "static int gNode3DCount = 0;\n";
+                                    // DcNode3D struct/array/lookup already emitted above bridge functions
                                     mc << "static void NB_InitNode3Ds(void){\n";
                                     mc << "  int si = gSceneMetaIndex; if(si<0) si=0; if(si>=" << sceneCount << ") si=0;\n";
                                     mc << "  gNode3DCount = kSceneNode3DCount[si]; if(gNode3DCount>MAX_NODE3D) gNode3DCount=MAX_NODE3D;\n";
                                     mc << "  for(int ni=0; ni<gNode3DCount; ni++){\n";
                                     mc << "    DcNode3D* nd = &gNode3Ds[ni];\n";
+                                    mc << "    nd->name=kSceneNode3DNames[si][ni];\n";
                                     mc << "    nd->pos[0]=kSceneNode3DPos[si][ni][0]; nd->pos[1]=kSceneNode3DPos[si][ni][1]; nd->pos[2]=kSceneNode3DPos[si][ni][2];\n";
                                     mc << "    nd->rot[0]=0; nd->rot[1]=0; nd->rot[2]=0;\n";
                                     mc << "    nd->velY=0; nd->onFloor=0;\n";
                                     mc << "    nd->extent[0]=kSceneNode3DExt[si][ni][0]; nd->extent[1]=kSceneNode3DExt[si][ni][1]; nd->extent[2]=kSceneNode3DExt[si][ni][2];\n";
                                     mc << "    nd->boundPos[0]=kSceneNode3DBndPos[si][ni][0]; nd->boundPos[1]=kSceneNode3DBndPos[si][ni][1]; nd->boundPos[2]=kSceneNode3DBndPos[si][ni][2];\n";
                                     mc << "    nd->physEnabled=kSceneNode3DPhys[si][ni];\n";
+                                    mc << "    nd->collisionSource=0; nd->simpleCollision=0;\n";
+                                    mc << "    nd->qw=1.0f; nd->qx=0.0f; nd->qy=0.0f; nd->qz=0.0f;\n";
                                     mc << "  }\n";
                                     mc << "}\n";
                                 }

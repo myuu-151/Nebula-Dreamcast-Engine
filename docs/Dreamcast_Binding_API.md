@@ -64,7 +64,25 @@ void NB_RT_GetNode3DRotation(const char* name, float outRot[3]);
 void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z);
 ```
 
-Script-side movement/rotation for named Node3D objects. Multiple scripts can run simultaneously — each Node3D with a unique `script` field gets its own DLL slot at runtime.
+Script-side movement/rotation for named Node3D objects. The `name` parameter must match the Node3D name in the scene exactly (case-insensitive). Multiple scripts can run simultaneously — each Node3D with a unique `script` field gets its own DLL slot at runtime.
+
+**Multi-node name-based lookup:** On Dreamcast, the generated runtime maintains a table of all Node3D nodes from the scene (`DcNode3D gNode3Ds[]`). Each bridge function resolves the `name` parameter at runtime:
+- If `name` matches the player's parent Node3D (the Node3D that parents the player StaticMesh3D), the call routes to the player globals (`gMeshPos`, `gMeshRot`, etc.) which drive rendering, physics, and camera.
+- Otherwise, `dc_find_node3d(name)` scans the node table and routes to that node's data. This allows AI scripts, camera pivots, and other non-player Node3Ds to be controlled independently.
+
+**Example — two scripts controlling different nodes:**
+
+```c
+// Control4.c — player controller
+static const char* PLAYER_NODE = "PlayerRoot";
+NB_RT_SetNode3DPosition(PLAYER_NODE, x, y, z);  // moves PlayerRoot
+
+// airoam.c — AI roaming
+static const char* AI_NODE = "AINode";
+NB_RT_SetNode3DPosition(AI_NODE, x, y, z);       // moves AINode (not the player)
+```
+
+Node names are set in the editor and exported into the generated runtime automatically. Scripts never need to know the internal index — just pass the name string.
 
 **Collision-source rotation behavior:** When a Node3D has `collisionSource` enabled, the engine uses an internal quaternion for orientation and automatically aligns the node to the ground surface normal (slope alignment). In this mode:
 - `SetNode3DRotation` only updates **yaw** (the `y` parameter). Tilt (pitch/roll from slope alignment) is preserved automatically — the `x` and `z` parameters are accepted but slope alignment overrides them each frame.

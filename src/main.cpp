@@ -6614,6 +6614,102 @@ NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float
     return hit;
 }
 
+// ---------------------------------------------------------------------------
+// WallCollideAABB — horizontal AABB push-out against wall triangles.
+// Tests the AABB (center cx/cy/cz, half-extents hx/hy/hz) against all
+// collisionSource StaticMesh3D triangles whose face normal is wall-like
+// (abs(ny) <= 0.7). Outputs the total XZ push-out to resolve penetration.
+// ---------------------------------------------------------------------------
+static void WallCollideAABB(float cx, float cy, float cz,
+                             float hx, float hy, float hz,
+                             float* outPushX, float* outPushZ)
+{
+    *outPushX = 0.0f;
+    *outPushZ = 0.0f;
+    for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
+    {
+        const auto& s = gStaticMeshNodes[si];
+        if (s.mesh.empty() || gProjectDir.empty()) continue;
+        if (!s.collisionSource) continue;
+
+        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
+        const NebMesh* mesh = GetNebMesh(meshPath);
+        if (!mesh || !mesh->valid || mesh->positions.empty() || mesh->indices.empty()) continue;
+
+        float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
+        GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
+
+        Vec3 right, up, forward;
+        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+
+        for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
+        {
+            const auto& p0 = mesh->positions[mesh->indices[t]];
+            const auto& p1 = mesh->positions[mesh->indices[t + 1]];
+            const auto& p2 = mesh->positions[mesh->indices[t + 2]];
+            float s0x = p0.x * wsx, s0y = p0.y * wsy, s0z = p0.z * wsz;
+            float s1x = p1.x * wsx, s1y = p1.y * wsy, s1z = p1.z * wsz;
+            float s2x = p2.x * wsx, s2y = p2.y * wsy, s2z = p2.z * wsz;
+            float ax = wx + right.x * s0x + up.x * s0y + forward.x * s0z;
+            float ay = wy + right.y * s0x + up.y * s0y + forward.y * s0z;
+            float az = wz + right.z * s0x + up.z * s0y + forward.z * s0z;
+            float bx = wx + right.x * s1x + up.x * s1y + forward.x * s1z;
+            float by = wy + right.y * s1x + up.y * s1y + forward.y * s1z;
+            float bz = wz + right.z * s1x + up.z * s1y + forward.z * s1z;
+            float tx = wx + right.x * s2x + up.x * s2y + forward.x * s2z;
+            float ty = wy + right.y * s2x + up.y * s2y + forward.y * s2z;
+            float tz = wz + right.z * s2x + up.z * s2y + forward.z * s2z;
+
+            // Face normal
+            float ex1 = bx - ax, ey1 = by - ay, ez1 = bz - az;
+            float ex2 = tx - ax, ey2 = ty - ay, ez2 = tz - az;
+            float fnx = ey1 * ez2 - ez1 * ey2;
+            float fny = ez1 * ex2 - ex1 * ez2;
+            float fnz = ex1 * ey2 - ey1 * ex2;
+            float nl = sqrtf(fnx * fnx + fny * fny + fnz * fnz);
+            if (nl < 1e-8f) continue;
+            float nInv = 1.0f / nl;
+            fnx *= nInv; fny *= nInv; fnz *= nInv;
+
+            // Skip floor/ceiling triangles (only test walls)
+            if (fny > 0.7f || fny < -0.7f) continue;
+
+            // Y overlap: AABB vertical range vs triangle vertical range
+            float triMinY = ay < by ? (ay < ty ? ay : ty) : (by < ty ? by : ty);
+            float triMaxY = ay > by ? (ay > ty ? ay : ty) : (by > ty ? by : ty);
+            if (cy - hy >= triMaxY || cy + hy <= triMinY) continue;
+
+            // XZ broadphase: AABB vs triangle XZ bbox
+            float triMinX = ax < bx ? (ax < tx ? ax : tx) : (bx < tx ? bx : tx);
+            float triMaxX = ax > bx ? (ax > tx ? ax : tx) : (bx > tx ? bx : tx);
+            float triMinZ = az < bz ? (az < tz ? az : tz) : (bz < tz ? bz : tz);
+            float triMaxZ = az > bz ? (az > tz ? az : tz) : (bz > tz ? bz : tz);
+            if (cx + hx < triMinX || cx - hx > triMaxX) continue;
+            if (cz + hz < triMinZ || cz - hz > triMaxZ) continue;
+
+            // Signed distance from AABB center to triangle plane
+            float d = fnx * (cx - ax) + fny * (cy - ay) + fnz * (cz - az);
+
+            // AABB half-extent projected onto the plane normal
+            float projDist = hx * fabsf(fnx) + hy * fabsf(fny) + hz * fabsf(fnz);
+            float pen = projDist - fabsf(d);
+            if (pen <= 0.0f) continue;
+
+            // Push out along horizontal component of normal
+            float hnx = fnx, hnz = fnz;
+            float hLen = sqrtf(hnx * hnx + hnz * hnz);
+            if (hLen < 1e-6f) continue;
+            hnx /= hLen;
+            hnz /= hLen;
+
+            // Push direction: away from triangle face
+            float sign = (d >= 0.0f) ? 1.0f : -1.0f;
+            *outPushX += sign * hnx * pen;
+            *outPushZ += sign * hnz * pen;
+        }
+    }
+}
+
 static std::filesystem::path ResolveProjectAssetPath(const std::string& relOrAbs)
 {
     if (relOrAbs.empty()) return {};
@@ -10298,6 +10394,67 @@ int main(int, char**)
                         n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
                         SyncNode3DEulerFromQuat(n3);
                         n3.rotY = savedYaw;
+                    }
+
+                    // Wall collision (horizontal push-out)
+                    {
+                        float wcx = pwx + n3.boundPosX;
+                        float wcy = pwy + n3.boundPosY;
+                        float wcz = pwz + n3.boundPosZ;
+                        float whx = std::max(0.01f, n3.extentX * pwsx);
+                        float why = std::max(0.01f, n3.extentY * pwsy);
+                        float whz = std::max(0.01f, n3.extentZ * pwsz);
+                        float pushX = 0.0f, pushZ = 0.0f;
+                        WallCollideAABB(wcx, wcy, wcz, whx, why, whz, &pushX, &pushZ);
+                        if (pushX != 0.0f || pushZ != 0.0f)
+                        {
+                            n3.x += pushX;
+                            n3.z += pushZ;
+                        }
+                    }
+                }
+            }
+
+            // Node3D-vs-Node3D AABB collision (push apart on overlap)
+            for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
+            {
+                auto& a = gNode3DNodes[ni];
+                if (!a.collisionSource && !a.simpleCollision) continue;
+                for (int nj = ni + 1; nj < (int)gNode3DNodes.size(); ++nj)
+                {
+                    auto& b = gNode3DNodes[nj];
+                    if (!b.collisionSource && !b.simpleCollision) continue;
+
+                    float acx = a.x + a.boundPosX, acy = a.y + a.boundPosY, acz = a.z + a.boundPosZ;
+                    float bcx = b.x + b.boundPosX, bcy = b.y + b.boundPosY, bcz = b.z + b.boundPosZ;
+
+                    float overX = (a.extentX + b.extentX) - fabsf(acx - bcx);
+                    if (overX <= 0.0f) continue;
+                    float overY = (a.extentY + b.extentY) - fabsf(acy - bcy);
+                    if (overY <= 0.0f) continue;
+                    float overZ = (a.extentZ + b.extentZ) - fabsf(acz - bcz);
+                    if (overZ <= 0.0f) continue;
+
+                    // Push apart along the axis with the smallest overlap (XZ only)
+                    float minPen = overX;
+                    int axis = 0; // 0=X, 1=Z
+                    if (overZ < minPen) { minPen = overZ; axis = 1; }
+
+                    // Skip if Y overlap is the smallest (vertical separation, not wall collision)
+                    if (overY < minPen) continue;
+
+                    float half = minPen * 0.5f;
+                    if (axis == 0)
+                    {
+                        float dir = (acx >= bcx) ? 1.0f : -1.0f;
+                        a.x += dir * half;
+                        b.x -= dir * half;
+                    }
+                    else
+                    {
+                        float dir = (acz >= bcz) ? 1.0f : -1.0f;
+                        a.z += dir * half;
+                        b.z -= dir * half;
                     }
                 }
             }
@@ -14969,6 +15126,42 @@ RenderImGuiOnly:
                                 mc << "  if(hit){ *outHitY=bestY; if(outNormal){outNormal[0]=bnx;outNormal[1]=bny;outNormal[2]=bnz;} }\n";
                                 mc << "  return hit;\n";
                                 mc << "}\n";
+                                mc << "/* Wall collision: horizontal AABB push-out against wall triangles */\n";
+                                mc << "static void dc_wall_collide(float cx, float cy, float cz, float hx, float hy, float hz, float* outPX, float* outPZ){\n";
+                                mc << "  *outPX=0; *outPZ=0;\n";
+                                mc << "  if(!gCollCacheReady) NB_RT_BuildCollCache();\n";
+                                mc << "  for(int ci=0;ci<gCollCacheCount;ci++){\n";
+                                mc << "    CollMeshCache* c=&gCollCache[ci];\n";
+                                mc << "    for(int t=0;t<c->tc;t++){\n";
+                                mc << "      int i0=c->idx[t*3],i1=c->idx[t*3+1],i2=c->idx[t*3+2];\n";
+                                mc << "      float ax=c->pos[i0].x*c->ss[0]+c->sp[0], ay=c->pos[i0].y*c->ss[1]+c->sp[1], az=c->pos[i0].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float bx=c->pos[i1].x*c->ss[0]+c->sp[0], by=c->pos[i1].y*c->ss[1]+c->sp[1], bz=c->pos[i1].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float tx=c->pos[i2].x*c->ss[0]+c->sp[0], ty=c->pos[i2].y*c->ss[1]+c->sp[1], tz=c->pos[i2].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float ex1=bx-ax,ey1=by-ay,ez1=bz-az, ex2=tx-ax,ey2=ty-ay,ez2=tz-az;\n";
+                                mc << "      float nx=ey1*ez2-ez1*ey2, ny=ez1*ex2-ex1*ez2, nz=ex1*ey2-ey1*ex2;\n";
+                                mc << "      float nl=sqrtf(nx*nx+ny*ny+nz*nz); if(nl<1e-8f) continue;\n";
+                                mc << "      float ni=1.0f/nl; nx*=ni; ny*=ni; nz*=ni;\n";
+                                mc << "      if(ny>0.7f || ny<-0.7f) continue;\n";
+                                mc << "      float tminy=ay; if(by<tminy) tminy=by; if(ty<tminy) tminy=ty;\n";
+                                mc << "      float tmaxy=ay; if(by>tmaxy) tmaxy=by; if(ty>tmaxy) tmaxy=ty;\n";
+                                mc << "      if(cy-hy>=tmaxy || cy+hy<=tminy) continue;\n";
+                                mc << "      float tminx=ax; if(bx<tminx) tminx=bx; if(tx<tminx) tminx=tx;\n";
+                                mc << "      float tmaxx=ax; if(bx>tmaxx) tmaxx=bx; if(tx>tmaxx) tmaxx=tx;\n";
+                                mc << "      float tminz=az; if(bz<tminz) tminz=bz; if(tz<tminz) tminz=tz;\n";
+                                mc << "      float tmaxz=az; if(bz>tmaxz) tmaxz=bz; if(tz>tmaxz) tmaxz=tz;\n";
+                                mc << "      if(cx+hx<tminx || cx-hx>tmaxx) continue;\n";
+                                mc << "      if(cz+hz<tminz || cz-hz>tmaxz) continue;\n";
+                                mc << "      float d=nx*(cx-ax)+ny*(cy-ay)+nz*(cz-az);\n";
+                                mc << "      float pd=hx*fabsf(nx)+hy*fabsf(ny)+hz*fabsf(nz);\n";
+                                mc << "      float pen=pd-fabsf(d); if(pen<=0.0f) continue;\n";
+                                mc << "      float hnx=nx, hnz=nz;\n";
+                                mc << "      float hl=sqrtf(hnx*hnx+hnz*hnz); if(hl<1e-6f) continue;\n";
+                                mc << "      hnx/=hl; hnz/=hl;\n";
+                                mc << "      float sg=(d>=0.0f)?1.0f:-1.0f;\n";
+                                mc << "      *outPX+=sg*hnx*pen; *outPZ+=sg*hnz*pen;\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
+                                mc << "}\n";
                                 mc << "\n";
                                 mc << "static inline float deg2rad(float d){ return d*0.0174532925f; }\n";
                                 mc << "\n";
@@ -15387,6 +15580,10 @@ RenderImGuiOnly:
                                 mc << "          float uprightN[3] = {0.0f, 1.0f, 0.0f};\n";
                                 mc << "          dc_slope_align(uprightN[0], uprightN[1], uprightN[2], gMeshRot[1], dt);\n";
                                 mc << "        }\n";
+                                mc << "        /* Wall collision (horizontal push-out) */\n";
+                                mc << "        { float wpx=0,wpz=0;\n";
+                                mc << "          dc_wall_collide(gMeshPos[0]+gBoundPos[0], gMeshPos[1]+gBoundPos[1], gMeshPos[2]+gBoundPos[2], gCollExtent[0], gCollExtent[1], gCollExtent[2], &wpx, &wpz);\n";
+                                mc << "          gMeshPos[0]+=wpx; gMeshPos[2]+=wpz; }\n";
                                 mc << "      }\n";
                                 mc << "    }\n";
                                 // --- Multi-Node3D physics loop ---
@@ -15426,6 +15623,10 @@ RenderImGuiOnly:
                                 mc << "          }\n";
                                 mc << "        }\n";
                                 mc << "      }\n";
+                                mc << "      /* Wall collision for non-player Node3D */\n";
+                                mc << "      { float wpx=0,wpz=0;\n";
+                                mc << "        dc_wall_collide(nd->pos[0]+nd->boundPos[0], nd->pos[1]+nd->boundPos[1], nd->pos[2]+nd->boundPos[2], nd->extent[0], nd->extent[1], nd->extent[2], &wpx, &wpz);\n";
+                                mc << "        nd->pos[0]+=wpx; nd->pos[2]+=wpz; }\n";
                                 mc << "      /* Update child mesh position and rotation to follow this Node3D */\n";
                                 mc << "      for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){\n";
                                 mc << "        if(kSceneMeshParentN3D[si][mi]==ni){\n";
@@ -15438,6 +15639,29 @@ RenderImGuiOnly:
                                 mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "    }}\n";
+                                mc << "    /* Node3D-vs-Node3D AABB collision (push apart on overlap) */\n";
+                                mc << "    { int ppNi=(gPlayerMeshIdx>=0)?kSceneMeshParentN3D[gSceneMetaIndex<0?0:gSceneMetaIndex][gPlayerMeshIdx]:-1;\n";
+                                mc << "    for(int ni=0; ni<gNode3DCount; ni++){\n";
+                                mc << "      float acx,acy,acz,ahx,ahy,ahz;\n";
+                                mc << "      if(ni==ppNi){ acx=gMeshPos[0]+gBoundPos[0]; acy=gMeshPos[1]+gBoundPos[1]; acz=gMeshPos[2]+gBoundPos[2]; ahx=gCollExtent[0]; ahy=gCollExtent[1]; ahz=gCollExtent[2]; }\n";
+                                mc << "      else { DcNode3D* na=&gNode3Ds[ni]; if(!na->physEnabled) continue; acx=na->pos[0]+na->boundPos[0]; acy=na->pos[1]+na->boundPos[1]; acz=na->pos[2]+na->boundPos[2]; ahx=na->extent[0]; ahy=na->extent[1]; ahz=na->extent[2]; }\n";
+                                mc << "      for(int nj=ni+1; nj<gNode3DCount; nj++){\n";
+                                mc << "        float bcx,bcy,bcz,bhx,bhy,bhz;\n";
+                                mc << "        if(nj==ppNi){ bcx=gMeshPos[0]+gBoundPos[0]; bcy=gMeshPos[1]+gBoundPos[1]; bcz=gMeshPos[2]+gBoundPos[2]; bhx=gCollExtent[0]; bhy=gCollExtent[1]; bhz=gCollExtent[2]; }\n";
+                                mc << "        else { DcNode3D* nb=&gNode3Ds[nj]; if(!nb->physEnabled) continue; bcx=nb->pos[0]+nb->boundPos[0]; bcy=nb->pos[1]+nb->boundPos[1]; bcz=nb->pos[2]+nb->boundPos[2]; bhx=nb->extent[0]; bhy=nb->extent[1]; bhz=nb->extent[2]; }\n";
+                                mc << "        float ox=(ahx+bhx)-fabsf(acx-bcx); if(ox<=0) continue;\n";
+                                mc << "        float oy=(ahy+bhy)-fabsf(acy-bcy); if(oy<=0) continue;\n";
+                                mc << "        float oz=(ahz+bhz)-fabsf(acz-bcz); if(oz<=0) continue;\n";
+                                mc << "        float mp=ox; int ax=0; if(oz<mp){mp=oz;ax=1;} if(oy<mp) continue;\n";
+                                mc << "        float half=mp*0.5f;\n";
+                                mc << "        if(ax==0){ float dir=(acx>=bcx)?1.0f:-1.0f;\n";
+                                mc << "          if(ni==ppNi){gMeshPos[0]+=dir*half;}else{gNode3Ds[ni].pos[0]+=dir*half;}\n";
+                                mc << "          if(nj==ppNi){gMeshPos[0]-=dir*half;}else{gNode3Ds[nj].pos[0]-=dir*half;}\n";
+                                mc << "        } else { float dir=(acz>=bcz)?1.0f:-1.0f;\n";
+                                mc << "          if(ni==ppNi){gMeshPos[2]+=dir*half;}else{gNode3Ds[ni].pos[2]+=dir*half;}\n";
+                                mc << "          if(nj==ppNi){gMeshPos[2]-=dir*half;}else{gNode3Ds[nj].pos[2]-=dir*half;}\n";
+                                mc << "        }\n";
+                                mc << "    }}}\n";
                                 mc << "    if (gSceneSwitchReq != 0) {\n";
                                 mc << "      int metaOk = 0;\n";
                                 mc << "      if (gSceneSwitchReq == 2 && gSceneSwitchName[0]) { for(int si=0;si<gSceneCount;++si){ if(dc_eq_nocase(gSceneSwitchName,gSceneNames[si])){ metaOk=NB_LoadSceneIndex(si); break; } } gSceneSwitchName[0]=0; }\n";

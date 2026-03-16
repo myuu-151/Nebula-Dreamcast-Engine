@@ -637,6 +637,10 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DBoundPos\"); if(fn) fn(name,bx,by,bz); }\n";
     out << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DPhysicsEnabled\"); return fn ? fn(name) : 0; }\n";
     out << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DPhysicsEnabled\"); if(fn) fn(name,enabled); }\n";
+    out << "int NB_RT_GetNode3DCollisionSource(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DCollisionSource\"); return fn ? fn(name) : 0; }\n";
+    out << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DCollisionSource\"); if(fn) fn(name,enabled); }\n";
+    out << "int NB_RT_GetNode3DSimpleCollision(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DSimpleCollision\"); return fn ? fn(name) : 0; }\n";
+    out << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DSimpleCollision\"); if(fn) fn(name,enabled); }\n";
     out << "float NB_RT_GetNode3DVelocityY(const char* name){ typedef float(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DVelocityY\"); return fn ? fn(name) : 0.0f; }\n";
     out << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ typedef void(*Fn)(const char*, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DVelocityY\"); if(fn) fn(name,vy); }\n";
     out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
@@ -2105,6 +2109,38 @@ NB_RT_EXPORT void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled)
     int idx = FindNode3DByName(name);
     if (idx < 0) return;
     gNode3DNodes[idx].physicsEnabled = (enabled != 0);
+}
+
+NB_RT_EXPORT int NB_RT_GetNode3DCollisionSource(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    return gNode3DNodes[idx].collisionSource ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DCollisionSource(const char* name, int enabled)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].collisionSource = (enabled != 0);
+}
+
+NB_RT_EXPORT int NB_RT_GetNode3DSimpleCollision(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    return gNode3DNodes[idx].simpleCollision ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].simpleCollision = (enabled != 0);
 }
 
 NB_RT_EXPORT float NB_RT_GetNode3DVelocityY(const char* name)

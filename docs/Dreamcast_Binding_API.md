@@ -100,6 +100,10 @@ void  NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]);
 void  NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz);
 int   NB_RT_GetNode3DPhysicsEnabled(const char* name);
 void  NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled);
+int   NB_RT_GetNode3DCollisionSource(const char* name);
+void  NB_RT_SetNode3DCollisionSource(const char* name, int enabled);
+int   NB_RT_GetNode3DSimpleCollision(const char* name);
+void  NB_RT_SetNode3DSimpleCollision(const char* name, int enabled);
 float NB_RT_GetNode3DVelocityY(const char* name);
 void  NB_RT_SetNode3DVelocityY(const char* name, float vy);
 int   NB_RT_IsNode3DOnFloor(const char* name);
@@ -110,7 +114,9 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 
 - **CollisionBounds**: get/set the AABB half-extents (box size) of a Node3D's collision volume.
 - **BoundPos**: get/set the local offset of the collision box relative to the node's origin.
-- **PhysicsEnabled**: toggle gravity per node. Ground snap and slope alignment are controlled separately by the collision toggles in the editor.
+- **PhysicsEnabled**: toggle gravity per node.
+- **CollisionSource**: toggle slope alignment (ground snap + tilt to surface normal) per node.
+- **SimpleCollision**: toggle ground snap only (no slope alignment) per node.
 - **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
 - **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).

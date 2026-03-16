@@ -74,6 +74,7 @@ struct Node3DNode
     float scaleX = 1.0f;
     float scaleY = 1.0f;
     float scaleZ = 1.0f;
+    bool simpleCollision = false;
     bool collisionSource = false;
     bool physicsEnabled = false;
     // Collision-only bounds extents (does not affect transform hierarchy)

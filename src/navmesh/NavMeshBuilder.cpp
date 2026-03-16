@@ -86,10 +86,14 @@ bool NavMeshBuild(const float* verts, int vertCount,
     rcPolyMesh*           pmesh = nullptr;
     rcPolyMeshDetail*     dmesh = nullptr;
 
+    printf("[NavMeshBuild] grid=%dx%d bmin=(%.2f,%.2f,%.2f) bmax=(%.2f,%.2f,%.2f)\n",
+           cfg.width, cfg.height, cfg.bmin[0], cfg.bmin[1], cfg.bmin[2],
+           cfg.bmax[0], cfg.bmax[1], cfg.bmax[2]);
+
     do {
         if (!rcCreateHeightfield(&ctx, *solid, cfg.width, cfg.height,
                                  cfg.bmin, cfg.bmax, cfg.cs, cfg.ch))
-            break;
+        { printf("[NavMeshBuild] FAIL: rcCreateHeightfield\n"); break; }
 
         const int ntris = triCount;
         triAreas = new unsigned char[ntris];
@@ -99,10 +103,34 @@ bool NavMeshBuild(const float* verts, int vertCount,
                                 verts, vertCount,
                                 tris, ntris, triAreas);
 
+        // Count walkable triangles; if zero, flip winding and retry
+        int nWalkable = 0;
+        for (int i = 0; i < ntris; ++i) if (triAreas[i]) ++nWalkable;
+        printf("[NavMeshBuild] walkable tris: %d / %d\n", nWalkable, ntris);
+
+        if (nWalkable == 0)
+        {
+            // Flip winding order: swap first two indices of each triangle
+            int* mutableTris = const_cast<int*>(tris);
+            for (int i = 0; i < ntris; ++i)
+            {
+                int tmp = mutableTris[i * 3 + 0];
+                mutableTris[i * 3 + 0] = mutableTris[i * 3 + 1];
+                mutableTris[i * 3 + 1] = tmp;
+            }
+            memset(triAreas, 0, ntris * sizeof(unsigned char));
+            rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle,
+                                    verts, vertCount,
+                                    tris, ntris, triAreas);
+            nWalkable = 0;
+            for (int i = 0; i < ntris; ++i) if (triAreas[i]) ++nWalkable;
+            printf("[NavMeshBuild] after winding flip: walkable tris: %d / %d\n", nWalkable, ntris);
+        }
+
         if (!rcRasterizeTriangles(&ctx, verts, vertCount,
                                   tris, triAreas, ntris,
                                   *solid, cfg.walkableClimb))
-            break;
+        { printf("[NavMeshBuild] FAIL: rcRasterizeTriangles\n"); break; }
 
         // Filter obstacles.
         rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
@@ -111,31 +139,64 @@ bool NavMeshBuild(const float* verts, int vertCount,
 
         // Compact heightfield.
         chf = rcAllocCompactHeightfield();
-        if (!chf) break;
+        if (!chf) { printf("[NavMeshBuild] FAIL: alloc CHF\n"); break; }
         if (!rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid, *chf))
-            break;
+        { printf("[NavMeshBuild] FAIL: rcBuildCompactHeightfield\n"); break; }
 
-        if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf)) break;
-        if (!rcBuildDistanceField(&ctx, *chf))   break;
-        if (!rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea)) break;
+        // Count walkable spans after compaction
+        {
+            int walkSpans = 0;
+            for (int i = 0; i < chf->spanCount; ++i)
+                if (chf->areas[i] != RC_NULL_AREA) ++walkSpans;
+            printf("[NavMeshBuild] compact spans: %d total, %d walkable\n", chf->spanCount, walkSpans);
+        }
+
+        if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf))
+        { printf("[NavMeshBuild] FAIL: rcErodeWalkableArea\n"); break; }
+
+        // Count walkable spans after erosion
+        {
+            int walkSpans = 0;
+            for (int i = 0; i < chf->spanCount; ++i)
+                if (chf->areas[i] != RC_NULL_AREA) ++walkSpans;
+            printf("[NavMeshBuild] after erosion: %d walkable spans\n", walkSpans);
+        }
+
+        if (!rcBuildDistanceField(&ctx, *chf))
+        { printf("[NavMeshBuild] FAIL: rcBuildDistanceField\n"); break; }
+        if (!rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea))
+        { printf("[NavMeshBuild] FAIL: rcBuildRegions\n"); break; }
+
+        // Count regions
+        {
+            int maxReg = 0;
+            for (int i = 0; i < chf->spanCount; ++i)
+                if (chf->spans[i].reg > maxReg) maxReg = chf->spans[i].reg;
+            printf("[NavMeshBuild] regions: %d\n", maxReg);
+        }
 
         // Build contours.
         cset = rcAllocContourSet();
-        if (!cset) break;
+        if (!cset) { printf("[NavMeshBuild] FAIL: alloc contour set\n"); break; }
         if (!rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *cset))
-            break;
+        { printf("[NavMeshBuild] FAIL: rcBuildContours\n"); break; }
+
+        printf("[NavMeshBuild] contours: %d\n", cset->nconts);
 
         // Build polygon mesh.
         pmesh = rcAllocPolyMesh();
-        if (!pmesh) break;
-        if (!rcBuildPolyMesh(&ctx, *cset, cfg.maxVertsPerPoly, *pmesh)) break;
+        if (!pmesh) { printf("[NavMeshBuild] FAIL: alloc poly mesh\n"); break; }
+        if (!rcBuildPolyMesh(&ctx, *cset, cfg.maxVertsPerPoly, *pmesh))
+        { printf("[NavMeshBuild] FAIL: rcBuildPolyMesh\n"); break; }
+
+        printf("[NavMeshBuild] polys: %d verts: %d\n", pmesh->npolys, pmesh->nverts);
 
         // Build detail mesh.
         dmesh = rcAllocPolyMeshDetail();
-        if (!dmesh) break;
+        if (!dmesh) { printf("[NavMeshBuild] FAIL: alloc detail mesh\n"); break; }
         if (!rcBuildPolyMeshDetail(&ctx, *pmesh, *chf,
                                    cfg.detailSampleDist, cfg.detailSampleMaxError, *dmesh))
-            break;
+        { printf("[NavMeshBuild] FAIL: rcBuildPolyMeshDetail\n"); break; }
 
         // Mark all polys as walkable.
         for (int i = 0; i < pmesh->npolys; ++i)
@@ -169,7 +230,8 @@ bool NavMeshBuild(const float* verts, int vertCount,
 
         unsigned char* navData = nullptr;
         int navDataSize = 0;
-        if (!dtCreateNavMeshData(&params, &navData, &navDataSize)) break;
+        if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
+        { printf("[NavMeshBuild] FAIL: dtCreateNavMeshData (polys=%d)\n", pmesh->npolys); break; }
 
         sNavMesh = dtAllocNavMesh();
         if (!sNavMesh) { dtFree(navData); break; }

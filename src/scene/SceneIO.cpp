@@ -287,7 +287,8 @@ namespace NebulaScene
                 << (n.collisionSource ? 1 : 0) << " "
                 << (n.physicsEnabled ? 1 : 0) << " "
                 << n.extentX << " " << n.extentY << " " << n.extentZ << " "
-                << n.boundPosX << " " << n.boundPosY << " " << n.boundPosZ << "\n";
+                << n.boundPosX << " " << n.boundPosY << " " << n.boundPosZ << " "
+                << (n.simpleCollision ? 1 : 0) << "\n";
         }
         for (const auto& n : navMeshes)
         {
@@ -515,6 +516,8 @@ namespace NebulaScene
                     n.boundPosY = (float)atof(toks[19].c_str());
                     n.boundPosZ = (float)atof(toks[20].c_str());
                 }
+                if (toks.size() >= 22)
+                    n.simpleCollision = (atoi(toks[21].c_str()) != 0);
                 SyncNode3DQuatFromEuler(n);
                 outScene.node3d.push_back(n);
             }

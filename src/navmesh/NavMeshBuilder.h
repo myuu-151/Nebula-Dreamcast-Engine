@@ -27,7 +27,7 @@ struct NavMeshParams
     float walkableRadius    = 0.0f;   // zero = navmesh reaches geometry edges; agent radius handled at query time
     float maxEdgeLen        = 12.0f;
     float maxSimplError     = 0.5f;   // low = preserve detail at edge seams
-    int   minRegionArea     = 64;     // rcSqr(8)
+    int   minRegionArea     = 4;      // allow small walkable patches
     int   mergeRegionArea   = 400;    // rcSqr(20)
     int   maxVertsPerPoly   = 6;
     float detailSampleDist  = 6.0f;

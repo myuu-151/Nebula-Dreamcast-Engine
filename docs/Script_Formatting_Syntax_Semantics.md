@@ -70,9 +70,10 @@ void NB_RT_SetCameraRotation(const char* name, float x, float y, float z);
 void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]);
 void NB_RT_NextScene(void);
 void NB_RT_PrevScene(void);
+void NB_RT_SwitchScene(const char* name);
 ```
 
-**Scene switching:** `NB_RT_NextScene()` and `NB_RT_PrevScene()` cycle through loaded scenes. The switch is deferred to the end of the current frame — navmesh is automatically rebuilt and `NB_Game_OnSceneSwitch` is called. Use debounce logic to avoid rapid cycling (see `Control4.c` for an example).
+**Scene switching:** `NB_RT_NextScene()` and `NB_RT_PrevScene()` cycle through loaded scenes. `NB_RT_SwitchScene("MyLevel2")` jumps directly to a scene by name (case-insensitive). All three are deferred to end of frame — navmesh is automatically rebuilt and `NB_Game_OnSceneSwitch` is called. Use debounce logic for Next/Prev to avoid rapid cycling (see `Control4.c` for an example).
 
 ### Naming semantics
 - `name` must match scene node names (e.g. `"PlayerRoot"`, `"Camera3D1"`, `"AINode"`). Matching is case-insensitive.

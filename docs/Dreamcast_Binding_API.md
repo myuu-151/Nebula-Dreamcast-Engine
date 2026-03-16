@@ -146,10 +146,12 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 ```c
 void NB_RT_NextScene(void);
 void NB_RT_PrevScene(void);
+void NB_RT_SwitchScene(const char* name);
 ```
 
 - **NextScene**: advances to the next scene in the loaded scene list (wraps around). The switch happens at the end of the current frame — navmesh is automatically cleared and rebuilt for the new scene, and `NB_Game_OnSceneSwitch` is called.
 - **PrevScene**: switches to the previous scene (wraps around). Same deferred semantics as `NextScene`.
+- **SwitchScene**: switches to a specific scene by its human-readable name (case-insensitive match). Same deferred semantics — the switch happens at end of frame with navmesh rebuild and `OnSceneSwitch` callback. If no scene matches the name, the call is a no-op.
 
 **Usage pattern** (with debounce to avoid rapid cycling):
 
@@ -169,6 +171,9 @@ if (GetAsyncKeyState(VK_RETURN) & 0x8000)
     if (!sStartHeld) { NB_RT_NextScene(); sStartHeld = 1; }
 }
 else { sStartHeld = 0; }
+
+// Jump to a specific scene by name
+NB_RT_SwitchScene("MyLevel2");
 ```
 
 ### NavMesh bridge

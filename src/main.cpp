@@ -14489,6 +14489,7 @@ RenderImGuiOnly:
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
                                 // NB_RT_RaycastDown emitted after MAX_MESHES/gSceneMeshes declarations
                                 mc << "static int gNavMeshLoaded = 0;\n";
+                                mc << "static int gSceneMetaIndex = 0;\n";
                                 mc << "int NB_RT_NavMeshBuild(void){\n";
                                 mc << "  if (!gNavMeshLoaded) {\n";
                                 mc << "    char navPath[64]; snprintf(navPath,sizeof(navPath),\"/cd/data/navmesh/NAV%05d.BIN\",gSceneMetaIndex+1);\n";
@@ -14595,7 +14596,6 @@ RenderImGuiOnly:
                                 mc << "static int gSceneMeshCount = 0;\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
                                 mc << "static int gSceneIndex = 0;\n";
-                                mc << "static int gSceneMetaIndex = 0;\n";
                                 mc << "static const char* gSceneFiles[] = {";
                                 for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
                                 {

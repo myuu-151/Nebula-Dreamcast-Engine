@@ -13396,6 +13396,33 @@ RenderImGuiOnly:
                                 }
                             }
 
+                            // DC multi-script: rename NB_Game_On* hooks to indexed versions
+                            // so multiple scripts can coexist in one binary without symbol collisions.
+                            // Each script gets NB_Game_OnStart_N, NB_Game_OnUpdate_N, NB_Game_OnSceneSwitch_N.
+                            int dcScriptCount = (int)scriptSourcesForMake.size();
+                            if (dcScriptCount > 1)
+                            {
+                                for (int si = 0; si < dcScriptCount; ++si)
+                                {
+                                    std::filesystem::path srcFile = buildDir / scriptSourcesForMake[si];
+                                    if (!std::filesystem::exists(srcFile)) continue;
+                                    std::ifstream ifs(srcFile);
+                                    if (!ifs.is_open()) continue;
+                                    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+                                    ifs.close();
+                                    // Prepend #define redirects to rename hooks
+                                    std::string prefix = "/* Auto-generated hook rename for DC multi-script */\n"
+                                        "#define NB_Game_OnStart NB_Game_OnStart_" + std::to_string(si) + "\n"
+                                        "#define NB_Game_OnUpdate NB_Game_OnUpdate_" + std::to_string(si) + "\n"
+                                        "#define NB_Game_OnSceneSwitch NB_Game_OnSceneSwitch_" + std::to_string(si) + "\n\n";
+                                    std::ofstream ofs(srcFile, std::ios::out | std::ios::trunc);
+                                    if (ofs.is_open())
+                                    {
+                                        ofs << prefix << content;
+                                    }
+                                }
+                            }
+
                             // Bake parent hierarchy into world transforms for DC export.
                             // The DC runtime applies transforms flat (no parent chain walking),
                             // so we must flatten here to match what the editor renders.
@@ -14139,9 +14166,33 @@ RenderImGuiOnly:
                                 mc << "#include \"KosBindings.h\"\n";
                                 mc << "#include \"DetourBridge.h\"\n";
                                 mc << "\n";
-                                mc << "extern void NB_Game_OnStart(void);\n";
-                                mc << "extern void NB_Game_OnUpdate(float dt);\n";
-                                mc << "extern void NB_Game_OnSceneSwitch(const char* sceneName);\n";
+                                if (dcScriptCount > 1)
+                                {
+                                    for (int si = 0; si < dcScriptCount; ++si)
+                                    {
+                                        mc << "extern void NB_Game_OnStart_" << si << "(void);\n";
+                                        mc << "extern void NB_Game_OnUpdate_" << si << "(float dt);\n";
+                                        mc << "extern void NB_Game_OnSceneSwitch_" << si << "(const char* sceneName);\n";
+                                    }
+                                    mc << "static void NB_Game_OnStart(void) {";
+                                    for (int si = 0; si < dcScriptCount; ++si)
+                                        mc << " NB_Game_OnStart_" << si << "();";
+                                    mc << " }\n";
+                                    mc << "static void NB_Game_OnUpdate(float dt) {";
+                                    for (int si = 0; si < dcScriptCount; ++si)
+                                        mc << " NB_Game_OnUpdate_" << si << "(dt);";
+                                    mc << " }\n";
+                                    mc << "static void NB_Game_OnSceneSwitch(const char* sceneName) {";
+                                    for (int si = 0; si < dcScriptCount; ++si)
+                                        mc << " NB_Game_OnSceneSwitch_" << si << "(sceneName);";
+                                    mc << " }\n";
+                                }
+                                else
+                                {
+                                    mc << "extern void NB_Game_OnStart(void);\n";
+                                    mc << "extern void NB_Game_OnUpdate(float dt);\n";
+                                    mc << "extern void NB_Game_OnSceneSwitch(const char* sceneName);\n";
+                                }
                                 mc << "\n";
                                 mc << "KOS_INIT_FLAGS(INIT_DEFAULT);\n";
                                 mc << "\n";
@@ -15280,9 +15331,21 @@ RenderImGuiOnly:
                                 if (gs.is_open())
                                 {
                                     gs << "/* Auto-generated fallback gameplay hooks for Dreamcast runtime. */\n";
-                                    gs << "void __attribute__((weak)) NB_Game_OnStart(void) {}\n";
-                                    gs << "void __attribute__((weak)) NB_Game_OnUpdate(float dt) { (void)dt; }\n";
-                                    gs << "void __attribute__((weak)) NB_Game_OnSceneSwitch(const char* sceneName) { (void)sceneName; }\n";
+                                    if (dcScriptCount > 1)
+                                    {
+                                        for (int si = 0; si < dcScriptCount; ++si)
+                                        {
+                                            gs << "void __attribute__((weak)) NB_Game_OnStart_" << si << "(void) {}\n";
+                                            gs << "void __attribute__((weak)) NB_Game_OnUpdate_" << si << "(float dt) { (void)dt; }\n";
+                                            gs << "void __attribute__((weak)) NB_Game_OnSceneSwitch_" << si << "(const char* sceneName) { (void)sceneName; }\n";
+                                        }
+                                    }
+                                    else
+                                    {
+                                        gs << "void __attribute__((weak)) NB_Game_OnStart(void) {}\n";
+                                        gs << "void __attribute__((weak)) NB_Game_OnUpdate(float dt) { (void)dt; }\n";
+                                        gs << "void __attribute__((weak)) NB_Game_OnSceneSwitch(const char* sceneName) { (void)sceneName; }\n";
+                                    }
                                 }
                             }
 

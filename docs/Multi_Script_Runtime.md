@@ -91,10 +91,44 @@ A single script can control multiple nodes, and multiple scripts can read the sa
 
 ---
 
+## Dreamcast multi-script
+
+On Dreamcast, there are no DLLs — all scripts are compiled into a single binary. To avoid symbol collisions when multiple scripts each define `NB_Game_OnStart`/`OnUpdate`/`OnSceneSwitch`, the export pipeline automatically renames hooks per script.
+
+### How it works
+
+1. During DC export, the editor scans scene nodes and collects only the scripts referenced by Node3D or StaticMesh3D `script` fields.
+2. If there are 2+ scripts, each `.c` file gets `#define` redirects prepended:
+   ```c
+   /* Auto-generated hook rename for DC multi-script */
+   #define NB_Game_OnStart NB_Game_OnStart_0
+   #define NB_Game_OnUpdate NB_Game_OnUpdate_0
+   #define NB_Game_OnSceneSwitch NB_Game_OnSceneSwitch_0
+   ```
+3. The generated `main.c` declares indexed externs and wraps them in dispatcher functions:
+   ```c
+   extern void NB_Game_OnStart_0(void);
+   extern void NB_Game_OnStart_1(void);
+   static void NB_Game_OnStart(void) { NB_Game_OnStart_0(); NB_Game_OnStart_1(); }
+   ```
+4. `NebulaGameStub.c` provides indexed weak stubs so linking succeeds even if a script is missing.
+
+### What you don't need to do
+
+- You don't need to rename anything in your scripts — the export handles it automatically.
+- Your scripts still use the standard `NB_Game_OnStart`/`OnUpdate`/`OnSceneSwitch` names.
+- Single-script projects are unchanged (no renaming occurs).
+
+### Script filtering
+
+Only scripts actually referenced by scene nodes are included in the DC build. If your `Scripts/` folder contains extra `.c` files not assigned to any node, they are excluded from the Makefile to avoid unnecessary symbol collisions.
+
+---
+
 ## Limitations
 
 - Scripts are plain C, not C++. No classes or templates.
 - Each script has its own static state — globals in one script are not visible to another.
 - Scripts cannot directly call functions in other scripts.
 - On Windows, scripts are compiled with MSVC (`cl.exe`) at play-mode start. The MSVC path is configured in editor preferences.
-- On Dreamcast, all scripts are compiled together into the final binary — the multi-DLL system is editor-only.
+- On Dreamcast, all scripts are compiled into one binary with auto-renamed hooks (see above).

@@ -64,12 +64,19 @@ void NB_RT_GetNode3DRotation(const char* name, float outRot[3]);
 void NB_RT_SetNode3DRotation(const char* name, float x, float y, float z);
 ```
 
-Script-side movement/rotation for named Node3D objects.
+Script-side movement/rotation for named Node3D objects. Multiple scripts can run simultaneously — each Node3D with a unique `script` field gets its own DLL slot at runtime.
 
-**Physics-enabled rotation behavior:** When a Node3D has `physicsEnabled`, the engine uses an internal quaternion for orientation and automatically aligns the node to the ground surface normal (slope alignment). In this mode:
+**Collision-source rotation behavior:** When a Node3D has `collisionSource` enabled, the engine uses an internal quaternion for orientation and automatically aligns the node to the ground surface normal (slope alignment). In this mode:
 - `SetNode3DRotation` only updates **yaw** (the `y` parameter). Tilt (pitch/roll from slope alignment) is preserved automatically — the `x` and `z` parameters are accepted but slope alignment overrides them each frame.
 - `GetNode3DRotation` returns the script's last-set yaw in `outRot[1]`, not a value extracted from the internal quaternion. This ensures the script always reads back exactly what it wrote, with no drift or snapping at extreme angles.
 - Rendering uses the quaternion directly (converted to a rotation matrix), bypassing Euler angles entirely to avoid gimbal lock.
+
+**Node3D physics toggles:** Each Node3D has three independent collision/physics flags:
+- **Simple Collision** — raycast ground snap only (no rotation change). The node sticks to the floor but stays upright.
+- **Collision Source** — ground snap + slope alignment. The node tilts to match the surface normal.
+- **Gravity** — applies downward acceleration. Works alongside either collision toggle for falling behavior. Scripts that implement their own gravity (e.g. with `RaycastDown`) can leave this off.
+
+Engine gravity and ground snap always apply regardless of whether a script calls `SetNode3DPosition` — there is no "script-managed" override.
 
 ### Camera bridge
 
@@ -98,15 +105,17 @@ void  NB_RT_SetNode3DVelocityY(const char* name, float vy);
 int   NB_RT_IsNode3DOnFloor(const char* name);
 int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 int   NB_RT_RaycastDown(float x, float y, float z, float* outHitY);
+int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]);
 ```
 
 - **CollisionBounds**: get/set the AABB half-extents (box size) of a Node3D's collision volume.
 - **BoundPos**: get/set the local offset of the collision box relative to the node's origin.
-- **PhysicsEnabled**: toggle gravity and floor collision per node.
+- **PhysicsEnabled**: toggle gravity per node. Ground snap and slope alignment are controlled separately by the collision toggles in the editor.
 - **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
 - **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).
-- **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for slope following and ground snapping.
+- **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for ground snapping.
+- **RaycastDownWithNormal**: same as `RaycastDown` but also returns the surface normal of the hit triangle in `outNormal[3]`. Used by the engine for slope alignment; scripts can use it for custom orientation logic.
 
 ### NavMesh bridge
 
@@ -119,7 +128,7 @@ int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
 int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
 ```
 
-- **NavMeshBuild**: builds the navmesh from all StaticMesh3D geometry in the current scene. Returns 1 on success.
+- **NavMeshBuild**: builds the navmesh from StaticMesh3D geometry within NavMesh3D bounding volumes. Only triangles with at least one vertex inside a `navBounds` volume (and not inside a `navNegator` volume) are included. Returns 1 on success.
 - **NavMeshClear**: frees the current navmesh data.
 - **NavMeshIsReady**: returns 1 if a navmesh has been built and is available for queries.
 - **NavMeshFindPath**: finds a path between two world-space points. Writes up to `maxPoints` waypoints into `outPath` (packed xyz). Returns the number of waypoints, or 0 if no path found.

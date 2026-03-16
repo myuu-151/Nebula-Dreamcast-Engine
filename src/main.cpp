@@ -10142,74 +10142,80 @@ int main(int, char**)
             for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
             {
                 auto& n3 = gNode3DNodes[ni];
-                if (!n3.physicsEnabled) continue;
-                // Apply gravity
-                n3.velY += gravity * dt;
-                n3.y += n3.velY * dt;
+                if (!n3.physicsEnabled && !n3.collisionSource && !n3.simpleCollision) continue;
 
-                // Raycast from just above feet (bottom of bounding box) to find ground
-                float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
-                GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
-                float hy = std::max(0.0f, n3.extentY * pwsy);
-                float castY = pwy + n3.boundPosY - hy + 0.5f;
-                float hitY = 0.0f;
-                float hitNormal[3] = {0.0f, 1.0f, 0.0f};
-                bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
-
-                if (groundHit)
+                // Gravity (physicsEnabled only)
+                if (n3.physicsEnabled)
                 {
-                    float groundY = hitY - n3.boundPosY + hy;
-                    if (n3.y <= groundY)
+                    n3.velY += gravity * dt;
+                    n3.y += n3.velY * dt;
+                }
+
+                // Raycast + ground snap + slope alignment
+                if (n3.collisionSource || n3.simpleCollision)
+                {
+                    float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
+                    GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
+                    float hy = std::max(0.0f, n3.extentY * pwsy);
+                    float castY = pwy + n3.boundPosY - hy + 0.5f;
+                    float hitY = 0.0f;
+                    float hitNormal[3] = {0.0f, 1.0f, 0.0f};
+                    bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
+
+                    if (groundHit)
                     {
-                        n3.y = groundY;
-                        if (n3.velY < 0.0f) n3.velY = 0.0f;
+                        // Ground snap
+                        float groundY = hitY - n3.boundPosY + hy;
+                        if (n3.y <= groundY)
+                        {
+                            n3.y = groundY;
+                            if (n3.velY < 0.0f) n3.velY = 0.0f;
+                        }
+
+                        // Slope alignment (collisionSource only, not simpleCollision)
+                        if (n3.collisionSource)
+                        {
+                            float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
+                            float savedYaw = n3.rotY;
+
+                            float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
+                            float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
+                            float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
+
+                            float t = 1.0f - powf(0.0001f, dt);
+                            float targetNX = (hny > 0.0f) ? hnx : 0.0f;
+                            float targetNY = (hny > 0.0f) ? hny : 1.0f;
+                            float targetNZ = (hny > 0.0f) ? hnz : 0.0f;
+                            float smX = curUpX + (targetNX - curUpX) * t;
+                            float smY = curUpY + (targetNY - curUpY) * t;
+                            float smZ = curUpZ + (targetNZ - curUpZ) * t;
+                            float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
+                            if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
+
+                            Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
+                            n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
+                            SyncNode3DEulerFromQuat(n3);
+                            n3.rotY = savedYaw;
+                        }
                     }
-
+                    else if (n3.collisionSource)
                     {
-                        float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
-                        // Use script's yaw directly (not QuatYawDeg which distorts on slopes)
+                        // No ground hit — smooth tilt back to upright (collisionSource only)
                         float savedYaw = n3.rotY;
-
-                        // Extract current up vector from quat (the smoothed normal)
                         float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
                         float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
                         float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
-
-                        // Smooth the normal toward hit normal (tilt only, yaw is instant)
                         float t = 1.0f - powf(0.0001f, dt);
-                        float targetNX = (hny > 0.0f) ? hnx : 0.0f;
-                        float targetNY = (hny > 0.0f) ? hny : 1.0f;
-                        float targetNZ = (hny > 0.0f) ? hnz : 0.0f;
-                        float smX = curUpX + (targetNX - curUpX) * t;
-                        float smY = curUpY + (targetNY - curUpY) * t;
-                        float smZ = curUpZ + (targetNZ - curUpZ) * t;
+                        float smX = curUpX + (0.0f - curUpX) * t;
+                        float smY = curUpY + (1.0f - curUpY) * t;
+                        float smZ = curUpZ + (0.0f - curUpZ) * t;
                         float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
                         if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
-
-                        // Build quat from smoothed normal + instant yaw
                         Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
                         n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
                         SyncNode3DEulerFromQuat(n3);
-                        n3.rotY = savedYaw; // preserve script's yaw (QuatToEuler distorts it)
+                        n3.rotY = savedYaw;
                     }
-                }
-                else
-                {
-                    // No ground hit — smooth tilt back to upright
-                    float savedYaw = n3.rotY;
-                    float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
-                    float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
-                    float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
-                    float t = 1.0f - powf(0.0001f, dt);
-                    float smX = curUpX + (0.0f - curUpX) * t;
-                    float smY = curUpY + (1.0f - curUpY) * t;
-                    float smZ = curUpZ + (0.0f - curUpZ) * t;
-                    float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
-                    if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
-                    Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
-                    n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
-                    SyncNode3DEulerFromQuat(n3);
-                    n3.rotY = savedYaw;
                 }
             }
         }
@@ -18974,8 +18980,9 @@ RenderImGuiOnly:
                 }
 
                 ImGui::Text("Primitive: %s", n.primitiveMesh.empty() ? "(none)" : n.primitiveMesh.c_str());
-                ImGui::Checkbox("Collision Source (primitive bounds)", &n.collisionSource);
-                ImGui::Checkbox("Physics Enabled", &n.physicsEnabled);
+                ImGui::Checkbox("Simple Collision", &n.simpleCollision);
+                ImGui::Checkbox("Collision Source (slope alignment)", &n.collisionSource);
+                ImGui::Checkbox("Gravity", &n.physicsEnabled);
                 ImGui::Text("Parent: %s", n.parent.empty() ? "(none)" : n.parent.c_str());
                 ImGui::SameLine();
                 if (!n.parent.empty() && ImGui::Button("Unparent##InspectorNode3D")) n.parent.clear();

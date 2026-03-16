@@ -644,6 +644,7 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindClosestPoint\"); return fn ? fn(px,py,pz,outPos) : 0; }\n";
     out << "void NB_RT_NextScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NextScene\"); if(fn) fn(); }\n";
     out << "void NB_RT_PrevScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_PrevScene\"); if(fn) fn(); }\n";
+    out << "void NB_RT_SwitchScene(const char* name){ typedef void(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SwitchScene\"); if(fn) fn(name); }\n";
     return true;
 }
 
@@ -2414,6 +2415,19 @@ NB_RT_EXPORT void NB_RT_PrevScene(void)
     if (gOpenScenes.size() <= 1) return;
     int prev = (gActiveScene - 1 + (int)gOpenScenes.size()) % (int)gOpenScenes.size();
     gActiveScene = prev;
+}
+
+NB_RT_EXPORT void NB_RT_SwitchScene(const char* name)
+{
+    if (!name || !name[0]) return;
+    for (int i = 0; i < (int)gOpenScenes.size(); ++i)
+    {
+        if (_stricmp(gOpenScenes[i].name.c_str(), name) == 0)
+        {
+            gActiveScene = i;
+            return;
+        }
+    }
 }
 
 static void ReparentStaticMeshKeepWorldPos(int childIdx, const std::string& newParent)
@@ -13949,6 +13963,7 @@ RenderImGuiOnly:
                             }
 
                             std::vector<std::string> runtimeSceneFiles;
+                            std::vector<std::string> runtimeSceneNames;
                             std::vector<std::vector<std::string>> runtimeSceneAnimDiskByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
@@ -14042,6 +14057,7 @@ RenderImGuiOnly:
                                 printf("[DreamcastBuild] Scene '%s' -> %s: %d meshes written, %d skipped\n",
                                     stagedScene.name.c_str(), sceneOutName.c_str(), sceneWrittenMeshes, sceneSkippedMeshes);
                                 runtimeSceneFiles.push_back(sceneOutName);
+                                runtimeSceneNames.push_back(stagedScene.name);
                                 runtimeSceneAnimDiskByMesh.push_back(std::move(sceneAnimDiskByMesh));
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
@@ -14113,6 +14129,7 @@ RenderImGuiOnly:
                             if (runtimeSceneFiles.empty())
                             {
                                 runtimeSceneFiles.push_back("DEFAULT.NEBSCENE");
+                                runtimeSceneNames.push_back("Default");
                                 runtimeSceneAnimDiskByMesh.push_back({});
                                 runtimeSceneRuntimeTestByMesh.push_back({});
                                 runtimeSceneCollisionSourceByMesh.push_back({});
@@ -14526,8 +14543,10 @@ RenderImGuiOnly:
                                 mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ return NB_DC_DetourFindRandomPoint(outPos); }\n";
                                 mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ return NB_DC_DetourFindClosestPoint(px,py,pz,outPos); }\n";
                                 mc << "static int gSceneSwitchReq = 0;\n";
-                                mc << "void NB_RT_NextScene(void){ gSceneSwitchReq = 1; }\n";
-                                mc << "void NB_RT_PrevScene(void){ gSceneSwitchReq = -1; }\n";
+                                mc << "static char gSceneSwitchName[64] = {0};\n";
+                                mc << "void NB_RT_NextScene(void){ gSceneSwitchReq = 1; gSceneSwitchName[0]=0; }\n";
+                                mc << "void NB_RT_PrevScene(void){ gSceneSwitchReq = -1; gSceneSwitchName[0]=0; }\n";
+                                mc << "void NB_RT_SwitchScene(const char* name){ if(!name||!name[0]) return; gSceneSwitchReq = 2; strncpy(gSceneSwitchName,name,sizeof(gSceneSwitchName)-1); gSceneSwitchName[sizeof(gSceneSwitchName)-1]=0; }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";
@@ -14625,6 +14644,13 @@ RenderImGuiOnly:
                                 }
                                 mc << "};\n";
                                 mc << "static const int gSceneCount = " << (int)runtimeSceneFiles.size() << ";\n";
+                                mc << "static const char* gSceneNames[] = {";
+                                for (size_t si = 0; si < runtimeSceneNames.size(); ++si)
+                                {
+                                    mc << "\"" << runtimeSceneNames[si] << "\"";
+                                    if (si + 1 < runtimeSceneNames.size()) mc << ",";
+                                }
+                                mc << "};\n";
                                 mc << "static const char* kDefaultSceneFile = \"" << defaultSceneRuntimeFile << "\";\n";
                                 mc << "typedef struct { const char* logical; const char* staged; } NB_RefMap;\n";
                                 mc << "static const NB_RefMap kMeshRefMap[] = {";
@@ -15413,7 +15439,9 @@ RenderImGuiOnly:
                                 mc << "      }\n";
                                 mc << "    }}\n";
                                 mc << "    if (gSceneSwitchReq != 0) {\n";
-                                mc << "      int metaOk = (gSceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
+                                mc << "      int metaOk = 0;\n";
+                                mc << "      if (gSceneSwitchReq == 2 && gSceneSwitchName[0]) { for(int si=0;si<gSceneCount;++si){ if(dc_eq_nocase(gSceneSwitchName,gSceneNames[si])){ metaOk=NB_LoadSceneIndex(si); break; } } gSceneSwitchName[0]=0; }\n";
+                                mc << "      else { metaOk = (gSceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene(); }\n";
                                 mc << "      gSceneSwitchReq = 0;\n";
                                 mc << "      sceneReady = 0;\n";
                                 mc << "      gCollCacheReady = 0;\n";

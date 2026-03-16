@@ -642,6 +642,8 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ typedef int(*Fn)(float,float,float,float,float,float,float*,int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindPath\"); return fn ? fn(sx,sy,sz,gx,gy,gz,outPath,maxPoints) : 0; }\n";
     out << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ typedef int(*Fn)(float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindRandomPoint\"); return fn ? fn(outPos) : 0; }\n";
     out << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ typedef int(*Fn)(float,float,float,float*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NavMeshFindClosestPoint\"); return fn ? fn(px,py,pz,outPos) : 0; }\n";
+    out << "void NB_RT_NextScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NextScene\"); if(fn) fn(); }\n";
+    out << "void NB_RT_PrevScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_PrevScene\"); if(fn) fn(); }\n";
     return true;
 }
 
@@ -2396,6 +2398,22 @@ NB_RT_EXPORT int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, flo
     if (!NavMeshFindClosestPoint(pos, closest)) return 0;
     outPos[0] = closest.x; outPos[1] = closest.y; outPos[2] = closest.z;
     return 1;
+}
+
+NB_RT_EXPORT void NB_RT_NextScene(void)
+{
+    if (gOpenScenes.size() <= 1) return;
+    int next = (gActiveScene + 1) % (int)gOpenScenes.size();
+    // In editor play mode, switch to next scene
+    // For now, just advance the active scene index
+    gActiveScene = next;
+}
+
+NB_RT_EXPORT void NB_RT_PrevScene(void)
+{
+    if (gOpenScenes.size() <= 1) return;
+    int prev = (gActiveScene - 1 + (int)gOpenScenes.size()) % (int)gOpenScenes.size();
+    gActiveScene = prev;
 }
 
 static void ReparentStaticMeshKeepWorldPos(int childIdx, const std::string& newParent)
@@ -14507,6 +14525,9 @@ RenderImGuiOnly:
                                 mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ return NB_DC_DetourFindPath(sx,sy,sz,gx,gy,gz,outPath,maxPoints); }\n";
                                 mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ return NB_DC_DetourFindRandomPoint(outPos); }\n";
                                 mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ return NB_DC_DetourFindClosestPoint(px,py,pz,outPos); }\n";
+                                mc << "static int gSceneSwitchReq = 0;\n";
+                                mc << "void NB_RT_NextScene(void){ gSceneSwitchReq = 1; }\n";
+                                mc << "void NB_RT_PrevScene(void){ gSceneSwitchReq = -1; }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";
@@ -15254,7 +15275,7 @@ RenderImGuiOnly:
                                 mc << "  NB_TryLoadVmuBootImage();\n";
                                 mc << "  NB_SetMirrorFromIndex(gMirrorLrIndex);\n";
                                 mc << "  int sceneReady = 1;\n";
-                                mc << "  int sceneSwitchReq = 0;\n";
+                                mc << "  gSceneSwitchReq = 0;\n";
                                 mc << "  /* legacy orbit priming removed; unified control owns orbit state. */\n";
                                 mc << "  NB_Game_OnStart();\n";
                                 mc << "  /* Compute pivot offset: world camera position WITHOUT orbit minus mesh position. */\n";
@@ -15391,9 +15412,9 @@ RenderImGuiOnly:
                                 mc << "        }\n";
                                 mc << "      }\n";
                                 mc << "    }}\n";
-                                mc << "    if (sceneSwitchReq != 0) {\n";
-                                mc << "      int metaOk = (sceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
-                                mc << "      sceneSwitchReq = 0;\n";
+                                mc << "    if (gSceneSwitchReq != 0) {\n";
+                                mc << "      int metaOk = (gSceneSwitchReq > 0) ? NB_NextScene() : NB_PrevScene();\n";
+                                mc << "      gSceneSwitchReq = 0;\n";
                                 mc << "      sceneReady = 0;\n";
                                 mc << "      gCollCacheReady = 0;\n";
                                 mc << "      for(int mi=0; mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; for(int s=0;s<MAX_SLOT;++s){ if(rm->slotTx[s]){ pvr_mem_free(rm->slotTx[s]); rm->slotTx[s]=0; } dc_free_tex(&rm->diskTex[s]); } if(rm->trisFlipped){ free(rm->trisFlipped); rm->trisFlipped=0; } if(rm->triUvFlipped){ free(rm->triUvFlipped); rm->triUvFlipped=0; } runtime_anim_free(&rm->anim); dc_free_mesh(&rm->diskMesh); free(rm->weldGroups); free(rm->weldNrmBuf); memset(rm,0,sizeof(*rm)); }\n";

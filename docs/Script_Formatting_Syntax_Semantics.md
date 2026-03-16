@@ -75,6 +75,10 @@ void NB_RT_SwitchScene(const char* name);
 
 **Scene switching:** `NB_RT_NextScene()` and `NB_RT_PrevScene()` cycle through loaded scenes. `NB_RT_SwitchScene("MyLevel2")` jumps directly to a scene by name (case-insensitive). All three are deferred to end of frame — navmesh is automatically rebuilt and `NB_Game_OnSceneSwitch` is called. Use debounce logic for Next/Prev to avoid rapid cycling (see `Control4.c` for an example).
 
+> **Editor vs Dreamcast:** In the editor, `SwitchScene` only switches between currently open scene tabs. On Dreamcast, all exported scenes are available from disc. If testing scene triggers in the editor, make sure the target scene is open as a tab.
+
+**Trigger zones:** Use `NB_RT_CheckAABBOverlap` + `NB_RT_SwitchScene` to trigger scene switches when the player walks into a Node3D's bounds. No collision flags needed on the trigger node — `CheckAABBOverlap` is a pure geometry test using each node's bounds scaled by its scale. See `Dreamcast_Binding_API.md` for a full trigger zone script example.
+
 **Collision / physics declarations** (optional — only needed if your script queries physics state):
 
 ```c

@@ -137,7 +137,7 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 - **SimpleCollision**: toggle ground snap only (no slope alignment) per node.
 - **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
-- **CheckAABBOverlap**: returns 1 if two named Node3D bounding boxes overlap (pure geometry test — does **not** require any collision flags enabled). Useful for hit detection, trigger zones, and scene-switch triggers. The test uses each node's position + `boundPos` offset + `extent` half-extents.
+- **CheckAABBOverlap**: returns 1 if two named Node3D bounding boxes overlap (pure geometry test — does **not** require any collision flags enabled). Useful for hit detection, trigger zones, and scene-switch triggers. The test uses each node's position + `boundPos` offset + `extent` half-extents, **scaled by the node's scale**. On Dreamcast, extents are pre-scaled during export (since `DcNode3D` has no scale fields).
 - **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for ground snapping.
 - **RaycastDownWithNormal**: same as `RaycastDown` but also returns the surface normal of the hit triangle in `outNormal[3]`. Used by the engine for slope alignment; scripts can use it for custom orientation logic.
 
@@ -185,6 +185,8 @@ void NB_RT_SwitchScene(const char* name);
 - **PrevScene**: switches to the previous scene (wraps around). Same deferred semantics as `NextScene`.
 - **SwitchScene**: switches to a specific scene by its human-readable name (case-insensitive match). Same deferred semantics — the switch happens at end of frame with navmesh rebuild and `OnSceneSwitch` callback. If no scene matches the name, the call is a no-op.
 
+**Editor vs Dreamcast behavior:** In the editor, `SwitchScene` only switches between currently open scene tabs — if the target scene isn't open as a tab, the call is a no-op. On Dreamcast, all packaged scenes are available and loaded from disc, so `SwitchScene` always works as long as the scene was exported.
+
 **Usage pattern** (with debounce to avoid rapid cycling):
 
 ```c
@@ -207,6 +209,43 @@ else { sStartHeld = 0; }
 // Jump to a specific scene by name
 NB_RT_SwitchScene("MyLevel2");
 ```
+
+**Trigger zone pattern** (switch scene when player walks into a Node3D's bounds):
+
+```c
+int NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
+void NB_RT_SwitchScene(const char* name);
+
+static const char* PLAYER_NODE  = "PlayerRoot";
+static const char* TRIGGER_NODE = "trigger";
+static const char* TARGET_SCENE = "Level2";
+
+static int sTriggered = 0;
+
+NB_SCRIPT_EXPORT void NB_Game_OnStart(void)
+{
+    sTriggered = 0;
+}
+
+NB_SCRIPT_EXPORT void NB_Game_OnUpdate(float dt)
+{
+    (void)dt;
+    if (sTriggered) return;
+    if (NB_RT_CheckAABBOverlap(PLAYER_NODE, TRIGGER_NODE))
+    {
+        sTriggered = 1;
+        NB_RT_SwitchScene(TARGET_SCENE);
+    }
+}
+
+NB_SCRIPT_EXPORT void NB_Game_OnSceneSwitch(const char* sceneName)
+{
+    (void)sceneName;
+    sTriggered = 0;  // reset so trigger works again if player returns
+}
+```
+
+The trigger Node3D does not need any collision flags enabled — `CheckAABBOverlap` is a pure geometry test. Set the trigger node's bounds/scale in the editor to define the activation area. The `sTriggered` flag prevents repeated scene switches while the player remains inside the zone.
 
 ### NavMesh bridge
 
@@ -308,6 +347,10 @@ void        NB_DC_GetSceneTransformAt(int meshIndex, float outPos[3], float outR
 ```
 
 Use `*At` variants for modern multi-StaticMesh scenes.
+
+### Per-scene material properties
+
+On Dreamcast, material properties (shade mode, light yaw/pitch, shadow intensity, shading UV layer, UV scale) are baked into per-scene 3D arrays indexed by `[sceneIndex][meshIndex][slotIndex]`. This ensures that switching scenes loads the correct material data for that scene's meshes — each scene has its own set of material properties read from its `.nebmat` files at export time.
 
 ### NavMesh asset loading
 

@@ -1,7 +1,27 @@
+/*
+ * KosBindings.h — Nebula Dreamcast platform bindings (NB_DC_* and NB_RT_*).
+ *
+ * This header declares all Dreamcast-side asset loading, scene metadata,
+ * and runtime bridge functions. It is included by the generated Dreamcast
+ * runtime (build_dreamcast/main.c) and by KosBindings.c which provides
+ * the NB_DC_* implementations and weak fallback stubs for NB_RT_*.
+ *
+ * Layers:
+ *   NB_DC_*  — Platform layer: scene/mesh/texture/navmesh loading.
+ *              Implemented in KosBindings.c.
+ *   NB_RT_*  — Runtime bridge: transform, collision, physics, camera,
+ *              and navmesh query functions called by gameplay scripts.
+ *              Implemented in the generated main.c; weak stubs here
+ *              ensure linking succeeds even without it.
+ *
+ * See docs/Dreamcast_Binding_API.md for full API documentation.
+ */
 #pragma once
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <stdint.h>
+
+/* ---- Low-level pad state (raw Maple layer) ---- */
 
 typedef struct NB_KOS_RawPadState {
     int has_controller;
@@ -14,6 +34,8 @@ typedef struct NB_KOS_RawPadState {
 
 void NB_KOS_BindingsInit(void);
 void NB_KOS_BindingsRead(NB_KOS_RawPadState* outState);
+
+/* ---- Common types ---- */
 
 typedef struct NB_Vec3 {
     float x;
@@ -44,14 +66,20 @@ typedef struct NB_Texture {
     int flipV;
 } NB_Texture;
 
+/* ---- Scene lifecycle (NB_DC_*) ---- */
+
 int NB_DC_LoadScene(const char* scenePath);
 void NB_DC_UnloadScene(void);
 int NB_DC_SwitchScene(const char* scenePath);
+
+/* ---- Mesh/texture loading (NB_DC_*) ---- */
 
 int NB_DC_LoadMesh(const char* meshPath, NB_Mesh* out);
 int NB_DC_LoadTexture(const char* texPath, NB_Texture* out);
 void NB_DC_FreeMesh(NB_Mesh* m);
 void NB_DC_FreeTexture(NB_Texture* t);
+
+/* ---- Scene metadata (NB_DC_*) ---- */
 
 const char* NB_DC_GetSceneName(void);
 const char* NB_DC_GetSceneMeshPath(void);

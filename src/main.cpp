@@ -13720,13 +13720,19 @@ RenderImGuiOnly:
                                         return true;
                                     };
 
-                                    // Collect NavMesh3D bounding volumes from all scenes
+                                    // Collect NavMesh3D bounding volumes from DEFAULT scene only
+                                    // (matches editor behavior which builds navmesh from active scene only)
                                     struct DCNavBounds { float minX, minY, minZ, maxX, maxY, maxZ; bool negator; };
                                     std::vector<DCNavBounds> dcNavVolumes;
-                                    for (const auto& ls : loadedScenes)
+                                    if (!loadedScenes.empty())
                                     {
+                                        const auto& ls = loadedScenes[0]; // default scene is always first
+                                        printf("[DreamcastBuild] navmesh: default scene has %d NavMesh3D nodes\n", (int)ls.data.navMeshes.size());
                                         for (const auto& nm : ls.data.navMeshes)
                                         {
+                                            printf("[DreamcastBuild] navmesh:   NavMesh3D '%s' navBounds=%d navNeg=%d ext=(%.1f,%.1f,%.1f) pos=(%.1f,%.1f,%.1f)\n",
+                                                nm.name.c_str(), nm.navBounds ? 1 : 0, nm.navNegator ? 1 : 0,
+                                                nm.extentX, nm.extentY, nm.extentZ, nm.x, nm.y, nm.z);
                                             if (!nm.navBounds && !nm.navNegator) continue;
                                             float hx = nm.extentX * 0.5f;
                                             float hy = nm.extentY * 0.5f;
@@ -13760,10 +13766,11 @@ RenderImGuiOnly:
                                         return true;
                                     };
 
-                                    printf("[DreamcastBuild] navmesh export: %d loaded scenes, %d nav volumes\n", (int)loadedScenes.size(), (int)dcNavVolumes.size());
-                                    for (const auto& ls : loadedScenes)
+                                    printf("[DreamcastBuild] navmesh export: %d loaded scenes, %d nav volumes (using default scene only)\n", (int)loadedScenes.size(), (int)dcNavVolumes.size());
+                                    if (!loadedScenes.empty())
                                     {
-                                        printf("[DreamcastBuild] navmesh: scene has %d static meshes\n", (int)ls.data.staticMeshes.size());
+                                        const auto& ls = loadedScenes[0]; // default scene only
+                                        printf("[DreamcastBuild] navmesh: default scene has %d static meshes\n", (int)ls.data.staticMeshes.size());
                                         for (const auto& sm : ls.data.staticMeshes)
                                         {
                                             if (sm.mesh.empty()) continue;

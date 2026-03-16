@@ -14126,6 +14126,14 @@ RenderImGuiOnly:
                             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
                             std::vector<std::vector<float>> runtimeSceneWallThresholdByMesh;
+                            // Per-scene per-mesh material property arrays (shade/light/UV per slot)
+                            std::vector<std::vector<std::array<int, kStaticMeshMaterialSlots>>> runtimeSceneShadeModeByMesh;
+                            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneLightYawByMesh;
+                            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneLightPitchByMesh;
+                            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneShadowIntensityByMesh;
+                            std::vector<std::vector<std::array<int, kStaticMeshMaterialSlots>>> runtimeSceneShadingUvByMesh;
+                            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneUvScaleUByMesh;
+                            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneUvScaleVByMesh;
                             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
@@ -14157,6 +14165,13 @@ RenderImGuiOnly:
                                 std::vector<uint8_t> sceneRuntimeTestByMesh;
                                 std::vector<uint8_t> sceneCollisionSourceByMesh;
                                 std::vector<float> sceneWallThresholdByMesh;
+                                std::vector<std::array<int, kStaticMeshMaterialSlots>> sceneShadeModeByMesh;
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneLightYawByMesh;
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneLightPitchByMesh;
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneShadowIntensityByMesh;
+                                std::vector<std::array<int, kStaticMeshMaterialSlots>> sceneShadingUvByMesh;
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneUvScaleUByMesh;
+                                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneUvScaleVByMesh;
                                 for (const auto& sm : stagedScene.staticMeshes)
                                 {
                                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
@@ -14213,6 +14228,39 @@ RenderImGuiOnly:
                                     sceneRuntimeTestByMesh.push_back(sm.runtimeTest ? 1u : 0u);
                                     sceneCollisionSourceByMesh.push_back(sm.collisionSource ? 1u : 0u);
                                     sceneWallThresholdByMesh.push_back(sm.wallThreshold);
+                                    // Collect per-slot material properties for this mesh
+                                    {
+                                        std::array<int, kStaticMeshMaterialSlots> mShade{}; mShade.fill(0);
+                                        std::array<float, kStaticMeshMaterialSlots> mLYaw{}; mLYaw.fill(0.0f);
+                                        std::array<float, kStaticMeshMaterialSlots> mLPitch{}; mLPitch.fill(35.0f);
+                                        std::array<float, kStaticMeshMaterialSlots> mShadow{}; mShadow.fill(1.0f);
+                                        std::array<int, kStaticMeshMaterialSlots> mShadUv{}; mShadUv.fill(-1);
+                                        std::array<float, kStaticMeshMaterialSlots> mUvU{}; mUvU.fill(1.0f);
+                                        std::array<float, kStaticMeshMaterialSlots> mUvV{}; mUvV.fill(1.0f);
+                                        if (!gProjectDir.empty())
+                                        {
+                                            for (int msi = 0; msi < kStaticMeshMaterialSlots; ++msi)
+                                            {
+                                                std::string matRef = sm.materialSlots[msi];
+                                                if (matRef.empty() && msi == 0) matRef = sm.material;
+                                                if (matRef.empty()) continue;
+                                                std::filesystem::path matPath = std::filesystem::path(gProjectDir) / matRef;
+                                                mShade[msi] = LoadMaterialShadingMode(matPath);
+                                                mLYaw[msi] = LoadMaterialLightRotation(matPath);
+                                                mLPitch[msi] = LoadMaterialLightPitch(matPath);
+                                                mShadow[msi] = LoadMaterialShadowIntensity(matPath);
+                                                mShadUv[msi] = LoadMaterialShadingUv(matPath);
+                                                { float su=1,sv=1,ou=0,ov=0,rd=0; NebulaAssets::LoadMaterialUvTransform(matPath,su,sv,ou,ov,rd); mUvU[msi]=su; mUvV[msi]=sv; }
+                                            }
+                                        }
+                                        sceneShadeModeByMesh.push_back(mShade);
+                                        sceneLightYawByMesh.push_back(mLYaw);
+                                        sceneLightPitchByMesh.push_back(mLPitch);
+                                        sceneShadowIntensityByMesh.push_back(mShadow);
+                                        sceneShadingUvByMesh.push_back(mShadUv);
+                                        sceneUvScaleUByMesh.push_back(mUvU);
+                                        sceneUvScaleVByMesh.push_back(mUvV);
+                                    }
                                     ++sceneWrittenMeshes;
                                 }
                                 printf("[DreamcastBuild] Scene '%s' -> %s: %d meshes written, %d skipped\n",
@@ -14223,6 +14271,13 @@ RenderImGuiOnly:
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
                                 runtimeSceneWallThresholdByMesh.push_back(std::move(sceneWallThresholdByMesh));
+                                runtimeSceneShadeModeByMesh.push_back(std::move(sceneShadeModeByMesh));
+                                runtimeSceneLightYawByMesh.push_back(std::move(sceneLightYawByMesh));
+                                runtimeSceneLightPitchByMesh.push_back(std::move(sceneLightPitchByMesh));
+                                runtimeSceneShadowIntensityByMesh.push_back(std::move(sceneShadowIntensityByMesh));
+                                runtimeSceneShadingUvByMesh.push_back(std::move(sceneShadingUvByMesh));
+                                runtimeSceneUvScaleUByMesh.push_back(std::move(sceneUvScaleUByMesh));
+                                runtimeSceneUvScaleVByMesh.push_back(std::move(sceneUvScaleVByMesh));
                                 // Find the player mesh's parent Node3D transform for this scene.
                                 {
                                     ScenePlayerParent pp{};
@@ -15370,144 +15425,72 @@ RenderImGuiOnly:
                                 }
                                 mc << "};\n";
 
-                                std::vector<std::array<int, kStaticMeshMaterialSlots>> dcShadeMode(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcLightYaw(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcLightPitch(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcShadowIntensity(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<int, kStaticMeshMaterialSlots>> dcShadingUv(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcUvScaleU(std::max(1, (int)exportStatics.size()));
-                                std::vector<std::array<float, kStaticMeshMaterialSlots>> dcUvScaleV(std::max(1, (int)exportStatics.size()));
-                                for (auto& arr : dcShadeMode) arr.fill(0);
-                                for (auto& arr : dcLightYaw) arr.fill(0.0f);
-                                for (auto& arr : dcLightPitch) arr.fill(35.0f);
-                                for (auto& arr : dcShadowIntensity) arr.fill(1.0f);
-                                for (auto& arr : dcShadingUv) arr.fill(-1);
-                                for (auto& arr : dcUvScaleU) arr.fill(1.0f);
-                                for (auto& arr : dcUvScaleV) arr.fill(1.0f);
-                                if (!gProjectDir.empty())
+                                // Per-scene material property arrays — emit as [NUM_SCENES][MAX_MESHES][MAX_SLOT]
                                 {
-                                    for (size_t i = 0; i < exportStatics.size(); ++i)
+                                    int numScenes = (int)runtimeSceneFiles.size();
+                                    auto emitPerSceneSlotArrayU8 = [&](const char* name, const char* type,
+                                        const std::vector<std::vector<std::array<int, kStaticMeshMaterialSlots>>>& data, int defaultVal)
                                     {
-                                        const auto& sm = exportStatics[i];
-                                        for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                        mc << "  static const " << type << " " << name << "[" << numScenes << "][MAX_MESHES][MAX_SLOT] = {\n";
+                                        for (int si = 0; si < numScenes; ++si)
                                         {
-                                            std::string matRef = (si >= 0 && si < kStaticMeshMaterialSlots) ? sm.materialSlots[si] : std::string();
-                                            if (matRef.empty() && si == 0) matRef = sm.material;
-                                            if (matRef.empty()) continue;
-                                            std::filesystem::path matPath = std::filesystem::path(gProjectDir) / matRef;
-                                            dcShadeMode[i][si] = LoadMaterialShadingMode(matPath);
-                                            dcLightYaw[i][si] = LoadMaterialLightRotation(matPath);
-                                            dcLightPitch[i][si] = LoadMaterialLightPitch(matPath);
-                                            dcShadowIntensity[i][si] = LoadMaterialShadowIntensity(matPath);
-                                            dcShadingUv[i][si] = LoadMaterialShadingUv(matPath);
-                                            { float su=1,sv=1,ou=0,ov=0,rd=0; NebulaAssets::LoadMaterialUvTransform(matPath,su,sv,ou,ov,rd); dcUvScaleU[i][si]=su; dcUvScaleV[i][si]=sv; }
+                                            mc << "  {";
+                                            for (int mi = 0; mi < 64; ++mi)
+                                            {
+                                                mc << "{";
+                                                for (int s = 0; s < kStaticMeshMaterialSlots; ++s)
+                                                {
+                                                    int v = (si < (int)data.size() && mi < (int)data[si].size()) ? data[si][mi][s] : defaultVal;
+                                                    mc << v;
+                                                    if (s + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                                }
+                                                mc << "}";
+                                                if (mi + 1 < 64) mc << ",";
+                                            }
+                                            mc << "}";
+                                            if (si + 1 < numScenes) mc << ",";
+                                            mc << "\n";
                                         }
-                                    }
-                                }
-
-                                mc << "  static const uint8_t kMeshMatShadeMode[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
+                                        mc << "  };\n";
+                                    };
+                                    auto emitPerSceneSlotArrayFloat = [&](const char* name,
+                                        const std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>>& data, float defaultVal)
                                     {
-                                        mc << (dcShadeMode[mi][si] != 0 ? "1" : "0");
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
+                                        mc << "  static const float " << name << "[" << numScenes << "][MAX_MESHES][MAX_SLOT] = {\n";
+                                        for (int si = 0; si < numScenes; ++si)
+                                        {
+                                            mc << "  {";
+                                            for (int mi = 0; mi < 64; ++mi)
+                                            {
+                                                mc << "{";
+                                                for (int s = 0; s < kStaticMeshMaterialSlots; ++s)
+                                                {
+                                                    float v = (si < (int)data.size() && mi < (int)data[si].size()) ? data[si][mi][s] : defaultVal;
+                                                    mc << fstr(v);
+                                                    if (s + 1 < kStaticMeshMaterialSlots) mc << ",";
+                                                }
+                                                mc << "}";
+                                                if (mi + 1 < 64) mc << ",";
+                                            }
+                                            mc << "}";
+                                            if (si + 1 < numScenes) mc << ",";
+                                            mc << "\n";
+                                        }
+                                        mc << "  };\n";
+                                    };
+                                    emitPerSceneSlotArrayU8("kSceneShadeMode", "uint8_t", runtimeSceneShadeModeByMesh, 0);
+                                    emitPerSceneSlotArrayFloat("kSceneLightYaw", runtimeSceneLightYawByMesh, 0.0f);
+                                    emitPerSceneSlotArrayFloat("kSceneLightPitch", runtimeSceneLightPitchByMesh, 35.0f);
+                                    emitPerSceneSlotArrayFloat("kSceneShadowIntensity", runtimeSceneShadowIntensityByMesh, 1.0f);
+                                    emitPerSceneSlotArrayU8("kSceneShadingUv", "int8_t", runtimeSceneShadingUvByMesh, -1);
+                                    emitPerSceneSlotArrayFloat("kSceneUvScaleU", runtimeSceneUvScaleUByMesh, 1.0f);
+                                    emitPerSceneSlotArrayFloat("kSceneUvScaleV", runtimeSceneUvScaleVByMesh, 1.0f);
                                 }
-                                mc << "  };\n";
-                                mc << "  static const float kMeshMatLightYaw[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << fstr(dcLightYaw[mi][si]);
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
-                                mc << "  static const float kMeshMatLightPitch[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << fstr(dcLightPitch[mi][si]);
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
-                                mc << "  static const float kMeshMatShadowIntensity[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << fstr(dcShadowIntensity[mi][si]);
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
-                                mc << "  static const int8_t kMeshMatShadingUv[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << dcShadingUv[mi][si];
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
-                                mc << "  static const float kMeshMatUvScaleU[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << fstr(dcUvScaleU[mi][si]);
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
-                                mc << "  static const float kMeshMatUvScaleV[MAX_MESHES][MAX_SLOT] = {\n";
-                                for (size_t mi = 0; mi < exportStatics.size() && mi < 64; ++mi)
-                                {
-                                    mc << "    {";
-                                    for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
-                                    {
-                                        mc << fstr(dcUvScaleV[mi][si]);
-                                        if (si + 1 < kStaticMeshMaterialSlots) mc << ",";
-                                    }
-                                    mc << "}";
-                                    if (mi + 1 < exportStatics.size() && mi + 1 < 64) mc << ",";
-                                    mc << "\n";
-                                }
-                                mc << "  };\n";
                                 mc << "  typedef struct { RuntimeMesh diskMesh; RuntimeMesh activeMesh; int kVertCount; int kTriCount; V3* base; uint16_t* trisNormal; V3* triUvNormal; uint16_t* triMatNormal; uint16_t* trisFlipped; V3* triUvFlipped; pvr_poly_hdr_t hdrSlot[MAX_SLOT]; pvr_ptr_t slotTx[MAX_SLOT]; RuntimeTex diskTex[MAX_SLOT]; uint16_t slotW[MAX_SLOT]; uint16_t slotH[MAX_SLOT]; float slotUS[MAX_SLOT]; float slotVS[MAX_SLOT]; float slotUvScaleU[MAX_SLOT]; float slotUvScaleV[MAX_SLOT]; float slotHalfU[MAX_SLOT]; float slotHalfV[MAX_SLOT]; uint8_t slotFilter[MAX_SLOT]; uint8_t slotReady[MAX_SLOT]; uint8_t slotWrap[MAX_SLOT]; uint8_t slotFlipU[MAX_SLOT]; uint8_t slotFlipV[MAX_SLOT]; uint8_t hasExtUv; int slotCount; int loaded; int* weldGroups; int nWeldGroups; V3* weldNrmBuf; RuntimeAnimClip anim; } RuntimeSceneMesh;\n";
                                 mc << "  static RuntimeSceneMesh meshRt[MAX_MESHES];\n";
                                 mc << "  memset(meshRt, 0, sizeof(meshRt));\n";
                                 mc << "  static const uint16_t kFallbackWhite2x2[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };\n";
-                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kMeshMatUvScaleU[mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kMeshMatUvScaleV[mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
+                                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kSceneUvScaleU[gSceneMetaIndex][mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kSceneUvScaleV[gSceneMetaIndex][mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
                                 mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: mesh not loaded\\n\",mi,sm->meshLogical); continue; } if(!sm->runtimeTest){ if(sm->animDisk[0]) dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s skipped: runtimeTest=0\\n\",mi,sm->meshLogical,sm->animDisk); continue; } if(!sm->animDisk[0]){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: no anim assigned\\n\",mi,sm->meshLogical); continue; } char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s try load %s\\n\",mi,sm->meshLogical,ap); if(!runtime_anim_load(ap,&rm->anim)){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s load failed (missing/unreadable/invalid)\\n\",mi,sm->meshLogical,sm->animDisk); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount>rm->kVertCount){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s vert mismatch clip=%d mesh=%d -> fallback static\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.vertCount,rm->kVertCount); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount<rm->kVertCount){ V3* np=(V3*)realloc(rm->anim.posed,(size_t)rm->kVertCount*sizeof(V3)); if(!np){ runtime_anim_free(&rm->anim); continue; } for(int vi=rm->anim.vertCount;vi<rm->kVertCount;++vi) np[vi]=rm->base[vi]; rm->anim.posed=np; dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] padded posed %d->%d\\n\",mi,rm->anim.vertCount,rm->kVertCount); } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s loaded frames=%d fps=%.2f verts=%d\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.frameCount,rm->anim.fps,rm->anim.vertCount); }\n";
                                 mc << "  int maxVertCount=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>maxVertCount) maxVertCount=meshRt[mi].kVertCount; }\n";
                                 mc << "  SV* gSv=NULL; uint8_t* gOk=NULL; V3* gCs=NULL; V3* gNrm=NULL;\n";
@@ -15693,7 +15676,7 @@ RenderImGuiOnly:
                                 mc << "      gCollCacheReady = 0;\n";
                                 mc << "      for(int mi=0; mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; for(int s=0;s<MAX_SLOT;++s){ if(rm->slotTx[s]){ pvr_mem_free(rm->slotTx[s]); rm->slotTx[s]=0; } dc_free_tex(&rm->diskTex[s]); } if(rm->trisFlipped){ free(rm->trisFlipped); rm->trisFlipped=0; } if(rm->triUvFlipped){ free(rm->triUvFlipped); rm->triUvFlipped=0; } runtime_anim_free(&rm->anim); dc_free_mesh(&rm->diskMesh); free(rm->weldGroups); free(rm->weldNrmBuf); memset(rm,0,sizeof(*rm)); }\n";
                                 mc << "      if (!metaOk) { dbgio_printf(\"[NEBULA][DC] Scene metadata switch failed\\n\"); }\n";
-                                mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kMeshMatUvScaleU[mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kMeshMatUvScaleV[mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: mesh not loaded\\n\",mi,sm->meshLogical); continue; } if(!sm->runtimeTest){ if(sm->animDisk[0]) dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s skipped: runtimeTest=0\\n\",mi,sm->meshLogical,sm->animDisk); continue; } if(!sm->animDisk[0]){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: no anim assigned\\n\",mi,sm->meshLogical); continue; } char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s try load %s\\n\",mi,sm->meshLogical,ap); if(!runtime_anim_load(ap,&rm->anim)){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s load failed (missing/unreadable/invalid)\\n\",mi,sm->meshLogical,sm->animDisk); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount>rm->kVertCount){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s vert mismatch clip=%d mesh=%d -> fallback static\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.vertCount,rm->kVertCount); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount<rm->kVertCount){ V3* np=(V3*)realloc(rm->anim.posed,(size_t)rm->kVertCount*sizeof(V3)); if(!np){ runtime_anim_free(&rm->anim); continue; } for(int vi=rm->anim.vertCount;vi<rm->kVertCount;++vi) np[vi]=rm->base[vi]; rm->anim.posed=np; dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] padded posed %d->%d\\n\",mi,rm->anim.vertCount,rm->kVertCount); } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s loaded frames=%d fps=%.2f verts=%d\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.frameCount,rm->anim.fps,rm->anim.vertCount); } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); free(gNrm); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); gNrm=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs||!gNrm){ free(gSv); free(gOk); free(gCs); free(gNrm); gSv=NULL; gOk=NULL; gCs=NULL; gNrm=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_RT_NavMeshClear(); NB_RT_NavMeshBuild(); NB_Game_OnSceneSwitch(gSceneName); } }\n";
+                                mc << "      else { for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kSceneUvScaleU[gSceneMetaIndex][mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kSceneUvScaleV[gSceneMetaIndex][mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; if(rm->loaded) sceneReady=1; } for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: mesh not loaded\\n\",mi,sm->meshLogical); continue; } if(!sm->runtimeTest){ if(sm->animDisk[0]) dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s skipped: runtimeTest=0\\n\",mi,sm->meshLogical,sm->animDisk); continue; } if(!sm->animDisk[0]){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: no anim assigned\\n\",mi,sm->meshLogical); continue; } char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s try load %s\\n\",mi,sm->meshLogical,ap); if(!runtime_anim_load(ap,&rm->anim)){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s load failed (missing/unreadable/invalid)\\n\",mi,sm->meshLogical,sm->animDisk); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount>rm->kVertCount){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s vert mismatch clip=%d mesh=%d -> fallback static\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.vertCount,rm->kVertCount); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount<rm->kVertCount){ V3* np=(V3*)realloc(rm->anim.posed,(size_t)rm->kVertCount*sizeof(V3)); if(!np){ runtime_anim_free(&rm->anim); continue; } for(int vi=rm->anim.vertCount;vi<rm->kVertCount;++vi) np[vi]=rm->base[vi]; rm->anim.posed=np; dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] padded posed %d->%d\\n\",mi,rm->anim.vertCount,rm->kVertCount); } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s loaded frames=%d fps=%.2f verts=%d\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.frameCount,rm->anim.fps,rm->anim.vertCount); } { int newMax=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>newMax) newMax=meshRt[mi].kVertCount; } if(newMax>maxVertCount){ free(gSv); free(gOk); free(gCs); free(gNrm); maxVertCount=newMax; gSv=(SV*)malloc((size_t)maxVertCount*sizeof(SV)); gOk=(uint8_t*)malloc((size_t)maxVertCount); gCs=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); gNrm=(V3*)malloc((size_t)maxVertCount*sizeof(V3)); if(!gSv||!gOk||!gCs||!gNrm){ free(gSv); free(gOk); free(gCs); free(gNrm); gSv=NULL; gOk=NULL; gCs=NULL; gNrm=NULL; maxVertCount=0; } } } if(sceneReady){ gPlayerMeshIdx=-1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(strcmp(gSceneMeshes[mi].meshDisk,kPlayerMeshDisk)==0){ gPlayerMeshIdx=mi; break; } } NB_RT_NavMeshClear(); NB_RT_NavMeshBuild(); NB_Game_OnSceneSwitch(gSceneName); } }\n";
                                 mc << "    }\n";
                                 mc << "    if (!sceneReady) {\n";
                                 mc << "      pvr_wait_ready(); pvr_scene_begin(); pvr_list_begin(PVR_LIST_OP_POLY); pvr_list_finish(); pvr_scene_finish(); thd_sleep(16); continue;\n";
@@ -15743,7 +15726,7 @@ RenderImGuiOnly:
                                 mc << "      const uint16_t *tris = (mirroredWinding && rm->trisFlipped) ? rm->trisFlipped : rm->trisNormal;\n";
                                 mc << "      const V3 *triUv = (mirroredWinding && rm->triUvFlipped) ? rm->triUvFlipped : rm->triUvNormal;\n";
                                 mc << "      int meshShadeMode = 0; float meshShadeYaw = 0.0f, meshShadePitch = 35.0f, meshShadeShadow = 1.0f;\n";
-                                mc << "      if (mi < MAX_MESHES) { for (int ss=0; ss<MAX_SLOT; ++ss) { if (kMeshMatShadeMode[mi][ss] || kMeshMatShadingUv[mi][ss] >= 0) { meshShadeMode = 1; meshShadeYaw = kMeshMatLightYaw[mi][ss]; meshShadePitch = kMeshMatLightPitch[mi][ss]; meshShadeShadow = kMeshMatShadowIntensity[mi][ss]; break; } } }\n";
+                                mc << "      if (mi < MAX_MESHES) { for (int ss=0; ss<MAX_SLOT; ++ss) { if (kSceneShadeMode[gSceneMetaIndex][mi][ss] || kSceneShadingUv[gSceneMetaIndex][mi][ss] >= 0) { meshShadeMode = 1; meshShadeYaw = kSceneLightYaw[gSceneMetaIndex][mi][ss]; meshShadePitch = kSceneLightPitch[gSceneMetaIndex][mi][ss]; meshShadeShadow = kSceneShadowIntensity[gSceneMetaIndex][mi][ss]; break; } } }\n";
                                 mc << "      /* Lazy-init weld groups: compute once, cache in RuntimeSceneMesh */\n";
                                 mc << "      if (meshShadeMode && !rm->weldGroups) {\n";
                                 mc << "        rm->weldGroups = (int*)malloc(rm->kVertCount * sizeof(int));\n";
@@ -15793,7 +15776,7 @@ RenderImGuiOnly:
                                 mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
                                 mc << "        uint32 col = 0xFFFFFFFF, colA = 0xFFFFFFFF, colB = 0xFFFFFFFF, colC = 0xFFFFFFFF;\n";
                                 mc << "        float fLitA=1.0f, fLitB=1.0f, fLitC=1.0f;\n";
-                                mc << "        int slotShaded = (mi < MAX_MESHES && sid < MAX_SLOT) ? (kMeshMatShadeMode[mi][sid] || kMeshMatShadingUv[mi][sid] >= 0) : 0;\n";
+                                mc << "        int slotShaded = (mi < MAX_MESHES && sid < MAX_SLOT) ? (kSceneShadeMode[gSceneMetaIndex][mi][sid] || kSceneShadingUv[gSceneMetaIndex][mi][sid] >= 0) : 0;\n";
                                 mc << "        if (meshShadeMode && slotShaded) {\n";
                                 mc << "          V3 na=nrm[ia], nb=nrm[ib], nc=nrm[ic];\n";
                                 mc << "          float nA=dot3(na,sLight); if(nA<0.0f)nA=0.0f; fLitA=sAmb + nA*sDifScale - ((na.y<0.0f)?(-na.y*sShQ):0.0f) + (1.0f-fabsf(na.z))*0.12f;\n";

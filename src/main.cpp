@@ -14229,6 +14229,8 @@ RenderImGuiOnly:
                                     float initExtX = 0.5f, initExtY = 0.5f, initExtZ = 0.5f;
                                     float initBpX = 0.0f, initBpY = 0.0f, initBpZ = 0.0f;
                                     int initPhysics = 0;
+                                    int initCollisionSource = 0;
+                                    int initSimpleCollision = 0;
                                     std::string parentName = meshSrc.parent;
                                     for (const auto& n3 : gNode3DNodes)
                                     {
@@ -14237,11 +14239,15 @@ RenderImGuiOnly:
                                             initExtX = n3.extentX; initExtY = n3.extentY; initExtZ = n3.extentZ;
                                             initBpX = n3.boundPosX; initBpY = n3.boundPosY; initBpZ = n3.boundPosZ;
                                             initPhysics = n3.physicsEnabled ? 1 : 0;
+                                            initCollisionSource = n3.collisionSource ? 1 : 0;
+                                            initSimpleCollision = n3.simpleCollision ? 1 : 0;
                                             break;
                                         }
                                     }
                                     mc << "static float gCollExtent[3] = {" << fstr(initExtX) << "," << fstr(initExtY) << "," << fstr(initExtZ) << "};\n";
                                     mc << "static int gPhysicsEnabled = " << initPhysics << ";\n";
+                                    mc << "static int gCollisionSource = " << initCollisionSource << ";\n";
+                                    mc << "static int gSimpleCollision = " << initSimpleCollision << ";\n";
                                 }
                                 mc << "static float gVelY = 0.0f;\n";
                                 mc << "static int gOnFloor = 0;\n";
@@ -14264,6 +14270,10 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ (void)name; gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; }\n";
                                 mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ (void)name; return gPhysicsEnabled; }\n";
                                 mc << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ (void)name; gPhysicsEnabled=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DCollisionSource(const char* name){ (void)name; return gCollisionSource; }\n";
+                                mc << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ (void)name; gCollisionSource=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DSimpleCollision(const char* name){ (void)name; return gSimpleCollision; }\n";
+                                mc << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ (void)name; gSimpleCollision=enabled; }\n";
                                 mc << "float NB_RT_GetNode3DVelocityY(const char* name){ (void)name; return gVelY; }\n";
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
@@ -15019,10 +15029,12 @@ RenderImGuiOnly:
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    /* Physics tick: gravity + AABB floor collision */\n";
-                                mc << "    if (gPhysicsEnabled) {\n";
+                                mc << "    if (gPhysicsEnabled || gCollisionSource || gSimpleCollision) {\n";
                                 mc << "      float preGravY = gMeshPos[1];\n";
-                                mc << "      gVelY += -29.4f * dt;\n";
-                                mc << "      gMeshPos[1] += gVelY * dt;\n";
+                                mc << "      if (gPhysicsEnabled) {\n";
+                                mc << "        gVelY += -29.4f * dt;\n";
+                                mc << "        gMeshPos[1] += gVelY * dt;\n";
+                                mc << "      }\n";
                                 mc << "      gOnFloor = 0;\n";
                                 mc << "      float pHx = gCollExtent[0], pHy = gCollExtent[1], pHz = gCollExtent[2];\n";
                                 mc << "      float pCx = gMeshPos[0] + gBoundPos[0], pCy = gMeshPos[1] + gBoundPos[1], pCz = gMeshPos[2] + gBoundPos[2];\n";

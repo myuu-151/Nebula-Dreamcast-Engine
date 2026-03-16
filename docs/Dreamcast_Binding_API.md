@@ -137,7 +137,7 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 - **SimpleCollision**: toggle ground snap only (no slope alignment) per node.
 - **VelocityY**: read/write vertical velocity (use `SetNode3DVelocityY` to apply jump impulse).
 - **IsNode3DOnFloor**: returns 1 if the node is grounded (physics enabled, vertical velocity near zero).
-- **CheckAABBOverlap**: returns 1 if two named Node3D collision boxes overlap (useful for hit detection, triggers).
+- **CheckAABBOverlap**: returns 1 if two named Node3D bounding boxes overlap (pure geometry test — does **not** require any collision flags enabled). Useful for hit detection, trigger zones, and scene-switch triggers. The test uses each node's position + `boundPos` offset + `extent` half-extents.
 - **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for ground snapping.
 - **RaycastDownWithNormal**: same as `RaycastDown` but also returns the surface normal of the hit triangle in `outNormal[3]`. Used by the engine for slope alignment; scripts can use it for custom orientation logic.
 

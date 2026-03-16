@@ -2178,10 +2178,14 @@ NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
     ax += a.boundPosX; ay += a.boundPosY; az += a.boundPosZ;
     bx += b.boundPosX; by += b.boundPosY; bz += b.boundPosZ;
 
+    // Scale extents by node scale
+    float aex = a.extentX * a.scaleX, aey = a.extentY * a.scaleY, aez = a.extentZ * a.scaleZ;
+    float bex = b.extentX * b.scaleX, bey = b.extentY * b.scaleY, bez = b.extentZ * b.scaleZ;
+
     // AABB overlap test
-    if (ax + a.extentX < bx - b.extentX || ax - a.extentX > bx + b.extentX) return 0;
-    if (ay + a.extentY < by - b.extentY || ay - a.extentY > by + b.extentY) return 0;
-    if (az + a.extentZ < bz - b.extentZ || az - a.extentZ > bz + b.extentZ) return 0;
+    if (ax + aex < bx - bex || ax - aex > bx + bex) return 0;
+    if (ay + aey < by - bey || ay - aey > by + bey) return 0;
+    if (az + aez < bz - bez || az - aez > bz + bez) return 0;
     return 1;
 }
 
@@ -14312,7 +14316,7 @@ RenderImGuiOnly:
                                         ne.pos[0] = n3.x; ne.pos[1] = n3.y; ne.pos[2] = n3.z;
                                         ne.rot[0] = n3.rotX; ne.rot[1] = n3.rotY; ne.rot[2] = n3.rotZ;
                                         ne.scale[0] = n3.scaleX; ne.scale[1] = n3.scaleY; ne.scale[2] = n3.scaleZ;
-                                        ne.extent[0] = n3.extentX; ne.extent[1] = n3.extentY; ne.extent[2] = n3.extentZ;
+                                        ne.extent[0] = n3.extentX * n3.scaleX; ne.extent[1] = n3.extentY * n3.scaleY; ne.extent[2] = n3.extentZ * n3.scaleZ;
                                         ne.boundPos[0] = n3.boundPosX; ne.boundPos[1] = n3.boundPosY; ne.boundPos[2] = n3.boundPosZ;
                                         ne.physicsEnabled = n3.physicsEnabled ? 1 : 0;
                                         ne.collisionSource = n3.collisionSource ? 1 : 0;
@@ -14739,7 +14743,19 @@ RenderImGuiOnly:
                                 mc << "float NB_RT_GetNode3DVelocityY(const char* name){ if(dc_is_player_node(name)) return gVelY; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].velY:0.0f; }\n";
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ if(dc_is_player_node(name)){ gVelY=vy; return; } int idx=dc_find_node3d(name); if(idx>=0) gNode3Ds[idx].velY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ if(dc_is_player_node(name)) return gOnFloor; int idx=dc_find_node3d(name); return (idx>=0)?gNode3Ds[idx].onFloor:0; }\n";
-                                mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
+                                mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){\n";
+                                mc << "  float ax,ay,az,aex,aey,aez, bx,by,bz,bex,bey,bez;\n";
+                                mc << "  int gotA=0, gotB=0;\n";
+                                mc << "  if(dc_is_player_node(name1)){ ax=gMeshPos[0]+gBoundPos[0]; ay=gMeshPos[1]+gBoundPos[1]; az=gMeshPos[2]+gBoundPos[2]; aex=gCollExtent[0]; aey=gCollExtent[1]; aez=gCollExtent[2]; gotA=1; }\n";
+                                mc << "  else { int i=dc_find_node3d(name1); if(i>=0){ DcNode3D* n=&gNode3Ds[i]; ax=n->pos[0]+n->boundPos[0]; ay=n->pos[1]+n->boundPos[1]; az=n->pos[2]+n->boundPos[2]; aex=n->extent[0]; aey=n->extent[1]; aez=n->extent[2]; gotA=1; } }\n";
+                                mc << "  if(dc_is_player_node(name2)){ bx=gMeshPos[0]+gBoundPos[0]; by=gMeshPos[1]+gBoundPos[1]; bz=gMeshPos[2]+gBoundPos[2]; bex=gCollExtent[0]; bey=gCollExtent[1]; bez=gCollExtent[2]; gotB=1; }\n";
+                                mc << "  else { int i=dc_find_node3d(name2); if(i>=0){ DcNode3D* n=&gNode3Ds[i]; bx=n->pos[0]+n->boundPos[0]; by=n->pos[1]+n->boundPos[1]; bz=n->pos[2]+n->boundPos[2]; bex=n->extent[0]; bey=n->extent[1]; bez=n->extent[2]; gotB=1; } }\n";
+                                mc << "  if(!gotA||!gotB) return 0;\n";
+                                mc << "  if(ax+aex<bx-bex||ax-aex>bx+bex) return 0;\n";
+                                mc << "  if(ay+aey<by-bey||ay-aey>by+bey) return 0;\n";
+                                mc << "  if(az+aez<bz-bez||az-aez>bz+bez) return 0;\n";
+                                mc << "  return 1;\n";
+                                mc << "}\n";
                                 // NB_RT_RaycastDown emitted after MAX_MESHES/gSceneMeshes declarations
                                 mc << "static int gNavMeshLoaded = 0;\n";
                                 mc << "static int gSceneMetaIndex = 0;\n";

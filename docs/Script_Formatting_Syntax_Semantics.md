@@ -68,7 +68,11 @@ void NB_RT_SetCameraOrbit(const char* name, float x, float y, float z);
 void NB_RT_GetCameraRotation(const char* name, float outRot[3]);
 void NB_RT_SetCameraRotation(const char* name, float x, float y, float z);
 void NB_RT_GetCameraWorldForward(const char* name, float outFwd[3]);
+void NB_RT_NextScene(void);
+void NB_RT_PrevScene(void);
 ```
+
+**Scene switching:** `NB_RT_NextScene()` and `NB_RT_PrevScene()` cycle through loaded scenes. The switch is deferred to the end of the current frame — navmesh is automatically rebuilt and `NB_Game_OnSceneSwitch` is called. Use debounce logic to avoid rapid cycling (see `Control4.c` for an example).
 
 ### Naming semantics
 - `name` must match scene node names (e.g. `"PlayerRoot"`, `"Camera3D1"`, `"AINode"`). Matching is case-insensitive.

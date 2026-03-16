@@ -141,6 +141,36 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 - **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for ground snapping.
 - **RaycastDownWithNormal**: same as `RaycastDown` but also returns the surface normal of the hit triangle in `outNormal[3]`. Used by the engine for slope alignment; scripts can use it for custom orientation logic.
 
+### Scene switching bridge
+
+```c
+void NB_RT_NextScene(void);
+void NB_RT_PrevScene(void);
+```
+
+- **NextScene**: advances to the next scene in the loaded scene list (wraps around). The switch happens at the end of the current frame — navmesh is automatically cleared and rebuilt for the new scene, and `NB_Game_OnSceneSwitch` is called.
+- **PrevScene**: switches to the previous scene (wraps around). Same deferred semantics as `NextScene`.
+
+**Usage pattern** (with debounce to avoid rapid cycling):
+
+```c
+static int sStartHeld = 0;
+
+// Dreamcast
+if (NB_KOS_ButtonDown(NB_BTN_START))
+{
+    if (!sStartHeld) { NB_RT_NextScene(); sStartHeld = 1; }
+}
+else { sStartHeld = 0; }
+
+// Windows
+if (GetAsyncKeyState(VK_RETURN) & 0x8000)
+{
+    if (!sStartHeld) { NB_RT_NextScene(); sStartHeld = 1; }
+}
+else { sStartHeld = 0; }
+```
+
 ### NavMesh bridge
 
 ```c
@@ -159,7 +189,7 @@ int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]
 - **NavMeshFindRandomPoint**: picks a random navigable point on the navmesh. Returns 1 on success.
 - **NavMeshFindClosestPoint**: projects a world position onto the nearest navmesh surface. Returns 1 on success.
 
-> **Note:** On Dreamcast, navmesh queries use Detour compiled for SH4. The editor builds and packages the navmesh binary (`NAV00001.BIN`) during export. At runtime, `NB_RT_NavMeshBuild` loads the binary from disc and initializes Detour for pathfinding. The Detour node pool is reduced to 512 (vs 2048 on desktop) to fit DC memory constraints.
+> **Note:** On Dreamcast, navmesh queries use Detour compiled for SH4. The editor builds and packages per-scene navmesh binaries (`NAV00001.BIN`, `NAV00002.BIN`, etc.) during export into `cd_root/data/navmesh/`. At runtime, `NB_RT_NavMeshBuild` loads the binary matching the current scene index from disc and initializes Detour for pathfinding. When switching scenes, the navmesh is automatically cleared and rebuilt for the new scene. The Detour node pool is reduced to 512 (vs 2048 on desktop) to fit DC memory constraints.
 
 ### Where `NB_RT_*` is implemented
 
@@ -256,7 +286,7 @@ const void* NB_DC_GetNavMeshData(int* outSize);
 - **NavMeshIsLoaded**: returns 1 if navmesh data is currently in memory.
 - **GetNavMeshData**: returns a pointer to the raw navmesh blob and its size. Used by `NB_DC_DetourInit` to create the Detour query objects.
 
-The editor automatically builds and packages the navmesh binary (`NAV00001.BIN`) into `cd_root/data/navmesh/` during Dreamcast export.
+The editor automatically builds and packages per-scene navmesh binaries (`NAVxxxxx.BIN`) into `cd_root/data/navmesh/` during Dreamcast export.
 
 ### Detour navmesh queries
 

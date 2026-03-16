@@ -141,6 +141,38 @@ int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, flo
 - **RaycastDown**: casts a vertical ray downward from (x,y,z) against collision-flagged StaticMesh3D triangles. Returns 1 if hit, writing the Y coordinate of the highest surface below the ray origin into `outHitY`. Useful for ground snapping.
 - **RaycastDownWithNormal**: same as `RaycastDown` but also returns the surface normal of the hit triangle in `outNormal[3]`. Used by the engine for slope alignment; scripts can use it for custom orientation logic.
 
+### Engine-level physics (automatic, not script-callable)
+
+The following physics behaviors run automatically each frame for Node3D nodes with the appropriate flags enabled. Scripts do not need to call anything to activate them — they are configured via editor properties.
+
+#### Wall collision (AABB vs mesh triangles)
+
+When a Node3D has `collisionSource` or `simpleCollision` enabled, the engine tests its AABB against all triangles of every `collisionSource`-flagged StaticMesh3D in the scene. Triangles whose face normal is mostly vertical (floor/ceiling) are skipped; only wall-like triangles produce a horizontal push-out.
+
+**Algorithm:**
+1. For each collision-source StaticMesh3D, iterate all triangles.
+2. Compute the face normal. Skip if `abs(ny) > wallThreshold` (floor/ceiling).
+3. Check Y overlap between the AABB vertical range and the triangle's vertical range.
+4. Check XZ broadphase (AABB bbox vs triangle bbox).
+5. Compute signed distance from AABB center to the triangle plane.
+6. Compare against projected AABB half-extent (`hx*|nx| + hy*|ny| + hz*|nz|`).
+7. If penetrating, push the node along the horizontal component of the face normal.
+
+**Per-mesh wall threshold:** Each StaticMesh3D has a `wallThreshold` property (default 0.7, range 0.0–1.0) that controls the floor/ceiling vs wall cutoff angle. A threshold of 0.7 corresponds to roughly 45 degrees — triangles steeper than this are treated as walls. Lower values treat more surfaces as walls; higher values treat more as floors. This is editable per-mesh in the editor inspector (shown when `Collision Source` is checked).
+
+On Dreamcast, the wall threshold is baked into a per-scene per-mesh array (`kSceneWallThreshold`) and stored in the collision mesh cache (`CollMeshCache.wallThresh`).
+
+#### Node3D-vs-Node3D AABB push-apart
+
+After all per-node physics (gravity, ground snap, wall collision), the engine runs a pairwise AABB overlap test between all physics-enabled Node3D nodes. If two AABBs overlap:
+1. Compute overlap on X, Y, and Z axes independently.
+2. Find the smallest horizontal overlap axis (X or Z). If Y is smallest, skip (vertical overlap doesn't push).
+3. Push both nodes apart along that axis, splitting the penetration 50/50.
+
+This allows characters to block each other (e.g., player blocking AI, or AI nodes colliding with each other). The check is O(N^2) which is fine for typical scene counts (2–5 physics Node3Ds).
+
+On Dreamcast, the player Node3D (identified via `kSceneMeshParentN3D`) participates in the same pairwise check, with push applied to `gMeshPos` (the player rendering position).
+
 ### Scene switching bridge
 
 ```c

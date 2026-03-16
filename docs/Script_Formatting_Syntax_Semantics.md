@@ -75,6 +75,29 @@ void NB_RT_SwitchScene(const char* name);
 
 **Scene switching:** `NB_RT_NextScene()` and `NB_RT_PrevScene()` cycle through loaded scenes. `NB_RT_SwitchScene("MyLevel2")` jumps directly to a scene by name (case-insensitive). All three are deferred to end of frame — navmesh is automatically rebuilt and `NB_Game_OnSceneSwitch` is called. Use debounce logic for Next/Prev to avoid rapid cycling (see `Control4.c` for an example).
 
+**Collision / physics declarations** (optional — only needed if your script queries physics state):
+
+```c
+void  NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]);
+void  NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez);
+void  NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]);
+void  NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz);
+int   NB_RT_GetNode3DPhysicsEnabled(const char* name);
+void  NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled);
+int   NB_RT_GetNode3DCollisionSource(const char* name);
+void  NB_RT_SetNode3DCollisionSource(const char* name, int enabled);
+int   NB_RT_GetNode3DSimpleCollision(const char* name);
+void  NB_RT_SetNode3DSimpleCollision(const char* name, int enabled);
+float NB_RT_GetNode3DVelocityY(const char* name);
+void  NB_RT_SetNode3DVelocityY(const char* name, float vy);
+int   NB_RT_IsNode3DOnFloor(const char* name);
+int   NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
+int   NB_RT_RaycastDown(float x, float y, float z, float* outHitY);
+int   NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]);
+```
+
+**Note on wall collision and Node3D-vs-Node3D push-apart:** These are engine-level physics that run automatically each frame — scripts do not need to call anything. Wall collision pushes Node3Ds out of StaticMesh3D geometry horizontally. Node3D-vs-Node3D collision pushes overlapping physics nodes apart. Both are configured via editor properties (`Collision Source`, `Simple Collision`, `Physics Enabled`, and `Wall Threshold` on StaticMesh3D). See `Dreamcast_Binding_API.md` for full details.
+
 ### Naming semantics
 - `name` must match scene node names (e.g. `"PlayerRoot"`, `"Camera3D1"`, `"AINode"`). Matching is case-insensitive.
 - Each script should define its target node name as a constant and pass it to all `NB_RT_*` calls:

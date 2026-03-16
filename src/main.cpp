@@ -592,17 +592,6 @@ static std::vector<std::filesystem::path> ResolveAllScriptPaths()
         }
     }
 
-    // Fallback: if no scripts found on any node, try the default script
-    if (result.empty())
-    {
-        std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
-        if (std::filesystem::exists(fallback))
-        {
-            printf("[ScriptRuntime] ResolvedScript (fallback)=%s\n", fallback.string().c_str());
-            result.push_back(fallback);
-        }
-    }
-
     return result;
 }
 

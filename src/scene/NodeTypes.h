@@ -31,6 +31,7 @@ struct StaticMesh3DNode
     bool collisionSource = false;
     bool runtimeTest = false;
     bool navmeshReady = false;
+    float wallThreshold = 0.7f;
 };
 
 struct Camera3DNode

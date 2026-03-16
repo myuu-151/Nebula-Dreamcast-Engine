@@ -6631,6 +6631,7 @@ static void WallCollideAABB(float cx, float cy, float cz,
         const auto& s = gStaticMeshNodes[si];
         if (s.mesh.empty() || gProjectDir.empty()) continue;
         if (!s.collisionSource) continue;
+        float wt = s.wallThreshold;
 
         std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
         const NebMesh* mesh = GetNebMesh(meshPath);
@@ -6672,7 +6673,7 @@ static void WallCollideAABB(float cx, float cy, float cz,
             fnx *= nInv; fny *= nInv; fnz *= nInv;
 
             // Skip floor/ceiling triangles (only test walls)
-            if (fny > 0.7f || fny < -0.7f) continue;
+            if (fny > wt || fny < -wt) continue;
 
             // Y overlap: AABB vertical range vs triangle vertical range
             float triMinY = ay < by ? (ay < ty ? ay : ty) : (by < ty ? by : ty);
@@ -14124,6 +14125,7 @@ RenderImGuiOnly:
                             std::vector<std::vector<std::string>> runtimeSceneAnimDiskByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
                             std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
+                            std::vector<std::vector<float>> runtimeSceneWallThresholdByMesh;
                             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
@@ -14154,6 +14156,7 @@ RenderImGuiOnly:
                                 std::vector<std::string> sceneAnimDiskByMesh;
                                 std::vector<uint8_t> sceneRuntimeTestByMesh;
                                 std::vector<uint8_t> sceneCollisionSourceByMesh;
+                                std::vector<float> sceneWallThresholdByMesh;
                                 for (const auto& sm : stagedScene.staticMeshes)
                                 {
                                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
@@ -14209,6 +14212,7 @@ RenderImGuiOnly:
                                     sceneAnimDiskByMesh.push_back(animDisk);
                                     sceneRuntimeTestByMesh.push_back(sm.runtimeTest ? 1u : 0u);
                                     sceneCollisionSourceByMesh.push_back(sm.collisionSource ? 1u : 0u);
+                                    sceneWallThresholdByMesh.push_back(sm.wallThreshold);
                                     ++sceneWrittenMeshes;
                                 }
                                 printf("[DreamcastBuild] Scene '%s' -> %s: %d meshes written, %d skipped\n",
@@ -14218,6 +14222,7 @@ RenderImGuiOnly:
                                 runtimeSceneAnimDiskByMesh.push_back(std::move(sceneAnimDiskByMesh));
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
+                                runtimeSceneWallThresholdByMesh.push_back(std::move(sceneWallThresholdByMesh));
                                 // Find the player mesh's parent Node3D transform for this scene.
                                 {
                                     ScenePlayerParent pp{};
@@ -14290,6 +14295,7 @@ RenderImGuiOnly:
                                 runtimeSceneAnimDiskByMesh.push_back({});
                                 runtimeSceneRuntimeTestByMesh.push_back({});
                                 runtimeSceneCollisionSourceByMesh.push_back({});
+                                runtimeSceneWallThresholdByMesh.push_back({});
                                 runtimeScenePlayerParent.push_back(ScenePlayerParent{});
                                 runtimeSceneNode3Ds.push_back({});
                                 runtimeSceneMeshParentN3D.push_back({});
@@ -14871,6 +14877,21 @@ RenderImGuiOnly:
                                     mc << "\n";
                                 }
                                 mc << "};\n";
+                                mc << "static const float kSceneWallThreshold[" << (int)runtimeSceneFiles.size() << "][MAX_MESHES] = {\n";
+                                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                                {
+                                    mc << "{";
+                                    for (int mi = 0; mi < 64; ++mi)
+                                    {
+                                        float wt = (mi < (int)runtimeSceneWallThresholdByMesh[si].size()) ? runtimeSceneWallThresholdByMesh[si][mi] : 0.7f;
+                                        char wtBuf[32]; snprintf(wtBuf, sizeof(wtBuf), "%.2ff", wt); mc << wtBuf;
+                                        if (mi + 1 < 64) mc << ",";
+                                    }
+                                    mc << "}";
+                                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                                    mc << "\n";
+                                }
+                                mc << "};\n";
                                 // Per-scene parent Node3D transform for the player mesh (drives movement).
                                 mc << "static const float kScenePlayerParentPos[" << (int)runtimeSceneFiles.size() << "][3] = {\n";
                                 for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
@@ -15050,7 +15071,7 @@ RenderImGuiOnly:
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
                                 mc << "static int NB_PrevScene(void){ return NB_LoadSceneIndex(gSceneIndex-1); }\n";
                                 // Collision mesh cache — loaded once on first raycast, used every frame
-                                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float sp[3]; float ss[3]; } CollMeshCache;\n";
+                                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float sp[3]; float ss[3]; float wallThresh; } CollMeshCache;\n";
                                 mc << "static CollMeshCache gCollCache[MAX_MESHES];\n";
                                 mc << "static int gCollCacheCount = 0;\n";
                                 mc << "static int gCollCacheReady = 0;\n";
@@ -15066,6 +15087,7 @@ RenderImGuiOnly:
                                 mc << "    c->pos=m.pos; c->idx=m.indices; c->vc=m.vert_count; c->tc=m.tri_count;\n";
                                 mc << "    c->sp[0]=gSceneMeshes[mi].pos[0]; c->sp[1]=gSceneMeshes[mi].pos[1]; c->sp[2]=gSceneMeshes[mi].pos[2];\n";
                                 mc << "    c->ss[0]=gSceneMeshes[mi].scale[0]; c->ss[1]=gSceneMeshes[mi].scale[1]; c->ss[2]=gSceneMeshes[mi].scale[2];\n";
+                                mc << "    { int si=gSceneMetaIndex; if(si<0) si=0; c->wallThresh=kSceneWallThreshold[si][mi]; }\n";
                                 mc << "    free(m.tri_uv); free(m.tri_uv1); free(m.tri_mat);\n";
                                 mc << "    gCollCacheCount++;\n";
                                 mc << "  }\n";
@@ -15141,7 +15163,7 @@ RenderImGuiOnly:
                                 mc << "      float nx=ey1*ez2-ez1*ey2, ny=ez1*ex2-ex1*ez2, nz=ex1*ey2-ey1*ex2;\n";
                                 mc << "      float nl=sqrtf(nx*nx+ny*ny+nz*nz); if(nl<1e-8f) continue;\n";
                                 mc << "      float ni=1.0f/nl; nx*=ni; ny*=ni; nz*=ni;\n";
-                                mc << "      if(ny>0.7f || ny<-0.7f) continue;\n";
+                                mc << "      if(ny>c->wallThresh || ny<-c->wallThresh) continue;\n";
                                 mc << "      float tminy=ay; if(by<tminy) tminy=by; if(ty<tminy) tminy=ty;\n";
                                 mc << "      float tmaxy=ay; if(by>tmaxy) tmaxy=by; if(ty>tmaxy) tmaxy=ty;\n";
                                 mc << "      if(cy-hy>=tmaxy || cy+hy<=tminy) continue;\n";
@@ -19476,6 +19498,8 @@ RenderImGuiOnly:
                 if (ImGui::Button("Reset Xform (keep world)##InspectorStatic"))
                     ResetStaticMeshTransformsKeepWorld(inspectStatic);
                 ImGui::Checkbox("Collision Source (Saturn floor)", &n.collisionSource);
+                if (n.collisionSource)
+                    ImGui::SliderFloat("Wall Threshold", &n.wallThreshold, 0.0f, 1.0f, "%.2f");
                 ImGui::Checkbox("Navmesh Ready", &n.navmeshReady);
 
                 ImGui::DragFloat3("Position", &n.x, 0.1f);

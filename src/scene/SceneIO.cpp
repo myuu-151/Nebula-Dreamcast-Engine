@@ -261,6 +261,7 @@ namespace NebulaScene
             out << " " << EncodeSceneToken(n.vtxAnim);
             out << " " << (n.runtimeTest ? 1 : 0);
             out << " " << (n.navmeshReady ? 1 : 0);
+            out << " " << n.wallThreshold;
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -402,6 +403,9 @@ namespace NebulaScene
                 size_t navmeshReadyIdx = runtimeTestIdx + 1;
                 if (navmeshReadyIdx < extra.size())
                     n.navmeshReady = (atoi(extra[navmeshReadyIdx].c_str()) != 0);
+                size_t wallThreshIdx = navmeshReadyIdx + 1;
+                if (wallThreshIdx < extra.size())
+                    n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;
                 outScene.staticMeshes.push_back(n);

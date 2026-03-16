@@ -269,24 +269,28 @@ static std::string gScriptHotReloadTrackedProjectDir;
 static double gScriptHotReloadNextPollAt = 0.0;
 static unsigned long long gScriptHotReloadGeneration = 0;
 
-static HMODULE gEditorScriptModule = nullptr;
-static std::string gEditorScriptPath;
+// Multi-script runtime: each Node3D with a script field gets its own DLL slot.
+using EditorScriptStartFn = void(*)(void);
+using EditorScriptUpdateFn = void(*)(float);
+using EditorScriptSceneSwitchFn = void(*)(const char*);
+struct ScriptSlot
+{
+    HMODULE module = nullptr;
+    std::string path;
+    EditorScriptStartFn onStart = nullptr;
+    EditorScriptUpdateFn onUpdate = nullptr;
+    EditorScriptSceneSwitchFn onSceneSwitch = nullptr;
+    bool active = false;
+    bool started = false;
+};
+static std::vector<ScriptSlot> gEditorScripts;
 static bool gEditorScriptActive = false;
-static bool gEditorScriptStarted = false;
-// Tracks which Node3Ds had their position set by a script this frame (skip editor AABB physics for those)
-static std::vector<bool> gNode3DScriptManaged;
 static double gEditorScriptNextTickLog = 0.0;
 // Script-off baseline: keep play controls engine-owned unless explicitly re-enabled.
 static bool useScriptController = true;
 // Keep script-owned controls on desktop, but keep C++ fallback enabled on Dreamcast
 // until full runtime script parity is confirmed.
 static bool gEnableCppPlayFallbackControls = false;
-using EditorScriptStartFn = void(*)(void);
-using EditorScriptUpdateFn = void(*)(float);
-using EditorScriptSceneSwitchFn = void(*)(const char*);
-static EditorScriptStartFn gEditorScriptOnStart = nullptr;
-static EditorScriptUpdateFn gEditorScriptOnUpdate = nullptr;
-static EditorScriptSceneSwitchFn gEditorScriptOnSceneSwitch = nullptr;
 
 // Optional editor runtime hook. v1 only signals "scripts changed"; no compile/rebind yet.
 using ScriptHotReloadCallback = void(*)(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger);
@@ -552,10 +556,11 @@ static void PollScriptHotReloadV1(double now)
     }
 }
 
-static std::filesystem::path ResolveGameplayScriptPath()
+static std::vector<std::filesystem::path> ResolveAllScriptPaths()
 {
+    std::vector<std::filesystem::path> result;
     if (gProjectDir.empty())
-        return {};
+        return result;
 
     printf("[ScriptRuntime] ProjectDir=%s\n", gProjectDir.c_str());
 
@@ -568,28 +573,44 @@ static std::filesystem::path ResolveGameplayScriptPath()
         return std::filesystem::path(gProjectDir) / p;
     };
 
-    if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
-    {
-        std::filesystem::path p = resolvePath(gNode3DNodes[gSelectedNode3D].script);
-        if (!p.empty() && std::filesystem::exists(p))
-            return p;
-    }
-
+    // Collect unique script paths from all Node3D nodes
+    std::vector<std::string> seen;
     for (const auto& n : gNode3DNodes)
     {
         std::filesystem::path p = resolvePath(n.script);
-        if (!p.empty() && std::filesystem::exists(p))
-            return p;
+        if (p.empty() || !std::filesystem::exists(p))
+            continue;
+        std::string canonical = p.generic_string();
+        bool dup = false;
+        for (const auto& s : seen)
+            if (s == canonical) { dup = true; break; }
+        if (!dup)
+        {
+            seen.push_back(canonical);
+            result.push_back(p);
+            printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
+        }
     }
 
-    std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
-    if (std::filesystem::exists(fallback))
+    // Fallback: if no scripts found on any node, try the default script
+    if (result.empty())
     {
-        printf("[ScriptRuntime] ResolvedScript=%s\n", fallback.string().c_str());
-        return fallback;
+        std::filesystem::path fallback = std::filesystem::path(gProjectDir) / "Scripts" / "WASD_Node3D_Nav.c";
+        if (std::filesystem::exists(fallback))
+        {
+            printf("[ScriptRuntime] ResolvedScript (fallback)=%s\n", fallback.string().c_str());
+            result.push_back(fallback);
+        }
     }
 
-    return {};
+    return result;
+}
+
+// Legacy single-path resolver (used by hot reload and other callers)
+static std::filesystem::path ResolveGameplayScriptPath()
+{
+    auto all = ResolveAllScriptPaths();
+    return all.empty() ? std::filesystem::path{} : all[0];
 }
 
 static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
@@ -616,6 +637,10 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ typedef void(*Fn)(const char*, float, float, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DBoundPos\"); if(fn) fn(name,bx,by,bz); }\n";
     out << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DPhysicsEnabled\"); return fn ? fn(name) : 0; }\n";
     out << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DPhysicsEnabled\"); if(fn) fn(name,enabled); }\n";
+    out << "int NB_RT_GetNode3DCollisionSource(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DCollisionSource\"); return fn ? fn(name) : 0; }\n";
+    out << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DCollisionSource\"); if(fn) fn(name,enabled); }\n";
+    out << "int NB_RT_GetNode3DSimpleCollision(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DSimpleCollision\"); return fn ? fn(name) : 0; }\n";
+    out << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ typedef void(*Fn)(const char*, int); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DSimpleCollision\"); if(fn) fn(name,enabled); }\n";
     out << "float NB_RT_GetNode3DVelocityY(const char* name){ typedef float(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_GetNode3DVelocityY\"); return fn ? fn(name) : 0.0f; }\n";
     out << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ typedef void(*Fn)(const char*, float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetNode3DVelocityY\"); if(fn) fn(name,vy); }\n";
     out << "int NB_RT_IsNode3DOnFloor(const char* name){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsNode3DOnFloor\"); return fn ? fn(name) : 0; }\n";
@@ -631,7 +656,7 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     return true;
 }
 
-static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesystem::path& outDllPath, std::string& outError)
+static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesystem::path& outDllPath, std::string& outError, int slotIdx = 0)
 {
     if (scriptPath.empty())
     {
@@ -659,12 +684,13 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
         return false;
     }
 
-    outDllPath = outDir / "nb_script.dll";
+    std::string dllName = "nb_script_" + std::to_string(slotIdx);
+    outDllPath = outDir / (dllName + ".dll");
     std::filesystem::remove(outDllPath, ec);
     std::filesystem::remove(buildLogPath, ec);
-    std::filesystem::remove(outDir / "nb_script.exp", ec);
-    std::filesystem::remove(outDir / "nb_script.lib", ec);
-    std::filesystem::remove(outDir / "nb_script.pdb", ec);
+    std::filesystem::remove(outDir / (dllName + ".exp"), ec);
+    std::filesystem::remove(outDir / (dllName + ".lib"), ec);
+    std::filesystem::remove(outDir / (dllName + ".pdb"), ec);
 
     auto SanitizeCmdPath = [](const std::filesystem::path& p) -> std::string
     {
@@ -788,35 +814,32 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
 
 static void UnloadEditorScriptRuntime()
 {
-    if (gEditorScriptModule)
+    for (auto& slot : gEditorScripts)
     {
-        FreeLibrary(gEditorScriptModule);
-        gEditorScriptModule = nullptr;
+        if (slot.module)
+        {
+            FreeLibrary(slot.module);
+            slot.module = nullptr;
+        }
     }
-    gEditorScriptOnStart = nullptr;
-    gEditorScriptOnUpdate = nullptr;
-    gEditorScriptOnSceneSwitch = nullptr;
+    gEditorScripts.clear();
     gEditorScriptActive = false;
-    gEditorScriptStarted = false;
-    gEditorScriptPath.clear();
 }
 
-static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
+static bool LoadEditorScriptSlot(const std::filesystem::path& scriptPath, int slotIdx)
 {
-    UnloadEditorScriptRuntime();
-
     std::filesystem::path dllPath;
     std::string err;
-    if (!CompileEditorScriptDLL(scriptPath, dllPath, err))
+    if (!CompileEditorScriptDLL(scriptPath, dllPath, err, slotIdx))
     {
-        printf("[ScriptRuntime] compile failed: %s\n", err.c_str());
+        printf("[ScriptRuntime] compile failed [%d]: %s\n", slotIdx, err.c_str());
         gViewportToast = std::string("Script runtime failed: ") + err;
         gViewportToastUntil = glfwGetTime() + 2.5;
         return false;
     }
 
-    gEditorScriptModule = LoadLibraryA(dllPath.string().c_str());
-    if (!gEditorScriptModule)
+    HMODULE mod = LoadLibraryA(dllPath.string().c_str());
+    if (!mod)
     {
         printf("[ScriptRuntime] LoadLibrary failed for %s\n", dllPath.string().c_str());
         gViewportToast = "Script runtime failed: LoadLibrary";
@@ -824,21 +847,23 @@ static bool LoadEditorScriptRuntime(const std::filesystem::path& scriptPath)
         return false;
     }
 
-    gEditorScriptOnStart = (EditorScriptStartFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnStart");
-    gEditorScriptOnUpdate = (EditorScriptUpdateFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnUpdate");
-    gEditorScriptOnSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(gEditorScriptModule, "NB_Game_OnSceneSwitch");
+    ScriptSlot slot;
+    slot.module = mod;
+    slot.path = scriptPath.string();
+    slot.onStart = (EditorScriptStartFn)GetProcAddress(mod, "NB_Game_OnStart");
+    slot.onUpdate = (EditorScriptUpdateFn)GetProcAddress(mod, "NB_Game_OnUpdate");
+    slot.onSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(mod, "NB_Game_OnSceneSwitch");
+    slot.active = true;
+    slot.started = false;
 
-    printf("[ScriptRuntime] loaded %s\n", scriptPath.string().c_str());
+    printf("[ScriptRuntime] loaded [%d] %s\n", slotIdx, scriptPath.string().c_str());
     printf("[ScriptRuntime] DLL=%s\n", dllPath.string().c_str());
     printf("[ScriptRuntime] symbols: start=%s update=%s scene=%s\n",
-        gEditorScriptOnStart ? "yes" : "no",
-        gEditorScriptOnUpdate ? "yes" : "no",
-        gEditorScriptOnSceneSwitch ? "yes" : "no");
+        slot.onStart ? "yes" : "no",
+        slot.onUpdate ? "yes" : "no",
+        slot.onSceneSwitch ? "yes" : "no");
 
-    gEditorScriptActive = true;
-    gEditorScriptPath = scriptPath.string();
-    gViewportToast = std::string("Script runtime active: ") + scriptPath.filename().string();
-    gViewportToastUntil = glfwGetTime() + 2.5;
+    gEditorScripts.push_back(slot);
     return true;
 }
 
@@ -847,36 +872,45 @@ static void BeginPlayScriptRuntime()
     if (!useScriptController)
     {
         gEditorScriptActive = false;
-        gEditorScriptStarted = false;
         printf("[ScriptRuntime] skipped (engine-owned controls mode)\n");
         return;
     }
 
-    std::filesystem::path scriptPath = ResolveGameplayScriptPath();
-    if (scriptPath.empty())
+    std::vector<std::filesystem::path> scriptPaths = ResolveAllScriptPaths();
+    if (scriptPaths.empty())
     {
-        printf("[ScriptRuntime] no gameplay script resolved\n");
-        gViewportToast = "Script runtime failed: no script";
+        printf("[ScriptRuntime] no gameplay scripts resolved\n");
+        gViewportToast = "Script runtime failed: no scripts";
         gViewportToastUntil = glfwGetTime() + 2.5;
         return;
     }
 
-    if (!LoadEditorScriptRuntime(scriptPath))
+    UnloadEditorScriptRuntime();
+    int loaded = 0;
+    for (int i = 0; i < (int)scriptPaths.size(); ++i)
+    {
+        if (LoadEditorScriptSlot(scriptPaths[i], i))
+            ++loaded;
+    }
+
+    if (loaded == 0)
         return;
 
+    gEditorScriptActive = true;
     gEditorScriptNextTickLog = 0.0;
 
-    if (gEditorScriptOnStart && useScriptController)
+    for (auto& slot : gEditorScripts)
     {
-        gEditorScriptOnStart();
-        gEditorScriptStarted = true;
-        printf("[ScriptRuntime] OnStart called\n");
+        if (slot.onStart)
+        {
+            slot.onStart();
+            slot.started = true;
+            printf("[ScriptRuntime] OnStart called for %s\n", slot.path.c_str());
+        }
     }
-    else
-    {
-        gEditorScriptStarted = false;
-        printf("[ScriptRuntime] OnStart missing or skipped\n");
-    }
+
+    gViewportToast = "Script runtime active: " + std::to_string(loaded) + " script(s)";
+    gViewportToastUntil = glfwGetTime() + 2.5;
 }
 
 static void EndPlayScriptRuntime()
@@ -886,28 +920,36 @@ static void EndPlayScriptRuntime()
 
 static void TickPlayScriptRuntime(float dt, double now)
 {
-    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnUpdate || !useScriptController)
+    if (!gPlayMode || !gEditorScriptActive || !useScriptController)
         return;
 
-    // Clear per-frame script-managed flags before script runs
-    gNode3DScriptManaged.assign(gNode3DNodes.size(), false);
+    // Clear per-frame script-managed flags before scripts run
 
-    gEditorScriptOnUpdate(dt);
+    for (auto& slot : gEditorScripts)
+    {
+        if (slot.active && slot.onUpdate)
+            slot.onUpdate(dt);
+    }
     if (now >= gEditorScriptNextTickLog)
     {
         gEditorScriptNextTickLog = now + 1.0;
-        printf("[ScriptRuntime] OnUpdate tick\n");
+        printf("[ScriptRuntime] OnUpdate tick (%d scripts)\n", (int)gEditorScripts.size());
     }
 }
 
 static void NotifyScriptSceneSwitch()
 {
-    if (!gPlayMode || !gEditorScriptActive || !gEditorScriptOnSceneSwitch || !useScriptController)
+    if (!gPlayMode || !gEditorScriptActive || !useScriptController)
         return;
     if (gActiveScene < 0 || gActiveScene >= (int)gOpenScenes.size())
         return;
-    gEditorScriptOnSceneSwitch(gOpenScenes[gActiveScene].name.c_str());
-    printf("[ScriptRuntime] OnSceneSwitch: %s\n", gOpenScenes[gActiveScene].name.c_str());
+    const char* sceneName = gOpenScenes[gActiveScene].name.c_str();
+    for (auto& slot : gEditorScripts)
+    {
+        if (slot.active && slot.onSceneSwitch)
+            slot.onSceneSwitch(sceneName);
+    }
+    printf("[ScriptRuntime] OnSceneSwitch: %s\n", sceneName);
 }
 
 static void GetStaticMeshWorldTRS(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz, float& osx, float& osy, float& osz)
@@ -1804,7 +1846,6 @@ NB_RT_EXPORT void NB_RT_SetNode3DPosition(const char* name, float x, float y, fl
     n.x = x;
     n.y = y;
     n.z = z;
-    if (idx < (int)gNode3DScriptManaged.size()) gNode3DScriptManaged[idx] = true;
 }
 
 NB_RT_EXPORT void NB_RT_GetNode3DRotation(const char* name, float outRot[3])
@@ -2070,6 +2111,38 @@ NB_RT_EXPORT void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled)
     gNode3DNodes[idx].physicsEnabled = (enabled != 0);
 }
 
+NB_RT_EXPORT int NB_RT_GetNode3DCollisionSource(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    return gNode3DNodes[idx].collisionSource ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DCollisionSource(const char* name, int enabled)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].collisionSource = (enabled != 0);
+}
+
+NB_RT_EXPORT int NB_RT_GetNode3DSimpleCollision(const char* name)
+{
+    if (!name) return 0;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return 0;
+    return gNode3DNodes[idx].simpleCollision ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled)
+{
+    if (!name) return;
+    int idx = FindNode3DByName(name);
+    if (idx < 0) return;
+    gNode3DNodes[idx].simpleCollision = (enabled != 0);
+}
+
 NB_RT_EXPORT float NB_RT_GetNode3DVelocityY(const char* name)
 {
     if (!name) return 0.0f;
@@ -2128,71 +2201,166 @@ NB_RT_EXPORT int NB_RT_CheckAABBOverlap(const char* name1, const char* name2)
 // ---------------------------------------------------------------------------
 NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
 {
-    // Gather world-space triangles from collision-flagged StaticMesh3D nodes
+    // Inline BE readers (LoadNebMesh helpers are defined later in the file)
+    auto readU32BE = [](std::ifstream& f, uint32_t& v) -> bool {
+        uint8_t b[4]; if (!f.read((char*)b, 4)) return false;
+        v = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+        return true;
+    };
+    auto readS16BE = [](std::ifstream& f, int16_t& v) -> bool {
+        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+        v = (int16_t)(((uint16_t)b[0] << 8) | b[1]);
+        return true;
+    };
+    auto readU16BE = [](std::ifstream& f, uint16_t& v) -> bool {
+        uint8_t b[2]; if (!f.read((char*)b, 2)) return false;
+        v = ((uint16_t)b[0] << 8) | b[1];
+        return true;
+    };
+
+    // Collect NavMesh3D bounding volumes
+    struct NavBounds { float minX, minY, minZ, maxX, maxY, maxZ; bool negator; };
+    std::vector<NavBounds> navVolumes;
+    for (const auto& nm : gNavMesh3DNodes)
+    {
+        if (!nm.navBounds && !nm.navNegator) continue;
+        float hx = nm.extentX * 0.5f;
+        float hy = nm.extentY * 0.5f;
+        float hz = nm.extentZ * 0.5f;
+        navVolumes.push_back({
+            nm.x - hx, nm.y - hy, nm.z - hz,
+            nm.x + hx, nm.y + hy, nm.z + hz,
+            nm.navNegator
+        });
+    }
+    printf("[NavMesh] %d nav volumes\n", (int)navVolumes.size());
+
+    // Test if a point is inside any navBounds and not inside any navNegator
+    auto pointInNavBounds = [&](float px, float py, float pz) -> bool {
+        bool inBounds = false;
+        for (const auto& vol : navVolumes)
+        {
+            if (vol.negator) continue;
+            if (px >= vol.minX && px <= vol.maxX &&
+                py >= vol.minY && py <= vol.maxY &&
+                pz >= vol.minZ && pz <= vol.maxZ)
+            { inBounds = true; break; }
+        }
+        if (!inBounds) return false;
+        for (const auto& vol : navVolumes)
+        {
+            if (!vol.negator) continue;
+            if (px >= vol.minX && px <= vol.maxX &&
+                py >= vol.minY && py <= vol.maxY &&
+                pz >= vol.minZ && pz <= vol.maxZ)
+                return false;
+        }
+        return true;
+    };
+
+    // Gather world-space triangles from all StaticMesh3D nodes, clipped to nav bounds
     std::vector<float> verts;
     std::vector<int>   tris;
+    printf("[NavMesh] Building from %d static meshes (project=%s)\n", (int)gStaticMeshNodes.size(), gProjectDir.c_str());
     for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
     {
         const auto& sm = gStaticMeshNodes[si];
-        if (sm.mesh.empty()) continue;
+        if (sm.mesh.empty() || gProjectDir.empty()) continue;
 
-        // Load mesh data
-        std::ifstream mf(sm.mesh, std::ios::binary);
-        if (!mf.is_open()) continue;
+        std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / sm.mesh;
+        std::ifstream mf(meshPath, std::ios::binary);
+        if (!mf.is_open()) { printf("[NavMesh]   [%d] %s — file not found\n", si, sm.name.c_str()); continue; }
 
-        // Read .nebmesh header
-        char magic[8] = {};
-        mf.read(magic, 7);
-        if (std::string(magic) != "NEBMESH") continue;
+        // Read NEBM header (4-byte magic, then BE u32: version, flags, vertexCount, indexCount, posFracBits)
+        char magic[4];
+        if (!mf.read(magic, 4) || magic[0] != 'N' || magic[1] != 'E' || magic[2] != 'B' || magic[3] != 'M')
+        { printf("[NavMesh]   [%d] %s — bad magic\n", si, sm.name.c_str()); continue; }
 
-        uint32_t vertCount = 0, triCount = 0;
-        mf.read(reinterpret_cast<char*>(&vertCount), 4);
-        mf.read(reinterpret_cast<char*>(&triCount), 4);
+        uint32_t version = 0, flags = 0, vertexCount = 0, indexCount = 0, posFracBits = 8;
+        if (!readU32BE(mf, version) || !readU32BE(mf, flags) || !readU32BE(mf, vertexCount) ||
+            !readU32BE(mf, indexCount) || !readU32BE(mf, posFracBits))
+        { printf("[NavMesh]   [%d] %s — header read failed\n", si, sm.name.c_str()); continue; }
 
-        std::vector<float> meshVerts(vertCount * 3);
-        mf.read(reinterpret_cast<char*>(meshVerts.data()), vertCount * 3 * sizeof(float));
+        // Read positions (fixed-point s16 BE)
+        float invScale = 1.0f / (float)(1 << posFracBits);
+        std::vector<Vec3> positions(vertexCount);
+        for (uint32_t v = 0; v < vertexCount; ++v)
+        {
+            int16_t x, y, z;
+            if (!readS16BE(mf, x) || !readS16BE(mf, y) || !readS16BE(mf, z)) break;
+            positions[v] = { x * invScale, y * invScale, z * invScale };
+        }
 
-        // Skip UVs (vertCount * 2 floats)
-        mf.seekg(vertCount * 2 * sizeof(float), std::ios::cur);
+        // Skip UVs
+        bool hasUv = (flags & 1u) != 0;
+        bool hasUv1 = (flags & 16u) != 0;
+        if (hasUv) mf.seekg(vertexCount * 4, std::ios::cur);  // 2x s16 per vertex
+        if (hasUv1) mf.seekg(vertexCount * 4, std::ios::cur);
 
-        std::vector<uint16_t> meshIndices(triCount * 3);
-        mf.read(reinterpret_cast<char*>(meshIndices.data()), triCount * 3 * sizeof(uint16_t));
+        // Read indices (u16 BE)
+        std::vector<uint16_t> indices(indexCount);
+        for (uint32_t i = 0; i < indexCount; ++i)
+        {
+            if (!readU16BE(mf, indices[i])) break;
+        }
+
+        if (positions.empty() || indices.empty()) continue;
 
         // Get world transform
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
-        float rx = wrx * 3.14159265f / 180.0f;
-        float ry = wry * 3.14159265f / 180.0f;
-        float rz = wrz * 3.14159265f / 180.0f;
-        float cx = cosf(rx), sx2 = sinf(rx);
-        float cy = cosf(ry), sy = sinf(ry);
-        float cz = cosf(rz), sz = sinf(rz);
+        Vec3 right, up, forward;
+        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
 
-        int baseVert = (int)(verts.size() / 3);
-        for (uint32_t v = 0; v < vertCount; ++v)
+        // Transform all vertices to world space
+        std::vector<Vec3> worldPos(vertexCount);
+        for (uint32_t v = 0; v < vertexCount; ++v)
         {
-            float lx = meshVerts[v * 3 + 0] * wsx;
-            float ly = meshVerts[v * 3 + 1] * wsy;
-            float lz = meshVerts[v * 3 + 2] * wsz;
-
-            // Euler rotation YXZ
-            float t1x = lx, t1y = ly * cx - lz * sx2, t1z = ly * sx2 + lz * cx;
-            float t2x = t1x * cy + t1z * sy, t2y = t1y, t2z = -t1x * sy + t1z * cy;
-            float t3x = t2x * cz - t2y * sz, t3y = t2x * sz + t2y * cz, t3z = t2z;
-
-            verts.push_back(t3x + wx);
-            verts.push_back(t3y + wy);
-            verts.push_back(t3z + wz);
+            float lx = positions[v].x * wsx;
+            float ly = positions[v].y * wsy;
+            float lz = positions[v].z * wsz;
+            worldPos[v].x = wx + right.x * lx + up.x * ly + forward.x * lz;
+            worldPos[v].y = wy + right.y * lx + up.y * ly + forward.y * lz;
+            worldPos[v].z = wz + right.z * lx + up.z * ly + forward.z * lz;
         }
-        for (uint32_t t = 0; t < triCount * 3; ++t)
+
+        // Only include triangles where at least one vertex is inside nav bounds
+        int addedTris = 0;
+        for (uint32_t t = 0; t + 2 < indexCount; t += 3)
         {
-            tris.push_back(baseVert + (int)meshIndices[t]);
+            uint16_t i0 = indices[t], i1 = indices[t + 1], i2 = indices[t + 2];
+            if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount) continue;
+            const Vec3& v0 = worldPos[i0];
+            const Vec3& v1 = worldPos[i1];
+            const Vec3& v2 = worldPos[i2];
+            bool inside = navVolumes.empty() ||
+                          pointInNavBounds(v0.x, v0.y, v0.z) ||
+                          pointInNavBounds(v1.x, v1.y, v1.z) ||
+                          pointInNavBounds(v2.x, v2.y, v2.z);
+            if (!inside) continue;
+
+            int baseVert = (int)(verts.size() / 3);
+            verts.push_back(v0.x); verts.push_back(v0.y); verts.push_back(v0.z);
+            verts.push_back(v1.x); verts.push_back(v1.y); verts.push_back(v1.z);
+            verts.push_back(v2.x); verts.push_back(v2.y); verts.push_back(v2.z);
+            tris.push_back(baseVert);
+            tris.push_back(baseVert + 1);
+            tris.push_back(baseVert + 2);
+            ++addedTris;
         }
+        printf("[NavMesh]   [%d] %s — %d/%u tris (in bounds)\n", si, sm.name.c_str(), addedTris, indexCount / 3);
     }
 
-    if (verts.empty() || tris.empty()) return 0;
-    return NavMeshBuild(verts.data(), (int)verts.size(), tris.data(), (int)tris.size()) ? 1 : 0;
+    printf("[NavMesh] Total: %d verts, %d tris\n", (int)(verts.size() / 3), (int)(tris.size() / 3));
+    if (verts.empty() || tris.empty())
+    {
+        printf("[NavMesh] No geometry — build failed\n");
+        return 0;
+    }
+    int ok = NavMeshBuild(verts.data(), (int)(verts.size() / 3), tris.data(), (int)(tris.size() / 3)) ? 1 : 0;
+    printf("[NavMesh] Build result: %s\n", ok ? "success" : "failed");
+    return ok;
 }
 
 NB_RT_EXPORT void NB_RT_NavMeshClear(void)
@@ -10010,82 +10178,80 @@ int main(int, char**)
             for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
             {
                 auto& n3 = gNode3DNodes[ni];
-                if (!n3.physicsEnabled) continue;
-                bool scriptManaged = (ni < (int)gNode3DScriptManaged.size() && gNode3DScriptManaged[ni]);
+                if (!n3.physicsEnabled && !n3.collisionSource && !n3.simpleCollision) continue;
 
-                // Apply gravity first for non-script-managed nodes
-                if (!scriptManaged)
+                // Gravity (physicsEnabled only)
+                if (n3.physicsEnabled)
                 {
                     n3.velY += gravity * dt;
                     n3.y += n3.velY * dt;
                 }
 
-                // Raycast from just above feet (bottom of bounding box) to find ground
-                float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
-                GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
-                float hy = std::max(0.0f, n3.extentY * pwsy);
-                float castY = pwy + n3.boundPosY - hy + 0.5f;
-                float hitY = 0.0f;
-                float hitNormal[3] = {0.0f, 1.0f, 0.0f};
-                bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
-
-                if (groundHit)
+                // Raycast + ground snap + slope alignment
+                if (n3.collisionSource || n3.simpleCollision)
                 {
-                    if (!scriptManaged)
+                    float pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz;
+                    GetNode3DWorldTRS(ni, pwx, pwy, pwz, pwrx, pwry, pwrz, pwsx, pwsy, pwsz);
+                    float hy = std::max(0.0f, n3.extentY * pwsy);
+                    float castY = pwy + n3.boundPosY - hy + 0.5f;
+                    float hitY = 0.0f;
+                    float hitNormal[3] = {0.0f, 1.0f, 0.0f};
+                    bool groundHit = NB_RT_RaycastDownWithNormal(pwx + n3.boundPosX, castY, pwz + n3.boundPosZ, &hitY, hitNormal);
+
+                    if (groundHit)
                     {
+                        // Ground snap
                         float groundY = hitY - n3.boundPosY + hy;
                         if (n3.y <= groundY)
                         {
                             n3.y = groundY;
                             if (n3.velY < 0.0f) n3.velY = 0.0f;
                         }
+
+                        // Slope alignment (collisionSource only, not simpleCollision)
+                        if (n3.collisionSource)
+                        {
+                            float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
+                            float savedYaw = n3.rotY;
+
+                            float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
+                            float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
+                            float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
+
+                            float t = 1.0f - powf(0.0001f, dt);
+                            float targetNX = (hny > 0.0f) ? hnx : 0.0f;
+                            float targetNY = (hny > 0.0f) ? hny : 1.0f;
+                            float targetNZ = (hny > 0.0f) ? hnz : 0.0f;
+                            float smX = curUpX + (targetNX - curUpX) * t;
+                            float smY = curUpY + (targetNY - curUpY) * t;
+                            float smZ = curUpZ + (targetNZ - curUpZ) * t;
+                            float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
+                            if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
+
+                            Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
+                            n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
+                            SyncNode3DEulerFromQuat(n3);
+                            n3.rotY = savedYaw;
+                        }
                     }
-
+                    else if (n3.collisionSource)
                     {
-                        float hnx = hitNormal[0], hny = hitNormal[1], hnz = hitNormal[2];
-                        // Use script's yaw directly (not QuatYawDeg which distorts on slopes)
+                        // No ground hit — smooth tilt back to upright (collisionSource only)
                         float savedYaw = n3.rotY;
-
-                        // Extract current up vector from quat (the smoothed normal)
                         float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
                         float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
                         float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
-
-                        // Smooth the normal toward hit normal (tilt only, yaw is instant)
                         float t = 1.0f - powf(0.0001f, dt);
-                        float targetNX = (hny > 0.0f) ? hnx : 0.0f;
-                        float targetNY = (hny > 0.0f) ? hny : 1.0f;
-                        float targetNZ = (hny > 0.0f) ? hnz : 0.0f;
-                        float smX = curUpX + (targetNX - curUpX) * t;
-                        float smY = curUpY + (targetNY - curUpY) * t;
-                        float smZ = curUpZ + (targetNZ - curUpZ) * t;
+                        float smX = curUpX + (0.0f - curUpX) * t;
+                        float smY = curUpY + (1.0f - curUpY) * t;
+                        float smZ = curUpZ + (0.0f - curUpZ) * t;
                         float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
                         if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
-
-                        // Build quat from smoothed normal + instant yaw
                         Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
                         n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
                         SyncNode3DEulerFromQuat(n3);
-                        n3.rotY = savedYaw; // preserve script's yaw (QuatToEuler distorts it)
+                        n3.rotY = savedYaw;
                     }
-                }
-                else if (!scriptManaged)
-                {
-                    // No ground hit — smooth tilt back to upright
-                    float savedYaw = n3.rotY;
-                    float curUpX = 2.0f * (n3.qx * n3.qy - n3.qw * n3.qz);
-                    float curUpY = 1.0f - 2.0f * (n3.qx * n3.qx + n3.qz * n3.qz);
-                    float curUpZ = 2.0f * (n3.qy * n3.qz + n3.qw * n3.qx);
-                    float t = 1.0f - powf(0.0001f, dt);
-                    float smX = curUpX + (0.0f - curUpX) * t;
-                    float smY = curUpY + (1.0f - curUpY) * t;
-                    float smZ = curUpZ + (0.0f - curUpZ) * t;
-                    float smLen = sqrtf(smX*smX + smY*smY + smZ*smZ);
-                    if (smLen > 0.0001f) { smX /= smLen; smY /= smLen; smZ /= smLen; }
-                    Quat result = QuatFromNormalAndYaw(smX, smY, smZ, savedYaw);
-                    n3.qw = result.w; n3.qx = result.x; n3.qy = result.y; n3.qz = result.z;
-                    SyncNode3DEulerFromQuat(n3);
-                    n3.rotY = savedYaw;
                 }
             }
         }
@@ -13971,6 +14137,7 @@ RenderImGuiOnly:
                                 mc << "#include <stdint.h>\n";
                                 mc << "#include \"KosInput.h\"\n";
                                 mc << "#include \"KosBindings.h\"\n";
+                                mc << "#include \"DetourBridge.h\"\n";
                                 mc << "\n";
                                 mc << "extern void NB_Game_OnStart(void);\n";
                                 mc << "extern void NB_Game_OnUpdate(float dt);\n";
@@ -14063,6 +14230,8 @@ RenderImGuiOnly:
                                     float initExtX = 0.5f, initExtY = 0.5f, initExtZ = 0.5f;
                                     float initBpX = 0.0f, initBpY = 0.0f, initBpZ = 0.0f;
                                     int initPhysics = 0;
+                                    int initCollisionSource = 0;
+                                    int initSimpleCollision = 0;
                                     std::string parentName = meshSrc.parent;
                                     for (const auto& n3 : gNode3DNodes)
                                     {
@@ -14071,11 +14240,15 @@ RenderImGuiOnly:
                                             initExtX = n3.extentX; initExtY = n3.extentY; initExtZ = n3.extentZ;
                                             initBpX = n3.boundPosX; initBpY = n3.boundPosY; initBpZ = n3.boundPosZ;
                                             initPhysics = n3.physicsEnabled ? 1 : 0;
+                                            initCollisionSource = n3.collisionSource ? 1 : 0;
+                                            initSimpleCollision = n3.simpleCollision ? 1 : 0;
                                             break;
                                         }
                                     }
                                     mc << "static float gCollExtent[3] = {" << fstr(initExtX) << "," << fstr(initExtY) << "," << fstr(initExtZ) << "};\n";
                                     mc << "static int gPhysicsEnabled = " << initPhysics << ";\n";
+                                    mc << "static int gCollisionSource = " << initCollisionSource << ";\n";
+                                    mc << "static int gSimpleCollision = " << initSimpleCollision << ";\n";
                                 }
                                 mc << "static float gVelY = 0.0f;\n";
                                 mc << "static int gOnFloor = 0;\n";
@@ -14098,18 +14271,32 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz){ (void)name; gBoundPos[0]=bx; gBoundPos[1]=by; gBoundPos[2]=bz; }\n";
                                 mc << "int NB_RT_GetNode3DPhysicsEnabled(const char* name){ (void)name; return gPhysicsEnabled; }\n";
                                 mc << "void NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled){ (void)name; gPhysicsEnabled=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DCollisionSource(const char* name){ (void)name; return gCollisionSource; }\n";
+                                mc << "void NB_RT_SetNode3DCollisionSource(const char* name, int enabled){ (void)name; gCollisionSource=enabled; }\n";
+                                mc << "int NB_RT_GetNode3DSimpleCollision(const char* name){ (void)name; return gSimpleCollision; }\n";
+                                mc << "void NB_RT_SetNode3DSimpleCollision(const char* name, int enabled){ (void)name; gSimpleCollision=enabled; }\n";
                                 mc << "float NB_RT_GetNode3DVelocityY(const char* name){ (void)name; return gVelY; }\n";
                                 mc << "void NB_RT_SetNode3DVelocityY(const char* name, float vy){ (void)name; gVelY=vy; }\n";
                                 mc << "int NB_RT_IsNode3DOnFloor(const char* name){ (void)name; return gOnFloor; }\n";
                                 mc << "int NB_RT_CheckAABBOverlap(const char* name1, const char* name2){ (void)name1; (void)name2; return 0; }\n";
                                 // NB_RT_RaycastDown emitted after MAX_MESHES/gSceneMeshes declarations
                                 mc << "static int gNavMeshLoaded = 0;\n";
-                                mc << "int NB_RT_NavMeshBuild(void){ if (!gNavMeshLoaded) { gNavMeshLoaded = NB_DC_LoadNavMesh(\"/cd/data/navmesh/NAV00001.BIN\"); } return gNavMeshLoaded; }\n";
-                                mc << "void NB_RT_NavMeshClear(void){ NB_DC_FreeNavMesh(); gNavMeshLoaded=0; }\n";
-                                mc << "int NB_RT_NavMeshIsReady(void){ return NB_DC_NavMeshIsLoaded(); }\n";
-                                mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ (void)sx; (void)sy; (void)sz; (void)gx; (void)gy; (void)gz; (void)outPath; (void)maxPoints; return 0; }\n";
-                                mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ (void)outPos; return 0; }\n";
-                                mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ (void)px; (void)py; (void)pz; (void)outPos; return 0; }\n";
+                                mc << "int NB_RT_NavMeshBuild(void){\n";
+                                mc << "  if (!gNavMeshLoaded) {\n";
+                                mc << "    gNavMeshLoaded = NB_DC_LoadNavMesh(\"/cd/data/navmesh/NAV00001.BIN\");\n";
+                                mc << "    if (gNavMeshLoaded) {\n";
+                                mc << "      int blobSize = 0;\n";
+                                mc << "      const void* blob = NB_DC_GetNavMeshData(&blobSize);\n";
+                                mc << "      if (!NB_DC_DetourInit(blob, blobSize)) { gNavMeshLoaded = 0; }\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
+                                mc << "  return gNavMeshLoaded;\n";
+                                mc << "}\n";
+                                mc << "void NB_RT_NavMeshClear(void){ NB_DC_DetourFree(); NB_DC_FreeNavMesh(); gNavMeshLoaded=0; }\n";
+                                mc << "int NB_RT_NavMeshIsReady(void){ return NB_DC_DetourIsReady(); }\n";
+                                mc << "int NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, float gz, float* outPath, int maxPoints){ return NB_DC_DetourFindPath(sx,sy,sz,gx,gy,gz,outPath,maxPoints); }\n";
+                                mc << "int NB_RT_NavMeshFindRandomPoint(float outPos[3]){ return NB_DC_DetourFindRandomPoint(outPos); }\n";
+                                mc << "int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]){ return NB_DC_DetourFindClosestPoint(px,py,pz,outPos); }\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";
@@ -14853,10 +15040,12 @@ RenderImGuiOnly:
                                 mc << "    }\n";
                                 mc << "\n";
                                 mc << "    /* Physics tick: gravity + AABB floor collision */\n";
-                                mc << "    if (gPhysicsEnabled) {\n";
+                                mc << "    if (gPhysicsEnabled || gCollisionSource || gSimpleCollision) {\n";
                                 mc << "      float preGravY = gMeshPos[1];\n";
-                                mc << "      gVelY += -29.4f * dt;\n";
-                                mc << "      gMeshPos[1] += gVelY * dt;\n";
+                                mc << "      if (gPhysicsEnabled) {\n";
+                                mc << "        gVelY += -29.4f * dt;\n";
+                                mc << "        gMeshPos[1] += gVelY * dt;\n";
+                                mc << "      }\n";
                                 mc << "      gOnFloor = 0;\n";
                                 mc << "      float pHx = gCollExtent[0], pHy = gCollExtent[1], pHz = gCollExtent[2];\n";
                                 mc << "      float pCx = gMeshPos[0] + gBoundPos[0], pCy = gMeshPos[1] + gBoundPos[1], pCz = gMeshPos[2] + gBoundPos[2];\n";
@@ -15100,6 +15289,48 @@ RenderImGuiOnly:
                             // KOS bindings are now consumed from engine source (src/platform/dreamcast)
                             // instead of generating local copies in build_dreamcast.
 
+                            // Copy Detour sources into build_dreamcast/detour/ for SH4 compilation
+                            {
+                                std::filesystem::path detourSrcDir = std::filesystem::weakly_canonical(
+                                    GetExecutableDirectory() / ".." / ".." / "thirdparty" / "recastnavigation" / "Detour");
+                                std::filesystem::path detourDstDir = buildDir / "detour";
+                                std::filesystem::create_directories(detourDstDir);
+                                // Copy Detour source files
+                                const char* detourSrcs[] = {
+                                    "DetourAlloc.cpp", "DetourAssert.cpp", "DetourCommon.cpp",
+                                    "DetourNavMesh.cpp", "DetourNavMeshQuery.cpp", "DetourNode.cpp"
+                                };
+                                for (const char* fn : detourSrcs)
+                                {
+                                    auto src = detourSrcDir / "Source" / fn;
+                                    auto dst = detourDstDir / fn;
+                                    if (std::filesystem::exists(src))
+                                        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
+                                }
+                                // Copy Detour headers
+                                const char* detourHdrs[] = {
+                                    "DetourAlloc.h", "DetourAssert.h", "DetourCommon.h", "DetourMath.h",
+                                    "DetourNavMesh.h", "DetourNavMeshBuilder.h", "DetourNavMeshQuery.h",
+                                    "DetourNode.h", "DetourStatus.h"
+                                };
+                                for (const char* fn : detourHdrs)
+                                {
+                                    auto src = detourSrcDir / "Include" / fn;
+                                    auto dst = detourDstDir / fn;
+                                    if (std::filesystem::exists(src))
+                                        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
+                                }
+                                // Copy DetourBridge.h and DetourBridge.cpp into build_dreamcast/
+                                std::filesystem::path bridgeDir = std::filesystem::weakly_canonical(
+                                    GetExecutableDirectory() / ".." / ".." / "src" / "platform" / "dreamcast");
+                                auto bridgeH = bridgeDir / "DetourBridge.h";
+                                auto bridgeCpp = bridgeDir / "DetourBridge.cpp";
+                                if (std::filesystem::exists(bridgeH))
+                                    std::filesystem::copy_file(bridgeH, buildDir / "DetourBridge.h", std::filesystem::copy_options::overwrite_existing);
+                                if (std::filesystem::exists(bridgeCpp))
+                                    std::filesystem::copy_file(bridgeCpp, buildDir / "DetourBridge.cpp", std::filesystem::copy_options::overwrite_existing);
+                            }
+
                             {
                                 std::filesystem::path bindingsDir = std::filesystem::weakly_canonical(GetExecutableDirectory() / ".." / ".." / "src" / "platform" / "dreamcast");
                                 std::string bindingsPosix = bindingsDir.string();
@@ -15124,19 +15355,31 @@ RenderImGuiOnly:
                                     mk << "\n";
                                     mk << "SOURCES = main.c KosBindings.c KosInput.c $(SCRIPT_SOURCES) NebulaGameStub.c\n";
                                     mk << "OBJS = $(SOURCES:.c=.o)\n";
+                                    // Detour C++ sources for navmesh queries
+                                    mk << "DETOUR_DIR = detour\n";
+                                    mk << "DETOUR_CPP = DetourAlloc.cpp DetourAssert.cpp DetourCommon.cpp DetourNavMesh.cpp DetourNavMeshQuery.cpp DetourNode.cpp\n";
+                                    mk << "CXX_SOURCES = DetourBridge.cpp $(addprefix $(DETOUR_DIR)/,$(DETOUR_CPP))\n";
+                                    mk << "CXX_OBJS = $(CXX_SOURCES:.cpp=.o)\n";
+                                    mk << "ALL_OBJS = $(OBJS) $(CXX_OBJS)\n";
                                     mk << "KOS_BASE ?= /c/DreamSDK/opt/toolchains/dc/kos\n";
                                     mk << "KOS_CC_BASE ?= /c/DreamSDK/opt/toolchains/dc\n";
                                     mk << "CFLAGS += -D__DREAMCAST__ -I$(KOS_BASE)/include -I$(KOS_BASE)/kernel/arch/dreamcast/include -I$(KOS_BASE)/addons/include -I$(NEBULA_DC_BINDINGS) -I. -Iscripts\n";
+                                    mk << "CXXFLAGS += $(CFLAGS) -fno-exceptions -fno-rtti -Idetour\n";
                                     mk << "all: rm-elf $(TARGET)\n";
                                     mk << "include $(KOS_BASE)/Makefile.rules\n";
                                     mk << "%.o: %.c\n";
                                     mk << "\tsh-elf-gcc $(CFLAGS) -c $< -o $@\n";
+                                    mk << "%.o: %.cpp\n";
+                                    mk << "\tsh-elf-g++ $(CXXFLAGS) -c $< -o $@\n";
+                                    mk << "$(DETOUR_DIR)/%.o: $(DETOUR_DIR)/%.cpp\n";
+                                    mk << "\t@mkdir -p $(DETOUR_DIR)\n";
+                                    mk << "\tsh-elf-g++ $(CXXFLAGS) -c $< -o $@\n";
                                     mk << "clean: rm-elf\n";
-                                    mk << "\t-rm -f $(OBJS)\n";
+                                    mk << "\t-rm -f $(ALL_OBJS)\n";
                                     mk << "rm-elf:\n";
                                     mk << "\t-rm -f $(TARGET)\n";
-                                    mk << "$(TARGET): $(OBJS)\n";
-                                    mk << "\tkos-cc -o $(TARGET) $(OBJS)\n";
+                                    mk << "$(TARGET): $(ALL_OBJS)\n";
+                                    mk << "\tkos-c++ -o $(TARGET) $(ALL_OBJS)\n";
                                 }
                             }
 
@@ -18850,8 +19093,9 @@ RenderImGuiOnly:
                 }
 
                 ImGui::Text("Primitive: %s", n.primitiveMesh.empty() ? "(none)" : n.primitiveMesh.c_str());
-                ImGui::Checkbox("Collision Source (primitive bounds)", &n.collisionSource);
-                ImGui::Checkbox("Physics Enabled", &n.physicsEnabled);
+                ImGui::Checkbox("Simple Collision", &n.simpleCollision);
+                ImGui::Checkbox("Collision Source (slope alignment)", &n.collisionSource);
+                ImGui::Checkbox("Gravity", &n.physicsEnabled);
                 ImGui::Text("Parent: %s", n.parent.empty() ? "(none)" : n.parent.c_str());
                 ImGui::SameLine();
                 if (!n.parent.empty() && ImGui::Button("Unparent##InspectorNode3D")) n.parent.clear();

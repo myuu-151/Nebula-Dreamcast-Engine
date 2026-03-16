@@ -597,6 +597,29 @@ int __attribute__((weak)) NB_RT_RaycastDownWithNormal(float x, float y, float z,
     return 0;
 }
 
+void __attribute__((weak)) NB_RT_GetNode3DCollisionBounds(const char* name, float outExtents[3]) {
+    (void)name; if (outExtents) { outExtents[0]=0.5f; outExtents[1]=0.5f; outExtents[2]=0.5f; }
+}
+void __attribute__((weak)) NB_RT_SetNode3DCollisionBounds(const char* name, float ex, float ey, float ez) {
+    (void)name; (void)ex; (void)ey; (void)ez;
+}
+void __attribute__((weak)) NB_RT_GetNode3DBoundPos(const char* name, float outPos[3]) {
+    (void)name; if (outPos) { outPos[0]=0; outPos[1]=0; outPos[2]=0; }
+}
+void __attribute__((weak)) NB_RT_SetNode3DBoundPos(const char* name, float bx, float by, float bz) {
+    (void)name; (void)bx; (void)by; (void)bz;
+}
+int __attribute__((weak)) NB_RT_GetNode3DPhysicsEnabled(const char* name) { (void)name; return 0; }
+void __attribute__((weak)) NB_RT_SetNode3DPhysicsEnabled(const char* name, int enabled) { (void)name; (void)enabled; }
+int __attribute__((weak)) NB_RT_GetNode3DCollisionSource(const char* name) { (void)name; return 0; }
+void __attribute__((weak)) NB_RT_SetNode3DCollisionSource(const char* name, int enabled) { (void)name; (void)enabled; }
+int __attribute__((weak)) NB_RT_GetNode3DSimpleCollision(const char* name) { (void)name; return 0; }
+void __attribute__((weak)) NB_RT_SetNode3DSimpleCollision(const char* name, int enabled) { (void)name; (void)enabled; }
+float __attribute__((weak)) NB_RT_GetNode3DVelocityY(const char* name) { (void)name; return 0.0f; }
+void __attribute__((weak)) NB_RT_SetNode3DVelocityY(const char* name, float vy) { (void)name; (void)vy; }
+int __attribute__((weak)) NB_RT_IsNode3DOnFloor(const char* name) { (void)name; return 0; }
+int __attribute__((weak)) NB_RT_CheckAABBOverlap(const char* name1, const char* name2) { (void)name1; (void)name2; return 0; }
+
 /* ---- NavMesh DC asset storage ---- */
 
 static uint8_t* gNavMeshData = NULL;

@@ -14161,7 +14161,7 @@ RenderImGuiOnly:
                             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
-                            struct Node3DExport { std::string name; float pos[3]; float rot[3]; float scale[3]; float extent[3]; float boundPos[3]; int physicsEnabled; int collisionSource; };
+                            struct Node3DExport { std::string name; float pos[3]; float rot[3]; float scale[3]; float extent[3]; float boundPos[3]; int physicsEnabled; int collisionSource; int simpleCollision; };
                             std::vector<std::vector<Node3DExport>> runtimeSceneNode3Ds;
                             // Per-scene: for each mesh index, the Node3D index that is its parent (-1 if none)
                             std::vector<std::vector<int>> runtimeSceneMeshParentN3D;
@@ -14340,6 +14340,7 @@ RenderImGuiOnly:
                                         ne.boundPos[0] = n3.boundPosX; ne.boundPos[1] = n3.boundPosY; ne.boundPos[2] = n3.boundPosZ;
                                         ne.physicsEnabled = n3.physicsEnabled ? 1 : 0;
                                         ne.collisionSource = n3.collisionSource ? 1 : 0;
+                                        ne.simpleCollision = n3.simpleCollision ? 1 : 0;
                                         n3dNameToIdx[n3.name] = (int)ni;
                                         sceneNode3Ds.push_back(ne);
                                     }
@@ -15111,6 +15112,36 @@ RenderImGuiOnly:
                                         mc << "\n";
                                     }
                                     mc << "};\n";
+                                    // Node3D collisionSource flags [scene][node3d]
+                                    mc << "static const int kSceneNode3DCollSrc[" << sceneCount << "][" << maxN3D << "] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            mc << ((ni < (int)runtimeSceneNode3Ds[si].size()) ? runtimeSceneNode3Ds[si][ni].collisionSource : 0);
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Node3D simpleCollision flags [scene][node3d]
+                                    mc << "static const int kSceneNode3DSimColl[" << sceneCount << "][" << maxN3D << "] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int ni = 0; ni < maxN3D; ++ni)
+                                        {
+                                            mc << ((ni < (int)runtimeSceneNode3Ds[si].size()) ? runtimeSceneNode3Ds[si][ni].simpleCollision : 0);
+                                            if (ni + 1 < maxN3D) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
                                     // Per-mesh parent Node3D index (-1 = no parent) [scene][mesh]
                                     mc << "static const int kSceneMeshParentN3D[" << sceneCount << "][MAX_MESHES] = {\n";
                                     for (int si = 0; si < sceneCount; ++si)
@@ -15140,7 +15171,7 @@ RenderImGuiOnly:
                                     mc << "    nd->extent[0]=kSceneNode3DExt[si][ni][0]; nd->extent[1]=kSceneNode3DExt[si][ni][1]; nd->extent[2]=kSceneNode3DExt[si][ni][2];\n";
                                     mc << "    nd->boundPos[0]=kSceneNode3DBndPos[si][ni][0]; nd->boundPos[1]=kSceneNode3DBndPos[si][ni][1]; nd->boundPos[2]=kSceneNode3DBndPos[si][ni][2];\n";
                                     mc << "    nd->physEnabled=kSceneNode3DPhys[si][ni];\n";
-                                    mc << "    nd->collisionSource=0; nd->simpleCollision=0;\n";
+                                    mc << "    nd->collisionSource=kSceneNode3DCollSrc[si][ni]; nd->simpleCollision=kSceneNode3DSimColl[si][ni];\n";
                                     mc << "    nd->qw=1.0f; nd->qx=0.0f; nd->qy=0.0f; nd->qz=0.0f;\n";
                                     mc << "  }\n";
                                     mc << "}\n";

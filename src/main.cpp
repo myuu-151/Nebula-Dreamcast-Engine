@@ -262,6 +262,7 @@ static std::vector<SceneData> gOpenScenes;
 static int gActiveScene = -1;
 static int gForceSelectSceneTab = -1;
 static bool gPlayMode = false;
+static std::vector<SceneData> gPlayOriginalScenes;
 static bool gRequestDreamcastGenerate = false;
 static bool gEnableScriptHotReload = false;
 static std::unordered_map<std::string, std::filesystem::file_time_type> gScriptHotReloadKnownMtimes;
@@ -2491,8 +2492,11 @@ NB_RT_EXPORT void NB_RT_SwitchScene(const char* name)
                         gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
                     }
                     gOpenScenes.push_back(scene);
+                    if (gPlayMode)
+                        gPlayOriginalScenes.push_back(scene);
                     int newIdx = (int)gOpenScenes.size() - 1;
                     gActiveScene = newIdx;
+                    gForceSelectSceneTab = newIdx;
                     gAudio3DNodes = gOpenScenes[newIdx].nodes;
                     gStaticMeshNodes = gOpenScenes[newIdx].staticMeshes;
                     gCamera3DNodes = gOpenScenes[newIdx].cameras;
@@ -3326,11 +3330,26 @@ static void SetActiveScene(int index)
         gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
     }
     gActiveScene = index;
-    gAudio3DNodes = gOpenScenes[gActiveScene].nodes;
-    gStaticMeshNodes = gOpenScenes[gActiveScene].staticMeshes;
-    gCamera3DNodes = gOpenScenes[gActiveScene].cameras;
-    gNode3DNodes = gOpenScenes[gActiveScene].node3d;
-    gNavMesh3DNodes = gOpenScenes[gActiveScene].navMeshes;
+    // During play mode, reload from original scene data (matches DC behavior
+    // where scenes are reloaded fresh from disc on every switch).  This
+    // prevents stale runtime positions (e.g. player left at a trigger zone)
+    // from causing immediate re-triggers when returning to a scene.
+    if (gPlayMode && index < (int)gPlayOriginalScenes.size())
+    {
+        gAudio3DNodes = gPlayOriginalScenes[index].nodes;
+        gStaticMeshNodes = gPlayOriginalScenes[index].staticMeshes;
+        gCamera3DNodes = gPlayOriginalScenes[index].cameras;
+        gNode3DNodes = gPlayOriginalScenes[index].node3d;
+        gNavMesh3DNodes = gPlayOriginalScenes[index].navMeshes;
+    }
+    else
+    {
+        gAudio3DNodes = gOpenScenes[gActiveScene].nodes;
+        gStaticMeshNodes = gOpenScenes[gActiveScene].staticMeshes;
+        gCamera3DNodes = gOpenScenes[gActiveScene].cameras;
+        gNode3DNodes = gOpenScenes[gActiveScene].node3d;
+        gNavMesh3DNodes = gOpenScenes[gActiveScene].navMeshes;
+    }
     gForceSelectSceneTab = index;
     NotifyScriptSceneSwitch();
 }
@@ -10335,6 +10354,7 @@ int main(int, char**)
                 if (gPlayMode)
                 {
                     gPlayMode = false;
+                    gPlayOriginalScenes.clear();
                     EndPlayScriptRuntime();
                     if (playCamSnapshotValid)
                     {
@@ -12440,10 +12460,13 @@ RenderImGuiOnly:
                 playSavedNode3DNodes = gNode3DNodes;
                 playSavedNavMesh3DNodes = gNavMesh3DNodes;
                 playSceneSnapshotValid = true;
+                gPlayOriginalScenes = gOpenScenes;
 
                 gPlayMode = true;
 
-                // Switch to default scene (matches DC boot behavior)
+                // Switch to default scene (matches DC boot behavior).
+                // Use SetActiveScene so node arrays are properly swapped to
+                // the default scene even if a different tab was active.
                 if (!gProjectDir.empty())
                 {
                     std::string defCfg = GetProjectDefaultScene(std::filesystem::path(gProjectDir));
@@ -12459,7 +12482,7 @@ RenderImGuiOnly:
                             auto scnCanon = std::filesystem::weakly_canonical(gOpenScenes[i].path, ec);
                             if (scnCanon == defCanon)
                             {
-                                gActiveScene = i;
+                                SetActiveScene(i);
                                 break;
                             }
                         }
@@ -12471,6 +12494,7 @@ RenderImGuiOnly:
             else
             {
                 gPlayMode = false;
+                gPlayOriginalScenes.clear();
                 EndPlayScriptRuntime();
                 if (playCamSnapshotValid)
                 {

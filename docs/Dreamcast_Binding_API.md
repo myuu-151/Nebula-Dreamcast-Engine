@@ -251,6 +251,70 @@ NB_SCRIPT_EXPORT void NB_Game_OnSceneSwitch(const char* sceneName)
 
 The trigger Node3D does not need any collision flags enabled — `CheckAABBOverlap` is a pure geometry test. Set the trigger node's bounds/scale in the editor to define the activation area. The `sTriggered` flag prevents repeated scene switches while the player remains inside the zone.
 
+### Animation slot bridge
+
+```c
+void NB_RT_PlayAnimation(const char* meshName, const char* animName);
+void NB_RT_StopAnimation(const char* meshName);
+int  NB_RT_IsAnimationPlaying(const char* meshName);
+int  NB_RT_IsAnimationFinished(const char* meshName);
+void NB_RT_SetAnimationSpeed(const char* meshName, float speed);
+```
+
+Named animation slots on StaticMesh3D nodes. Each StaticMesh3D can have up to 8 named animation slots, each pointing to a `.nebanim` file with an independent speed multiplier.
+
+- **PlayAnimation(meshName, animName)**: starts playing the named slot on the given StaticMesh3D. The `meshName` must match the StaticMesh3D node name (case-insensitive). The `animName` must match one of the slot names configured in the editor (case-insensitive). Resets playback time to 0 and uses the slot's configured speed. On Dreamcast, the animation clip is lazy-loaded from disc on first play — only one clip per mesh is in memory at a time.
+- **StopAnimation(meshName)**: stops playback on the mesh. The last frame remains visible.
+- **IsAnimationPlaying(meshName)**: returns 1 if the mesh is currently playing an animation.
+- **IsAnimationFinished(meshName)**: returns 1 if the animation has played past its last frame. The animation continues looping — this flag just indicates the first pass completed.
+- **SetAnimationSpeed(meshName, speed)**: overrides the playback speed at runtime. Range 0.0 (stopped) to 2.0 (double speed). Does not change the slot's saved speed in the editor.
+
+**Editor setup:** In the StaticMesh3D inspector, expand "Animation Slots" and click **+** to add slots. Each slot has:
+- **Name** — the string scripts use to reference the animation (e.g. `"walk"`, `"wait"`)
+- **Path** — the `.nebanim` file (click the `>` button to pick from project assets)
+- **Speed** — playback speed multiplier (0.0–2.0, default 1.0). Persists to Dreamcast export.
+- **Play/Stop** — preview button to test the animation in the editor viewport
+
+**Important:** The StaticMesh3D must have **Runtime test** checked in the inspector for play-mode animation to work. Without it, the script calls register but the renderer won't apply the animation.
+
+**Usage pattern** (AI roaming with walk/wait animations):
+
+```c
+static const char* AI_NODE = "AINode";
+static const char* AI_MESH = "chao";   // StaticMesh3D parented to AINode
+static int sIsWalking = 0;
+
+NB_SCRIPT_EXPORT void NB_Game_OnStart(void)
+{
+    NB_RT_PlayAnimation(AI_MESH, "wait");
+    sIsWalking = 0;
+}
+
+NB_SCRIPT_EXPORT void NB_Game_OnUpdate(float dt)
+{
+    // ... movement logic ...
+
+    // Arrived at destination
+    if (dist < ARRIVE_DIST)
+    {
+        NB_RT_PlayAnimation(AI_MESH, "wait");
+        sIsWalking = 0;
+        return;
+    }
+
+    // Starting to move
+    if (!sIsWalking)
+    {
+        NB_RT_PlayAnimation(AI_MESH, "walk");
+        sIsWalking = 1;
+    }
+}
+```
+
+**Dreamcast export:** Animation slots are baked into per-scene constant arrays (`kSceneAnimSlotCount`, `kSceneAnimSlotName`, `kSceneAnimSlotDisk`, `kSceneAnimSlotSpeed`). The `.nebanim` files are staged as `Axxxxx` short names under `cd_root/data/animations/`. At runtime, `PlayAnimation` lazy-loads the disc file matching the slot's short name, freeing the previous clip first (only one active clip per mesh).
+
+**Serialization:** Animation slots are saved in `.nebscene` files after the existing StaticMesh3D fields. The format is backward compatible — scenes saved before animation slots had no slot data and load with `animSlotCount = 0`.
+
 ### NavMesh bridge
 
 ```c

@@ -266,13 +266,14 @@ Named animation slots on StaticMesh3D nodes. Each StaticMesh3D can have up to 8 
 - **PlayAnimation(meshName, animName)**: starts playing the named slot on the given StaticMesh3D. The `meshName` must match the StaticMesh3D node name (case-insensitive). The `animName` must match one of the slot names configured in the editor (case-insensitive). Resets playback time to 0 and uses the slot's configured speed. On Dreamcast, the animation clip is lazy-loaded from disc on first play — only one clip per mesh is in memory at a time.
 - **StopAnimation(meshName)**: stops playback on the mesh. The last frame remains visible.
 - **IsAnimationPlaying(meshName)**: returns 1 if the mesh is currently playing an animation.
-- **IsAnimationFinished(meshName)**: returns 1 if the animation has played past its last frame. The animation continues looping — this flag just indicates the first pass completed.
+- **IsAnimationFinished(meshName)**: returns 1 if the animation has played past its last frame. For looping slots, the flag is set but playback continues. For play-once slots, playback stops on the last frame.
 - **SetAnimationSpeed(meshName, speed)**: overrides the playback speed at runtime. Range 0.0 (stopped) to 2.0 (double speed). Does not change the slot's saved speed in the editor.
 
 **Editor setup:** In the StaticMesh3D inspector, expand "Animation Slots" and click **+** to add slots. Each slot has:
 - **Name** — the string scripts use to reference the animation (e.g. `"walk"`, `"wait"`)
 - **Path** — the `.nebanim` file (click the `>` button to pick from project assets)
 - **Speed** — playback speed multiplier (0.0–2.0, default 1.0). Persists to Dreamcast export.
+- **Loop** — when checked (default), the animation wraps around continuously. When unchecked, the animation plays once and stops on the last frame. `IsAnimationFinished` returns 1 in either case once the first pass completes. Persists to Dreamcast export.
 - **Play/Stop** — preview button to test the animation in the editor viewport
 
 **Important:** The StaticMesh3D must have **Runtime test** checked in the inspector for play-mode animation to work. Without it, the script calls register but the renderer won't apply the animation.

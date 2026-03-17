@@ -15761,6 +15761,10 @@ RenderImGuiOnly:
                                 mc << "      float smRot[3] = {sm->rot[0], sm->rot[1], sm->rot[2]};\n";
                                 mc << "      /* Child local rotation (visual offset only, zero for non-player meshes). */\n";
                                 mc << "      float cRx = 0, cRy = 0, cRz = 0;\n";
+                                mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
+                                mc << "      /* Meshes parented under a Node3D use identity remap — parent drives rotation. */\n";
+                                mc << "      int _rsi=gSceneMetaIndex; if(_rsi<0) _rsi=0; if(_rsi>=" << (int)runtimeSceneFiles.size() << ") _rsi=0;\n";
+                                mc << "      int hasN3DParent = (mi<MAX_MESHES) ? (kSceneMeshParentN3D[_rsi][mi]>=0) : 0;\n";
                                 mc << "      int useQuat = 0;\n";
                                 mc << "      float qRm[9] = {1,0,0, 0,1,0, 0,0,1}; /* quaternion rotation matrix (row-major) */\n";
                                 mc << "      if (mi == gPlayerMeshIdx) { cRx = deg2rad(kPlayerChildRot[0]); cRy = deg2rad(kPlayerChildRot[1]); cRz = deg2rad(kPlayerChildRot[2]); smPos[0]=gMeshPos[0]; smPos[1]=gMeshPos[1]; smPos[2]=gMeshPos[2]; smRot[0]=gMeshRot[0]; smRot[1]=gMeshRot[1]; smRot[2]=gMeshRot[2];\n";
@@ -15782,10 +15786,6 @@ RenderImGuiOnly:
                                 mc << "          qRm[6]=2*(x*z-w*y);   qRm[7]=2*(y*z+w*x);   qRm[8]=1-2*(x*x+y*y);\n";
                                 mc << "        }\n";
                                 mc << "      }\n";
-                                mc << "      /* StaticMesh rotation axis remap: X<-Z, Y<-X, Z<-Y (matches editor OpenGL convention). */\n";
-                                mc << "      /* Meshes parented under a Node3D use identity remap — parent drives rotation. */\n";
-                                mc << "      int _rsi=gSceneMetaIndex; if(_rsi<0) _rsi=0; if(_rsi>=" << (int)runtimeSceneFiles.size() << ") _rsi=0;\n";
-                                mc << "      int hasN3DParent = (mi<MAX_MESHES) ? (kSceneMeshParentN3D[_rsi][mi]>=0) : 0;\n";
                                 mc << "      float rxr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
                                 mc << "      float ryr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[1]) : deg2rad(smRot[0]);\n";
                                 mc << "      float rzr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[2]) : deg2rad(smRot[1]);\n";

@@ -15,6 +15,7 @@ struct AnimSlot
     std::string name;
     std::string path;
     float speed = 1.0f;
+    bool loop = true;
 };
 
 struct StaticMesh3DNode

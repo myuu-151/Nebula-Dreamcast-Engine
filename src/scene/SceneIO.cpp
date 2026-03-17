@@ -270,7 +270,7 @@ namespace NebulaScene
             out << " " << n.wallThreshold;
             out << " " << n.animSlotCount;
             for (int si = 0; si < kStaticMeshAnimSlots; ++si)
-                out << " " << EncodeSceneToken(n.animSlots[si].name) << " " << EncodeSceneToken(n.animSlots[si].path);
+                out << " " << EncodeSceneToken(n.animSlots[si].name) << " " << EncodeSceneToken(n.animSlots[si].path) << " " << n.animSlots[si].speed;
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -423,8 +423,9 @@ namespace NebulaScene
                     if (n.animSlotCount > kStaticMeshAnimSlots) n.animSlotCount = kStaticMeshAnimSlots;
                     for (int si = 0; si < kStaticMeshAnimSlots; ++si)
                     {
-                        size_t nameIdx = animSlotCountIdx + 1 + (size_t)si * 2;
+                        size_t nameIdx = animSlotCountIdx + 1 + (size_t)si * 3;
                         size_t pathIdx = nameIdx + 1;
+                        size_t speedIdx = nameIdx + 2;
                         if (nameIdx < extra.size())
                         {
                             n.animSlots[si].name = extra[nameIdx];
@@ -435,6 +436,8 @@ namespace NebulaScene
                             n.animSlots[si].path = extra[pathIdx];
                             DecodeSceneToken(n.animSlots[si].path);
                         }
+                        if (speedIdx < extra.size())
+                            n.animSlots[si].speed = (float)atof(extra[speedIdx].c_str());
                     }
                 }
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;

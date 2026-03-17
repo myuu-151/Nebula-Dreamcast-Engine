@@ -2465,8 +2465,7 @@ NB_RT_EXPORT void NB_RT_PlayAnimation(const char* meshName, const char* animName
         {
             gEditorAnimActiveSlot[idx] = si;
             gEditorAnimTime[idx] = 0.0f;
-            if (gEditorAnimSpeed.find(idx) == gEditorAnimSpeed.end())
-                gEditorAnimSpeed[idx] = 1.0f;
+            gEditorAnimSpeed[idx] = n.animSlots[si].speed;
             gEditorAnimPlaying[idx] = true;
             gEditorAnimFinished[idx] = false;
             return;
@@ -14299,7 +14298,7 @@ RenderImGuiOnly:
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
                             // Per-scene per-mesh animation slot data
-                            struct AnimSlotExport { std::string name; std::string disk; };
+                            struct AnimSlotExport { std::string name; std::string disk; float speed = 1.0f; };
                             std::vector<std::vector<std::vector<AnimSlotExport>>> runtimeSceneAnimSlotsByMesh; // [scene][mesh][slot]
                             struct Node3DExport { std::string name; float pos[3]; float rot[3]; float scale[3]; float extent[3]; float boundPos[3]; int physicsEnabled; int collisionSource; int simpleCollision; };
                             std::vector<std::vector<Node3DExport>> runtimeSceneNode3Ds;
@@ -14397,6 +14396,7 @@ RenderImGuiOnly:
                                         {
                                             AnimSlotExport ase;
                                             ase.name = sm.animSlots[asi].name;
+                                            ase.speed = sm.animSlots[asi].speed;
                                             if (!sm.animSlots[asi].path.empty())
                                             {
                                                 std::string akey = normalizeAbsKey(std::filesystem::path(gProjectDir) / sm.animSlots[asi].path);
@@ -14982,7 +14982,7 @@ RenderImGuiOnly:
                                 mc << "        }\n";
                                 mc << "        sm->animActiveSlot=si;\n";
                                 mc << "      }\n";
-                                mc << "      sm->animTime=0.0f; sm->animPlaying=1; sm->animFinished=0;\n";
+                                mc << "      sm->animTime=0.0f; sm->animSpeed=sm->animSlotSpeed[si]; sm->animPlaying=1; sm->animFinished=0;\n";
                                 mc << "      return;\n";
                                 mc << "    }\n";
                                 mc << "  }\n";
@@ -15088,7 +15088,7 @@ RenderImGuiOnly:
                                 mc << "}\n";
                                 mc << "enum { MAX_SLOT = 16, MAX_MESHES = 64 };\n";
                                 mc << "enum { MAX_ANIM_SLOTS = 8 };\n";
-                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; uint8_t collisionSource; int animSlotCount; char animSlotName[MAX_ANIM_SLOTS][32]; char animSlotDisk[MAX_ANIM_SLOTS][128]; int animActiveSlot; float animTime; float animSpeed; int animPlaying; int animFinished; } SceneMeshMeta;\n";
+                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; uint8_t collisionSource; int animSlotCount; char animSlotName[MAX_ANIM_SLOTS][32]; char animSlotDisk[MAX_ANIM_SLOTS][128]; float animSlotSpeed[MAX_ANIM_SLOTS]; int animActiveSlot; float animTime; float animSpeed; int animPlaying; int animFinished; } SceneMeshMeta;\n";
                                 mc << "static SceneMeshMeta gSceneMeshes[MAX_MESHES];\n";
                                 mc << "static int gSceneMeshCount = 0;\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
@@ -15197,6 +15197,31 @@ RenderImGuiOnly:
                                                 if (mi < (int)runtimeSceneAnimSlotsByMesh[si].size() && ai < (int)runtimeSceneAnimSlotsByMesh[si][mi].size())
                                                     dk = runtimeSceneAnimSlotsByMesh[si][mi][ai].disk;
                                                 mc << "\"" << dk << "\"";
+                                                if (ai + 1 < 8) mc << ",";
+                                            }
+                                            mc << "}";
+                                            if (mi + 1 < 64) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    // Per-slot speed
+                                    mc << "static const float kSceneAnimSlotSpeed[" << sceneCount << "][MAX_MESHES][MAX_ANIM_SLOTS] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int mi = 0; mi < 64; ++mi)
+                                        {
+                                            mc << "{";
+                                            for (int ai = 0; ai < 8; ++ai)
+                                            {
+                                                float spd = 1.0f;
+                                                if (mi < (int)runtimeSceneAnimSlotsByMesh[si].size() && ai < (int)runtimeSceneAnimSlotsByMesh[si][mi].size())
+                                                    spd = runtimeSceneAnimSlotsByMesh[si][mi][ai].speed;
+                                                char buf[32]; snprintf(buf, sizeof(buf), "%.4ff", spd);
+                                                mc << buf;
                                                 if (ai + 1 < 8) mc << ",";
                                             }
                                             mc << "}";
@@ -15449,7 +15474,7 @@ RenderImGuiOnly:
                                 mc << "static int NB_FindSceneMetaIndex(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return gSceneIndex; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(sceneFile,gSceneFiles[i])) return i; } const char* slash=strrchr(sceneFile,'/'); const char* name=slash?slash+1:sceneFile; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(name,gSceneFiles[i])) return i; } return gSceneIndex; }\n";
                                 // NB_ApplyLoadedSceneState: use parent Node3D transform for gMeshPos/gMeshRot (drives movement),
                                 // NOT the child StaticMesh3D transform (which is visual offset only).
-                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; sm->animSlotCount=kSceneAnimSlotCount[gSceneMetaIndex][mi]; sm->animActiveSlot=-1; sm->animTime=0.0f; sm->animSpeed=1.0f; sm->animPlaying=0; sm->animFinished=0; for(int ai=0;ai<MAX_ANIM_SLOTS;++ai){ const char* sn=kSceneAnimSlotName[gSceneMetaIndex][mi][ai]; const char* sd=kSceneAnimSlotDisk[gSceneMetaIndex][mi][ai]; if(sn&&sn[0]) strncpy(sm->animSlotName[ai],sn,31); else sm->animSlotName[ai][0]=0; if(sd&&sd[0]) strncpy(sm->animSlotDisk[ai],sd,127); else sm->animSlotDisk[ai][0]=0; } } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } "
+                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; sm->animSlotCount=kSceneAnimSlotCount[gSceneMetaIndex][mi]; sm->animActiveSlot=-1; sm->animTime=0.0f; sm->animSpeed=1.0f; sm->animPlaying=0; sm->animFinished=0; for(int ai=0;ai<MAX_ANIM_SLOTS;++ai){ const char* sn=kSceneAnimSlotName[gSceneMetaIndex][mi][ai]; const char* sd=kSceneAnimSlotDisk[gSceneMetaIndex][mi][ai]; if(sn&&sn[0]) strncpy(sm->animSlotName[ai],sn,31); else sm->animSlotName[ai][0]=0; if(sd&&sd[0]) strncpy(sm->animSlotDisk[ai],sd,127); else sm->animSlotDisk[ai][0]=0; sm->animSlotSpeed[ai]=kSceneAnimSlotSpeed[gSceneMetaIndex][mi][ai]; } } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } "
                                    "/* Use parent Node3D transform for movement (pos/rot), not child mesh. */ "
                                    "{ int si=gSceneMetaIndex; if(si<0) si=0; if(si>=" << (int)runtimeSceneFiles.size() << ") si=0; "
                                    "gMeshPos[0]=kScenePlayerParentPos[si][0]; gMeshPos[1]=kScenePlayerParentPos[si][1]; gMeshPos[2]=kScenePlayerParentPos[si][2]; "
@@ -19885,6 +19910,13 @@ RenderImGuiOnly:
                         else if (!n.animSlots[si].path.empty())
                         {
                             ImGui::TextDisabled("(invalid .nebanim)");
+                        }
+
+                        // Speed slider per slot
+                        {
+                            std::string speedLabel = "Speed##AnimSlotSpeed" + std::to_string(si);
+                            ImGui::SetNextItemWidth(160.0f);
+                            ImGui::SliderFloat(speedLabel.c_str(), &n.animSlots[si].speed, 0.0f, 5.0f, "%.2f");
                         }
 
                         ImGui::Separator();

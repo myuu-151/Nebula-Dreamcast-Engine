@@ -582,22 +582,37 @@ static std::vector<std::filesystem::path> ResolveAllScriptPaths()
         return std::filesystem::path(gProjectDir) / p;
     };
 
-    // Collect unique script paths from all Node3D nodes
+    // Collect unique script paths from all open scenes' Node3D nodes + Scripts folder
     std::vector<std::string> seen;
-    for (const auto& n : gNode3DNodes)
+    auto addScript = [&](const std::filesystem::path& p)
     {
-        std::filesystem::path p = resolvePath(n.script);
-        if (p.empty() || !std::filesystem::exists(p))
-            continue;
+        if (p.empty() || !std::filesystem::exists(p)) return;
         std::string canonical = p.generic_string();
-        bool dup = false;
         for (const auto& s : seen)
-            if (s == canonical) { dup = true; break; }
-        if (!dup)
+            if (s == canonical) return;
+        seen.push_back(canonical);
+        result.push_back(p);
+        printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
+    };
+    // From current scene's nodes
+    for (const auto& n : gNode3DNodes)
+        addScript(resolvePath(n.script));
+    // From all other open scenes
+    for (int i = 0; i < (int)gOpenScenes.size(); ++i)
+    {
+        if (i == gActiveScene) continue;
+        for (const auto& n : gOpenScenes[i].node3d)
+            addScript(resolvePath(n.script));
+    }
+    // From project Scripts/ folder (matches DC build — all .c files)
+    {
+        std::filesystem::path scriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
+        std::error_code ec2;
+        for (auto& e : std::filesystem::recursive_directory_iterator(scriptsDir, ec2))
         {
-            seen.push_back(canonical);
-            result.push_back(p);
-            printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
+            if (!e.is_regular_file()) continue;
+            if (e.path().extension() == ".c")
+                addScript(e.path());
         }
     }
 
@@ -2424,31 +2439,69 @@ NB_RT_EXPORT int NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, flo
     return 1;
 }
 
+// Forward declarations for scene management (defined later)
+static void SetActiveScene(int index);
+static bool LoadSceneFromPath(const std::filesystem::path& path, SceneData& outScene);
+
 NB_RT_EXPORT void NB_RT_NextScene(void)
 {
     if (gOpenScenes.size() <= 1) return;
     int next = (gActiveScene + 1) % (int)gOpenScenes.size();
-    // In editor play mode, switch to next scene
-    // For now, just advance the active scene index
-    gActiveScene = next;
+    SetActiveScene(next);
 }
 
 NB_RT_EXPORT void NB_RT_PrevScene(void)
 {
     if (gOpenScenes.size() <= 1) return;
     int prev = (gActiveScene - 1 + (int)gOpenScenes.size()) % (int)gOpenScenes.size();
-    gActiveScene = prev;
+    SetActiveScene(prev);
 }
 
 NB_RT_EXPORT void NB_RT_SwitchScene(const char* name)
 {
     if (!name || !name[0]) return;
+    // Check already-open scenes first
     for (int i = 0; i < (int)gOpenScenes.size(); ++i)
     {
         if (_stricmp(gOpenScenes[i].name.c_str(), name) == 0)
         {
-            gActiveScene = i;
+            SetActiveScene(i);
             return;
+        }
+    }
+    // Scene not open — search project folder and auto-load it
+    if (!gProjectDir.empty())
+    {
+        std::error_code ec;
+        for (auto& e : std::filesystem::recursive_directory_iterator(gProjectDir, ec))
+        {
+            if (!e.is_regular_file() || e.path().extension() != ".nebscene") continue;
+            if (_stricmp(e.path().stem().string().c_str(), name) == 0)
+            {
+                SceneData scene;
+                if (LoadSceneFromPath(e.path(), scene))
+                {
+                    // Save current scene nodes before adding new one
+                    if (gActiveScene >= 0 && gActiveScene < (int)gOpenScenes.size())
+                    {
+                        gOpenScenes[gActiveScene].nodes = gAudio3DNodes;
+                        gOpenScenes[gActiveScene].staticMeshes = gStaticMeshNodes;
+                        gOpenScenes[gActiveScene].cameras = gCamera3DNodes;
+                        gOpenScenes[gActiveScene].node3d = gNode3DNodes;
+                        gOpenScenes[gActiveScene].navMeshes = gNavMesh3DNodes;
+                    }
+                    gOpenScenes.push_back(scene);
+                    int newIdx = (int)gOpenScenes.size() - 1;
+                    gActiveScene = newIdx;
+                    gAudio3DNodes = gOpenScenes[newIdx].nodes;
+                    gStaticMeshNodes = gOpenScenes[newIdx].staticMeshes;
+                    gCamera3DNodes = gOpenScenes[newIdx].cameras;
+                    gNode3DNodes = gOpenScenes[newIdx].node3d;
+                    gNavMesh3DNodes = gOpenScenes[newIdx].navMeshes;
+                    NotifyScriptSceneSwitch();
+                }
+                return;
+            }
         }
     }
 }
@@ -12389,6 +12442,30 @@ RenderImGuiOnly:
                 playSceneSnapshotValid = true;
 
                 gPlayMode = true;
+
+                // Switch to default scene (matches DC boot behavior)
+                if (!gProjectDir.empty())
+                {
+                    std::string defCfg = GetProjectDefaultScene(std::filesystem::path(gProjectDir));
+                    if (!defCfg.empty())
+                    {
+                        std::filesystem::path defPath(defCfg);
+                        if (defPath.is_relative())
+                            defPath = std::filesystem::path(gProjectDir) / defPath;
+                        std::error_code ec;
+                        auto defCanon = std::filesystem::weakly_canonical(defPath, ec);
+                        for (int i = 0; i < (int)gOpenScenes.size(); ++i)
+                        {
+                            auto scnCanon = std::filesystem::weakly_canonical(gOpenScenes[i].path, ec);
+                            if (scnCanon == defCanon)
+                            {
+                                gActiveScene = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 BeginPlayScriptRuntime();
             }
             else

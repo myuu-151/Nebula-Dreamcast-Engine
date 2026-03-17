@@ -19912,11 +19912,22 @@ RenderImGuiOnly:
                             ImGui::TextDisabled("(invalid .nebanim)");
                         }
 
-                        // Speed slider per slot
+                        // Speed slider per slot (0 stopped .. 1 normal .. 2 fast)
                         {
                             std::string speedLabel = "Speed##AnimSlotSpeed" + std::to_string(si);
-                            ImGui::SetNextItemWidth(160.0f);
-                            ImGui::SliderFloat(speedLabel.c_str(), &n.animSlots[si].speed, 0.0f, 5.0f, "%.2f");
+                            ImGui::SetNextItemWidth(200.0f);
+                            if (ImGui::SliderFloat(speedLabel.c_str(), &n.animSlots[si].speed, 0.0f, 2.0f, "%.2f"))
+                            {
+                                // Live-update: apply speed to active preview or play-mode animation
+                                if (gStaticAnimPreviewPlay && gStaticAnimPreviewNode == inspectStatic && gStaticAnimPreviewSlot == si)
+                                {
+                                    // Preview uses the slot speed directly via the clip fps, nothing extra to set
+                                }
+                                if (gEditorAnimPlaying.count(inspectStatic) && gEditorAnimPlaying[inspectStatic] && gEditorAnimActiveSlot.count(inspectStatic) && gEditorAnimActiveSlot[inspectStatic] == si)
+                                {
+                                    gEditorAnimSpeed[inspectStatic] = n.animSlots[si].speed;
+                                }
+                            }
                         }
 
                         ImGui::Separator();
@@ -19976,7 +19987,9 @@ RenderImGuiOnly:
                     {
                         float fps = std::max(1.0f, previewClip->fps);
                         const int maxFrame = (int)previewClip->frameCount - 1;
-                        gStaticAnimPreviewTimeSec += ImGui::GetIO().DeltaTime;
+                        float slotSpeed = (gStaticAnimPreviewSlot >= 0 && gStaticAnimPreviewSlot < n.animSlotCount) ? n.animSlots[gStaticAnimPreviewSlot].speed : 1.0f;
+                        gStaticAnimPreviewTimeSec += ImGui::GetIO().DeltaTime * slotSpeed;
+                        if (gStaticAnimPreviewTimeSec < 0.0f) gStaticAnimPreviewTimeSec = 0.0f;
                         int nextFrame = (int)std::floor(gStaticAnimPreviewTimeSec * fps);
                         if (gStaticAnimPreviewLoop)
                         {

@@ -2306,8 +2306,13 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
+        // Standalone StaticMesh3D uses axis remap (X<-Z, Y<-X, Z<-Y) to match rendering
         Vec3 right, up, forward;
-        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        bool hasN3DParent = !sm.parent.empty() && FindNode3DByName(sm.parent) >= 0;
+        if (hasN3DParent)
+            GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        else
+            GetLocalAxesFromEuler(wrz, wrx, wry, right, up, forward);
 
         // Transform all vertices to world space
         std::vector<Vec3> worldPos(vertexCount);
@@ -6476,8 +6481,13 @@ NB_RT_EXPORT int NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY)
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
+        // Standalone StaticMesh3D uses axis remap (X<-Z, Y<-X, Z<-Y) to match rendering
         Vec3 right, up, forward;
-        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        bool hasN3DParent = !s.parent.empty() && FindNode3DByName(s.parent) >= 0;
+        if (hasN3DParent)
+            GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        else
+            GetLocalAxesFromEuler(wrz, wrx, wry, right, up, forward);
 
         for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
         {
@@ -6555,8 +6565,13 @@ NB_RT_EXPORT int NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
+        // Standalone StaticMesh3D uses axis remap (X<-Z, Y<-X, Z<-Y) to match rendering
         Vec3 right, up, forward;
-        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        bool hasN3DParent = !s.parent.empty() && FindNode3DByName(s.parent) >= 0;
+        if (hasN3DParent)
+            GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        else
+            GetLocalAxesFromEuler(wrz, wrx, wry, right, up, forward);
 
         for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
         {
@@ -6644,8 +6659,13 @@ static void WallCollideAABB(float cx, float cy, float cz,
         float wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz;
         GetStaticMeshWorldTRS(si, wx, wy, wz, wrx, wry, wrz, wsx, wsy, wsz);
 
+        // Standalone StaticMesh3D uses axis remap (X<-Z, Y<-X, Z<-Y) to match rendering
         Vec3 right, up, forward;
-        GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        bool hasN3DParent = !s.parent.empty() && FindNode3DByName(s.parent) >= 0;
+        if (hasN3DParent)
+            GetLocalAxesFromEuler(wrx, wry, wrz, right, up, forward);
+        else
+            GetLocalAxesFromEuler(wrz, wrx, wry, right, up, forward);
 
         for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3)
         {
@@ -15142,7 +15162,7 @@ RenderImGuiOnly:
                                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
                                 mc << "static int NB_PrevScene(void){ return NB_LoadSceneIndex(gSceneIndex-1); }\n";
                                 // Collision mesh cache — loaded once on first raycast, used every frame
-                                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float sp[3]; float ss[3]; float wallThresh; } CollMeshCache;\n";
+                                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float wallThresh; } CollMeshCache;\n";
                                 mc << "static CollMeshCache gCollCache[MAX_MESHES];\n";
                                 mc << "static int gCollCacheCount = 0;\n";
                                 mc << "static int gCollCacheReady = 0;\n";
@@ -15156,9 +15176,29 @@ RenderImGuiOnly:
                                 mc << "    NB_Mesh m; if(!NB_DC_LoadMesh(mp,&m)){ dbgio_printf(\"[NEBULA][DC] CollCache: failed to load %s\\n\",mp); continue; }\n";
                                 mc << "    CollMeshCache* c=&gCollCache[gCollCacheCount];\n";
                                 mc << "    c->pos=m.pos; c->idx=m.indices; c->vc=m.vert_count; c->tc=m.tri_count;\n";
-                                mc << "    c->sp[0]=gSceneMeshes[mi].pos[0]; c->sp[1]=gSceneMeshes[mi].pos[1]; c->sp[2]=gSceneMeshes[mi].pos[2];\n";
-                                mc << "    c->ss[0]=gSceneMeshes[mi].scale[0]; c->ss[1]=gSceneMeshes[mi].scale[1]; c->ss[2]=gSceneMeshes[mi].scale[2];\n";
                                 mc << "    { int si=gSceneMetaIndex; if(si<0) si=0; c->wallThresh=kSceneWallThreshold[si][mi]; }\n";
+                                mc << "    /* Pre-transform vertices to world space: Scale -> Rotate -> Translate */\n";
+                                mc << "    { SceneMeshMeta* sm=&gSceneMeshes[mi];\n";
+                                mc << "      int _rsi=gSceneMetaIndex; if(_rsi<0) _rsi=0;\n";
+                                mc << "      int hasN3D=(mi<MAX_MESHES)?(kSceneMeshParentN3D[_rsi][mi]>=0):0;\n";
+                                mc << "      /* Standalone StaticMesh axis remap: X<-Z, Y<-X, Z<-Y (matches rendering) */\n";
+                                mc << "      float rxr=(hasN3D?sm->rot[0]:sm->rot[2])*0.0174532925f;\n";
+                                mc << "      float ryr=(hasN3D?sm->rot[1]:sm->rot[0])*0.0174532925f;\n";
+                                mc << "      float rzr=(hasN3D?sm->rot[2]:sm->rot[1])*0.0174532925f;\n";
+                                mc << "      float _sx=sinf(rxr),_cx=cosf(rxr),_sy=sinf(ryr),_cy=cosf(ryr),_sz=sinf(rzr),_cz=cosf(rzr);\n";
+                                mc << "      /* R = Rz*Ry*Rx */\n";
+                                mc << "      float rm00=_cy*_cz, rm01=_cz*_sx*_sy-_cx*_sz, rm02=_sx*_sz+_cx*_cz*_sy;\n";
+                                mc << "      float rm10=_cy*_sz, rm11=_cx*_cz+_sx*_sy*_sz, rm12=_cx*_sy*_sz-_cz*_sx;\n";
+                                mc << "      float rm20=-_sy,    rm21=_cy*_sx,              rm22=_cx*_cy;\n";
+                                mc << "      float px=sm->pos[0], py=sm->pos[1], pz=sm->pos[2];\n";
+                                mc << "      float scx=sm->scale[0], scy=sm->scale[1], scz=sm->scale[2];\n";
+                                mc << "      for(int vi=0;vi<c->vc;vi++){\n";
+                                mc << "        float vx=c->pos[vi].x*scx, vy=c->pos[vi].y*scy, vz=c->pos[vi].z*scz;\n";
+                                mc << "        c->pos[vi].x=rm00*vx+rm01*vy+rm02*vz+px;\n";
+                                mc << "        c->pos[vi].y=rm10*vx+rm11*vy+rm12*vz+py;\n";
+                                mc << "        c->pos[vi].z=rm20*vx+rm21*vy+rm22*vz+pz;\n";
+                                mc << "      }\n";
+                                mc << "    }\n";
                                 mc << "    free(m.tri_uv); free(m.tri_uv1); free(m.tri_mat);\n";
                                 mc << "    gCollCacheCount++;\n";
                                 mc << "  }\n";
@@ -15173,9 +15213,9 @@ RenderImGuiOnly:
                                 mc << "    CollMeshCache* c=&gCollCache[ci];\n";
                                 mc << "    for(int t=0;t<c->tc;t++){\n";
                                 mc << "      int i0=c->idx[t*3],i1=c->idx[t*3+1],i2=c->idx[t*3+2];\n";
-                                mc << "      float ax=c->pos[i0].x*c->ss[0]+c->sp[0], ay=c->pos[i0].y*c->ss[1]+c->sp[1], az=c->pos[i0].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float bx=c->pos[i1].x*c->ss[0]+c->sp[0], by=c->pos[i1].y*c->ss[1]+c->sp[1], bz=c->pos[i1].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float cx=c->pos[i2].x*c->ss[0]+c->sp[0], cy=c->pos[i2].y*c->ss[1]+c->sp[1], cz=c->pos[i2].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float ax=c->pos[i0].x, ay=c->pos[i0].y, az=c->pos[i0].z;\n";
+                                mc << "      float bx=c->pos[i1].x, by=c->pos[i1].y, bz=c->pos[i1].z;\n";
+                                mc << "      float cx=c->pos[i2].x, cy=c->pos[i2].y, cz=c->pos[i2].z;\n";
                                 mc << "      float e1x=bx-ax,e1z=bz-az, e2x=cx-ax,e2z=cz-az;\n";
                                 mc << "      float det=e1x*e2z-e2x*e1z; if(det>-1e-8f&&det<1e-8f) continue;\n";
                                 mc << "      float inv=1.0f/det;\n";
@@ -15197,9 +15237,9 @@ RenderImGuiOnly:
                                 mc << "    CollMeshCache* c=&gCollCache[ci];\n";
                                 mc << "    for(int t=0;t<c->tc;t++){\n";
                                 mc << "      int i0=c->idx[t*3],i1=c->idx[t*3+1],i2=c->idx[t*3+2];\n";
-                                mc << "      float ax=c->pos[i0].x*c->ss[0]+c->sp[0], ay=c->pos[i0].y*c->ss[1]+c->sp[1], az=c->pos[i0].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float bx=c->pos[i1].x*c->ss[0]+c->sp[0], by=c->pos[i1].y*c->ss[1]+c->sp[1], bz=c->pos[i1].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float cx=c->pos[i2].x*c->ss[0]+c->sp[0], cy=c->pos[i2].y*c->ss[1]+c->sp[1], cz=c->pos[i2].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float ax=c->pos[i0].x, ay=c->pos[i0].y, az=c->pos[i0].z;\n";
+                                mc << "      float bx=c->pos[i1].x, by=c->pos[i1].y, bz=c->pos[i1].z;\n";
+                                mc << "      float cx=c->pos[i2].x, cy=c->pos[i2].y, cz=c->pos[i2].z;\n";
                                 mc << "      float e1x=bx-ax,e1z=bz-az, e2x=cx-ax,e2z=cz-az;\n";
                                 mc << "      float det=e1x*e2z-e2x*e1z; if(det>-1e-8f&&det<1e-8f) continue;\n";
                                 mc << "      float inv=1.0f/det;\n";
@@ -15227,9 +15267,9 @@ RenderImGuiOnly:
                                 mc << "    CollMeshCache* c=&gCollCache[ci];\n";
                                 mc << "    for(int t=0;t<c->tc;t++){\n";
                                 mc << "      int i0=c->idx[t*3],i1=c->idx[t*3+1],i2=c->idx[t*3+2];\n";
-                                mc << "      float ax=c->pos[i0].x*c->ss[0]+c->sp[0], ay=c->pos[i0].y*c->ss[1]+c->sp[1], az=c->pos[i0].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float bx=c->pos[i1].x*c->ss[0]+c->sp[0], by=c->pos[i1].y*c->ss[1]+c->sp[1], bz=c->pos[i1].z*c->ss[2]+c->sp[2];\n";
-                                mc << "      float tx=c->pos[i2].x*c->ss[0]+c->sp[0], ty=c->pos[i2].y*c->ss[1]+c->sp[1], tz=c->pos[i2].z*c->ss[2]+c->sp[2];\n";
+                                mc << "      float ax=c->pos[i0].x, ay=c->pos[i0].y, az=c->pos[i0].z;\n";
+                                mc << "      float bx=c->pos[i1].x, by=c->pos[i1].y, bz=c->pos[i1].z;\n";
+                                mc << "      float tx=c->pos[i2].x, ty=c->pos[i2].y, tz=c->pos[i2].z;\n";
                                 mc << "      float ex1=bx-ax,ey1=by-ay,ez1=bz-az, ex2=tx-ax,ey2=ty-ay,ez2=tz-az;\n";
                                 mc << "      float nx=ey1*ez2-ez1*ey2, ny=ez1*ex2-ex1*ez2, nz=ex1*ey2-ey1*ex2;\n";
                                 mc << "      float nl=sqrtf(nx*nx+ny*ny+nz*nz); if(nl<1e-8f) continue;\n";

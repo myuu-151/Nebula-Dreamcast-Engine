@@ -91,8 +91,10 @@ Node names are set in the editor and exported into the generated runtime automat
 
 **Node3D physics toggles:** Each Node3D has three independent collision/physics flags:
 - **Simple Collision** — raycast ground snap only (no rotation change). The node sticks to the floor but stays upright.
-- **Collision Source** — ground snap + slope alignment. The node tilts to match the surface normal.
+- **Collision Source** — ground snap + slope alignment. The node tilts to match the surface normal using internal quaternion orientation.
 - **Gravity** — applies downward acceleration. Works alongside either collision toggle for falling behavior. Scripts that implement their own gravity (e.g. with `RaycastDown`) can leave this off.
+
+These flags work identically for **all** Node3Ds — player and non-player alike. An AI Node3D with `collisionSource` enabled will get full slope alignment on both the editor and Dreamcast, just like the player. On Dreamcast, non-player Node3D slope alignment uses the same `RaycastDownWithNormal` + quaternion orientation as the player, with smooth interpolation toward the surface normal each frame.
 
 Engine gravity and ground snap always apply regardless of whether a script calls `SetNode3DPosition` — there is no "script-managed" override.
 
@@ -161,6 +163,8 @@ When a Node3D has `collisionSource` or `simpleCollision` enabled, the engine tes
 **Per-mesh wall threshold:** Each StaticMesh3D has a `wallThreshold` property (default 0.7, range 0.0–1.0) that controls the floor/ceiling vs wall cutoff angle. A threshold of 0.7 corresponds to roughly 45 degrees — triangles steeper than this are treated as walls. Lower values treat more surfaces as walls; higher values treat more as floors. This is editable per-mesh in the editor inspector (shown when `Collision Source` is checked).
 
 On Dreamcast, the wall threshold is baked into a per-scene per-mesh array (`kSceneWallThreshold`) and stored in the collision mesh cache (`CollMeshCache.wallThresh`).
+
+**Rotated StaticMesh3D geometry:** Collision (raycast, wall collision, navmesh) works correctly with StaticMesh3D objects that have been rotated in the editor — including 90° rotations to create walls from floor meshes. The engine internally handles the axis remap between rendering and collision so that the collision geometry always matches what you see in the viewport.
 
 #### Node3D-vs-Node3D AABB push-apart
 

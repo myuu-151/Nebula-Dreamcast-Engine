@@ -666,6 +666,14 @@ const void* NB_DC_GetNavMeshData(int* outSize) {
     return gNavMeshData;
 }
 
+/* ---- Weak fallback stubs for NB_RT_Animation ---- */
+
+void __attribute__((weak)) NB_RT_PlayAnimation(const char* meshName, const char* animName) { (void)meshName; (void)animName; }
+void __attribute__((weak)) NB_RT_StopAnimation(const char* meshName) { (void)meshName; }
+int  __attribute__((weak)) NB_RT_IsAnimationPlaying(const char* meshName) { (void)meshName; return 0; }
+int  __attribute__((weak)) NB_RT_IsAnimationFinished(const char* meshName) { (void)meshName; return 0; }
+void __attribute__((weak)) NB_RT_SetAnimationSpeed(const char* meshName, float speed) { (void)meshName; (void)speed; }
+
 /* ---- Weak fallback stubs for NB_RT_NavMesh ---- */
 
 int __attribute__((weak)) NB_RT_NavMeshBuild(void) { return 0; }

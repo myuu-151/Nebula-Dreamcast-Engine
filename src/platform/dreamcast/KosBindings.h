@@ -124,6 +124,13 @@ int NB_RT_CheckAABBOverlap(const char* name1, const char* name2);
 int NB_RT_RaycastDown(float x, float y, float z, float* outHitY);
 int NB_RT_RaycastDownWithNormal(float x, float y, float z, float* outHitY, float outNormal[3]);
 
+// Animation slot bridge
+void NB_RT_PlayAnimation(const char* meshName, const char* animName);
+void NB_RT_StopAnimation(const char* meshName);
+int  NB_RT_IsAnimationPlaying(const char* meshName);
+int  NB_RT_IsAnimationFinished(const char* meshName);
+void NB_RT_SetAnimationSpeed(const char* meshName, float speed);
+
 // NavMesh bridge
 int  NB_RT_NavMeshBuild(void);
 void NB_RT_NavMeshClear(void);

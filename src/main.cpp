@@ -322,6 +322,14 @@ static float gStaticAnimPreviewTimeSec = 0.0f;
 static int gStaticAnimPreviewFrame = 0;
 static int gStaticAnimPreviewLastNode = -1;
 static int gStaticAnimPreviewNode = -1;
+static int gStaticAnimPreviewSlot = -1;
+
+// Editor play-mode animation state (per mesh index, for NB_RT_PlayAnimation)
+static std::unordered_map<int, int> gEditorAnimActiveSlot;    // mesh idx -> active slot index (-1 = none)
+static std::unordered_map<int, float> gEditorAnimTime;        // mesh idx -> playback time
+static std::unordered_map<int, float> gEditorAnimSpeed;       // mesh idx -> playback speed
+static std::unordered_map<int, bool> gEditorAnimPlaying;      // mesh idx -> is playing
+static std::unordered_map<int, bool> gEditorAnimFinished;     // mesh idx -> finished flag
 
 static bool gHasTransformSnapshot = false;
 static bool gTransformIsStatic = false;
@@ -645,6 +653,11 @@ static bool WriteEditorScriptBridgeFile(const std::filesystem::path& path)
     out << "void NB_RT_NextScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_NextScene\"); if(fn) fn(); }\n";
     out << "void NB_RT_PrevScene(void){ typedef void(*Fn)(void); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_PrevScene\"); if(fn) fn(); }\n";
     out << "void NB_RT_SwitchScene(const char* name){ typedef void(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SwitchScene\"); if(fn) fn(name); }\n";
+    out << "void NB_RT_PlayAnimation(const char* meshName, const char* animName){ typedef void(*Fn)(const char*,const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_PlayAnimation\"); if(fn) fn(meshName,animName); }\n";
+    out << "void NB_RT_StopAnimation(const char* meshName){ typedef void(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_StopAnimation\"); if(fn) fn(meshName); }\n";
+    out << "int NB_RT_IsAnimationPlaying(const char* meshName){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsAnimationPlaying\"); return fn ? fn(meshName) : 0; }\n";
+    out << "int NB_RT_IsAnimationFinished(const char* meshName){ typedef int(*Fn)(const char*); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_IsAnimationFinished\"); return fn ? fn(meshName) : 0; }\n";
+    out << "void NB_RT_SetAnimationSpeed(const char* meshName, float speed){ typedef void(*Fn)(const char*,float); static Fn fn=0; if(!fn) fn=(Fn)nb_get(\"NB_RT_SetAnimationSpeed\"); if(fn) fn(meshName,speed); }\n";
     return true;
 }
 
@@ -2437,6 +2450,60 @@ NB_RT_EXPORT void NB_RT_SwitchScene(const char* name)
             return;
         }
     }
+}
+
+// --- Animation slot bridge functions (editor side) ---
+NB_RT_EXPORT void NB_RT_PlayAnimation(const char* meshName, const char* animName)
+{
+    if (!meshName || !animName) return;
+    int idx = FindStaticMeshByName(meshName);
+    if (idx < 0) return;
+    const auto& n = gStaticMeshNodes[idx];
+    for (int si = 0; si < n.animSlotCount; ++si)
+    {
+        if (_stricmp(n.animSlots[si].name.c_str(), animName) == 0)
+        {
+            gEditorAnimActiveSlot[idx] = si;
+            gEditorAnimTime[idx] = 0.0f;
+            if (gEditorAnimSpeed.find(idx) == gEditorAnimSpeed.end())
+                gEditorAnimSpeed[idx] = 1.0f;
+            gEditorAnimPlaying[idx] = true;
+            gEditorAnimFinished[idx] = false;
+            return;
+        }
+    }
+}
+
+NB_RT_EXPORT void NB_RT_StopAnimation(const char* meshName)
+{
+    if (!meshName) return;
+    int idx = FindStaticMeshByName(meshName);
+    if (idx < 0) return;
+    gEditorAnimPlaying[idx] = false;
+}
+
+NB_RT_EXPORT int NB_RT_IsAnimationPlaying(const char* meshName)
+{
+    if (!meshName) return 0;
+    int idx = FindStaticMeshByName(meshName);
+    if (idx < 0) return 0;
+    return gEditorAnimPlaying.count(idx) && gEditorAnimPlaying[idx] ? 1 : 0;
+}
+
+NB_RT_EXPORT int NB_RT_IsAnimationFinished(const char* meshName)
+{
+    if (!meshName) return 0;
+    int idx = FindStaticMeshByName(meshName);
+    if (idx < 0) return 0;
+    return gEditorAnimFinished.count(idx) && gEditorAnimFinished[idx] ? 1 : 0;
+}
+
+NB_RT_EXPORT void NB_RT_SetAnimationSpeed(const char* meshName, float speed)
+{
+    if (!meshName) return;
+    int idx = FindStaticMeshByName(meshName);
+    if (idx < 0) return;
+    gEditorAnimSpeed[idx] = speed;
 }
 
 static void ReparentStaticMeshKeepWorldPos(int childIdx, const std::string& newParent)
@@ -10486,6 +10553,38 @@ int main(int, char**)
         }
 
 
+        // Tick editor animation playback time
+        if (gPlayMode)
+        {
+            float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
+            for (auto& [idx, playing] : gEditorAnimPlaying)
+            {
+                if (!playing) continue;
+                float speed = gEditorAnimSpeed.count(idx) ? gEditorAnimSpeed[idx] : 1.0f;
+                gEditorAnimTime[idx] += dt * speed;
+                // Check if animation finished (non-looping)
+                int slot = gEditorAnimActiveSlot.count(idx) ? gEditorAnimActiveSlot[idx] : -1;
+                if (slot >= 0 && idx >= 0 && idx < (int)gStaticMeshNodes.size() && slot < gStaticMeshNodes[idx].animSlotCount)
+                {
+                    std::filesystem::path ap = ResolveProjectAssetPath(gStaticMeshNodes[idx].animSlots[slot].path);
+                    if (!ap.empty())
+                    {
+                        auto it = gStaticAnimClipCache.find(ap.generic_string());
+                        if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.frameCount > 0)
+                        {
+                            float fps = std::max(1.0f, it->second.fps);
+                            int f = (int)std::floor(gEditorAnimTime[idx] * fps);
+                            if (f >= (int)it->second.frameCount)
+                            {
+                                gEditorAnimFinished[idx] = true;
+                                // Keep looping in editor play mode (scripts control stop)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Transform interaction
         if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
         {
@@ -11492,9 +11591,17 @@ int main(int, char**)
 
             std::vector<Vec3> staticAnimPosed;
             const std::vector<Vec3>* renderPositions = &mesh->positions;
-            if (!s.vtxAnim.empty())
+            // Determine which anim to use: slot preview > play-mode active slot > legacy vtxAnim
+            std::string resolvedAnimRef;
+            if (i == gStaticAnimPreviewNode && gStaticAnimPreviewSlot >= 0 && gStaticAnimPreviewSlot < s.animSlotCount && !s.animSlots[gStaticAnimPreviewSlot].path.empty())
+                resolvedAnimRef = s.animSlots[gStaticAnimPreviewSlot].path;
+            else if (gPlayMode && s.runtimeTest && gEditorAnimActiveSlot.count((int)i) && gEditorAnimActiveSlot[(int)i] >= 0 && gEditorAnimActiveSlot[(int)i] < s.animSlotCount)
+                resolvedAnimRef = s.animSlots[gEditorAnimActiveSlot[(int)i]].path;
+            else if (!s.vtxAnim.empty())
+                resolvedAnimRef = s.vtxAnim;
+            if (!resolvedAnimRef.empty())
             {
-                std::filesystem::path animPath = ResolveProjectAssetPath(s.vtxAnim);
+                std::filesystem::path animPath = ResolveProjectAssetPath(resolvedAnimRef);
                 if (!animPath.empty() && std::filesystem::exists(animPath))
                 {
                     std::string key = animPath.generic_string();
@@ -11509,7 +11616,16 @@ int main(int, char**)
                     if (it != gStaticAnimClipCache.end() && it->second.valid && it->second.vertexCount <= mesh->positions.size() && !it->second.frames.empty())
                     {
                         int frame = 0;
-                        if (gPlayMode && s.runtimeTest)
+                        if (gPlayMode && s.runtimeTest && gEditorAnimPlaying.count((int)i) && gEditorAnimPlaying[(int)i])
+                        {
+                            float elapsed = gEditorAnimTime.count((int)i) ? gEditorAnimTime[(int)i] : 0.0f;
+                            float speed = gEditorAnimSpeed.count((int)i) ? gEditorAnimSpeed[(int)i] : 1.0f;
+                            const float fps = std::max(1.0f, it->second.fps);
+                            int f = (int)std::floor(elapsed * fps);
+                            if (it->second.frameCount > 0)
+                                frame = f % (int)it->second.frameCount;
+                        }
+                        else if (gPlayMode && s.runtimeTest)
                         {
                             const float fps = std::max(1.0f, it->second.fps);
                             int f = (int)std::floor((float)glfwGetTime() * fps);
@@ -13758,6 +13874,27 @@ RenderImGuiOnly:
                                             }
                                         }
                                     }
+                                    // Collect animation slot paths
+                                    for (int asi = 0; asi < sm.animSlotCount; ++asi)
+                                    {
+                                        if (sm.animSlots[asi].path.empty()) continue;
+                                        std::filesystem::path animAbs = std::filesystem::path(gProjectDir) / sm.animSlots[asi].path;
+                                        if (!std::filesystem::exists(animAbs)) continue;
+                                        std::string akey = normalizeAbsKey(animAbs);
+                                        sortedAnimAbs.insert(akey);
+                                        if (!sm.mesh.empty() && animMeshAbsByAnimAbs.find(akey) == animMeshAbsByAnimAbs.end())
+                                        {
+                                            std::filesystem::path mAbs = std::filesystem::path(gProjectDir) / sm.mesh;
+                                            if (std::filesystem::exists(mAbs))
+                                                animMeshAbsByAnimAbs[akey] = normalizeAbsKey(mAbs);
+                                        }
+                                        if (animLogicalByAbs.find(akey) == animLogicalByAbs.end())
+                                        {
+                                            std::string logical = std::filesystem::path(sm.animSlots[asi].path).filename().string();
+                                            if (logical.empty()) logical = std::filesystem::path(akey).filename().string();
+                                            animLogicalByAbs[akey] = logical;
+                                        }
+                                    }
                                     for (int si = 0; si < kStaticMeshMaterialSlots; ++si)
                                     {
                                         std::string matRef = sm.materialSlots[si];
@@ -14161,6 +14298,9 @@ RenderImGuiOnly:
                             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
                             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
                             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
+                            // Per-scene per-mesh animation slot data
+                            struct AnimSlotExport { std::string name; std::string disk; };
+                            std::vector<std::vector<std::vector<AnimSlotExport>>> runtimeSceneAnimSlotsByMesh; // [scene][mesh][slot]
                             struct Node3DExport { std::string name; float pos[3]; float rot[3]; float scale[3]; float extent[3]; float boundPos[3]; int physicsEnabled; int collisionSource; int simpleCollision; };
                             std::vector<std::vector<Node3DExport>> runtimeSceneNode3Ds;
                             // Per-scene: for each mesh index, the Node3D index that is its parent (-1 if none)
@@ -14186,6 +14326,7 @@ RenderImGuiOnly:
                                 int sceneWrittenMeshes = 0;
                                 int sceneSkippedMeshes = 0;
                                 std::vector<std::string> sceneAnimDiskByMesh;
+                                std::vector<std::vector<AnimSlotExport>> sceneAnimSlotsByMesh;
                                 std::vector<uint8_t> sceneRuntimeTestByMesh;
                                 std::vector<uint8_t> sceneCollisionSourceByMesh;
                                 std::vector<float> sceneWallThresholdByMesh;
@@ -14249,6 +14390,23 @@ RenderImGuiOnly:
                                         if (ait != stagedAnimByAbs.end()) animDisk = ait->second;
                                     }
                                     sceneAnimDiskByMesh.push_back(animDisk);
+                                    // Collect animation slots for this mesh
+                                    {
+                                        std::vector<AnimSlotExport> meshSlots;
+                                        for (int asi = 0; asi < sm.animSlotCount; ++asi)
+                                        {
+                                            AnimSlotExport ase;
+                                            ase.name = sm.animSlots[asi].name;
+                                            if (!sm.animSlots[asi].path.empty())
+                                            {
+                                                std::string akey = normalizeAbsKey(std::filesystem::path(gProjectDir) / sm.animSlots[asi].path);
+                                                auto ait = stagedAnimByAbs.find(akey);
+                                                if (ait != stagedAnimByAbs.end()) ase.disk = ait->second;
+                                            }
+                                            meshSlots.push_back(ase);
+                                        }
+                                        sceneAnimSlotsByMesh.push_back(meshSlots);
+                                    }
                                     sceneRuntimeTestByMesh.push_back(sm.runtimeTest ? 1u : 0u);
                                     sceneCollisionSourceByMesh.push_back(sm.collisionSource ? 1u : 0u);
                                     sceneWallThresholdByMesh.push_back(sm.wallThreshold);
@@ -14292,6 +14450,7 @@ RenderImGuiOnly:
                                 runtimeSceneFiles.push_back(sceneOutName);
                                 runtimeSceneNames.push_back(stagedScene.name);
                                 runtimeSceneAnimDiskByMesh.push_back(std::move(sceneAnimDiskByMesh));
+                                runtimeSceneAnimSlotsByMesh.push_back(std::move(sceneAnimSlotsByMesh));
                                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
                                 runtimeSceneWallThresholdByMesh.push_back(std::move(sceneWallThresholdByMesh));
@@ -14373,6 +14532,7 @@ RenderImGuiOnly:
                                 runtimeSceneFiles.push_back("DEFAULT.NEBSCENE");
                                 runtimeSceneNames.push_back("Default");
                                 runtimeSceneAnimDiskByMesh.push_back({});
+                                runtimeSceneAnimSlotsByMesh.push_back({});
                                 runtimeSceneRuntimeTestByMesh.push_back({});
                                 runtimeSceneCollisionSourceByMesh.push_back({});
                                 runtimeSceneWallThresholdByMesh.push_back({});
@@ -14802,6 +14962,47 @@ RenderImGuiOnly:
                                 mc << "void NB_RT_NextScene(void){ gSceneSwitchReq = 1; gSceneSwitchName[0]=0; }\n";
                                 mc << "void NB_RT_PrevScene(void){ gSceneSwitchReq = -1; gSceneSwitchName[0]=0; }\n";
                                 mc << "void NB_RT_SwitchScene(const char* name){ if(!name||!name[0]) return; gSceneSwitchReq = 2; strncpy(gSceneSwitchName,name,sizeof(gSceneSwitchName)-1); gSceneSwitchName[sizeof(gSceneSwitchName)-1]=0; }\n";
+                                // Animation slot bridge functions
+                                mc << "static int dc_find_mesh_by_name(const char* name){ if(!name||!name[0]) return -1; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(dc_eq_nocase(name,gSceneMeshes[mi].meshLogical)) return mi; } return -1; }\n";
+                                mc << "void NB_RT_PlayAnimation(const char* meshName, const char* animName){\n";
+                                mc << "  int mi=dc_find_mesh_by_name(meshName); if(mi<0) return;\n";
+                                mc << "  SceneMeshMeta* sm=&gSceneMeshes[mi];\n";
+                                mc << "  for(int si=0;si<sm->animSlotCount&&si<MAX_ANIM_SLOTS;++si){\n";
+                                mc << "    if(dc_eq_nocase(animName,sm->animSlotName[si])){\n";
+                                mc << "      if(sm->animActiveSlot!=si){\n";
+                                mc << "        runtime_anim_free(&meshRt[mi].anim);\n";
+                                mc << "        if(sm->animSlotDisk[si][0]){\n";
+                                mc << "          char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animSlotDisk[si]);\n";
+                                mc << "          { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } }\n";
+                                mc << "          runtime_anim_load(ap,&meshRt[mi].anim);\n";
+                                mc << "          if(meshRt[mi].anim.vertCount<meshRt[mi].kVertCount){\n";
+                                mc << "            V3* np=(V3*)realloc(meshRt[mi].anim.posed,(size_t)meshRt[mi].kVertCount*sizeof(V3));\n";
+                                mc << "            if(np){ for(int vi=meshRt[mi].anim.vertCount;vi<meshRt[mi].kVertCount;++vi) np[vi]=meshRt[mi].base[vi]; meshRt[mi].anim.posed=np; }\n";
+                                mc << "          }\n";
+                                mc << "        }\n";
+                                mc << "        sm->animActiveSlot=si;\n";
+                                mc << "      }\n";
+                                mc << "      sm->animTime=0.0f; sm->animPlaying=1; sm->animFinished=0;\n";
+                                mc << "      return;\n";
+                                mc << "    }\n";
+                                mc << "  }\n";
+                                mc << "}\n";
+                                mc << "void NB_RT_StopAnimation(const char* meshName){\n";
+                                mc << "  int mi=dc_find_mesh_by_name(meshName); if(mi<0) return;\n";
+                                mc << "  gSceneMeshes[mi].animPlaying=0;\n";
+                                mc << "}\n";
+                                mc << "int NB_RT_IsAnimationPlaying(const char* meshName){\n";
+                                mc << "  int mi=dc_find_mesh_by_name(meshName); if(mi<0) return 0;\n";
+                                mc << "  return gSceneMeshes[mi].animPlaying;\n";
+                                mc << "}\n";
+                                mc << "int NB_RT_IsAnimationFinished(const char* meshName){\n";
+                                mc << "  int mi=dc_find_mesh_by_name(meshName); if(mi<0) return 0;\n";
+                                mc << "  return gSceneMeshes[mi].animFinished;\n";
+                                mc << "}\n";
+                                mc << "void NB_RT_SetAnimationSpeed(const char* meshName, float speed){\n";
+                                mc << "  int mi=dc_find_mesh_by_name(meshName); if(mi<0) return;\n";
+                                mc << "  gSceneMeshes[mi].animSpeed=speed;\n";
+                                mc << "}\n";
                                 mc << "static int gMirrorX = 1;\n";
                                 mc << "static int gMirrorY = 1;\n";
                                 mc << "static int gMirrorZ = 1;\n";
@@ -14886,7 +15087,8 @@ RenderImGuiOnly:
                                 mc << "  dbgio_printf(\"[Mirror] idx=%d => X=%d Y=%d Z=%d\\n\", gMirrorLrIndex, gMirrorX, gMirrorY, gMirrorZ);\n";
                                 mc << "}\n";
                                 mc << "enum { MAX_SLOT = 16, MAX_MESHES = 64 };\n";
-                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; uint8_t collisionSource; } SceneMeshMeta;\n";
+                                mc << "enum { MAX_ANIM_SLOTS = 8 };\n";
+                                mc << "typedef struct { char meshDisk[128]; char meshLogical[128]; float pos[3]; float rot[3]; float scale[3]; char texDisk[MAX_SLOT][128]; char texLogical[MAX_SLOT][128]; char animDisk[128]; uint8_t runtimeTest; uint8_t collisionSource; int animSlotCount; char animSlotName[MAX_ANIM_SLOTS][32]; char animSlotDisk[MAX_ANIM_SLOTS][128]; int animActiveSlot; float animTime; float animSpeed; int animPlaying; int animFinished; } SceneMeshMeta;\n";
                                 mc << "static SceneMeshMeta gSceneMeshes[MAX_MESHES];\n";
                                 mc << "static int gSceneMeshCount = 0;\n";
                                 mc << "static char gSceneName[64] = \"Default\";\n";
@@ -14939,6 +15141,73 @@ RenderImGuiOnly:
                                     mc << "\n";
                                 }
                                 mc << "};\n";
+                                // Emit per-scene animation slot count, names, and disk paths
+                                {
+                                    int sceneCount = (int)runtimeSceneFiles.size();
+                                    mc << "static const int kSceneAnimSlotCount[" << sceneCount << "][MAX_MESHES] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int mi = 0; mi < 64; ++mi)
+                                        {
+                                            int cnt = 0;
+                                            if (mi < (int)runtimeSceneAnimSlotsByMesh[si].size())
+                                                cnt = (int)runtimeSceneAnimSlotsByMesh[si][mi].size();
+                                            mc << cnt;
+                                            if (mi + 1 < 64) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    mc << "static const char* kSceneAnimSlotName[" << sceneCount << "][MAX_MESHES][MAX_ANIM_SLOTS] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int mi = 0; mi < 64; ++mi)
+                                        {
+                                            mc << "{";
+                                            for (int ai = 0; ai < 8; ++ai)
+                                            {
+                                                std::string nm;
+                                                if (mi < (int)runtimeSceneAnimSlotsByMesh[si].size() && ai < (int)runtimeSceneAnimSlotsByMesh[si][mi].size())
+                                                    nm = runtimeSceneAnimSlotsByMesh[si][mi][ai].name;
+                                                mc << "\"" << nm << "\"";
+                                                if (ai + 1 < 8) mc << ",";
+                                            }
+                                            mc << "}";
+                                            if (mi + 1 < 64) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                    mc << "static const char* kSceneAnimSlotDisk[" << sceneCount << "][MAX_MESHES][MAX_ANIM_SLOTS] = {\n";
+                                    for (int si = 0; si < sceneCount; ++si)
+                                    {
+                                        mc << "{";
+                                        for (int mi = 0; mi < 64; ++mi)
+                                        {
+                                            mc << "{";
+                                            for (int ai = 0; ai < 8; ++ai)
+                                            {
+                                                std::string dk;
+                                                if (mi < (int)runtimeSceneAnimSlotsByMesh[si].size() && ai < (int)runtimeSceneAnimSlotsByMesh[si][mi].size())
+                                                    dk = runtimeSceneAnimSlotsByMesh[si][mi][ai].disk;
+                                                mc << "\"" << dk << "\"";
+                                                if (ai + 1 < 8) mc << ",";
+                                            }
+                                            mc << "}";
+                                            if (mi + 1 < 64) mc << ",";
+                                        }
+                                        mc << "}";
+                                        if (si + 1 < sceneCount) mc << ",";
+                                        mc << "\n";
+                                    }
+                                    mc << "};\n";
+                                }
                                 mc << "static const uint8_t kSceneRuntimeTest[" << (int)runtimeSceneFiles.size() << "][MAX_MESHES] = {\n";
                                 for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
                                 {
@@ -15180,7 +15449,7 @@ RenderImGuiOnly:
                                 mc << "static int NB_FindSceneMetaIndex(const char* sceneFile){ if(!sceneFile||!sceneFile[0]) return gSceneIndex; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(sceneFile,gSceneFiles[i])) return i; } const char* slash=strrchr(sceneFile,'/'); const char* name=slash?slash+1:sceneFile; for(int i=0;i<gSceneCount;++i){ if(dc_eq_nocase(name,gSceneFiles[i])) return i; } return gSceneIndex; }\n";
                                 // NB_ApplyLoadedSceneState: use parent Node3D transform for gMeshPos/gMeshRot (drives movement),
                                 // NOT the child StaticMesh3D transform (which is visual offset only).
-                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } "
+                                mc << "static int NB_ApplyLoadedSceneState(void){ int meshCount=NB_DC_GetSceneMeshCount(); if(meshCount<=0) return 0; if(meshCount>MAX_MESHES) meshCount=MAX_MESHES; gSceneMeshCount=meshCount; for(int mi=0; mi<gSceneMeshCount; ++mi){ SceneMeshMeta* sm=&gSceneMeshes[mi]; memset(sm,0,sizeof(*sm)); { const char* mesh=NB_DC_GetSceneMeshPathAt(mi); if(mesh&&mesh[0]){ strncpy(sm->meshLogical,mesh,sizeof(sm->meshLogical)-1); const char* rm=NB_ResolveMappedRef(mesh,kMeshRefMap,kMeshRefMapCount); strncpy(sm->meshDisk,rm?rm:mesh,sizeof(sm->meshDisk)-1); } } { float p[3]={0}, r[3]={0}, s[3]={1,1,1}; NB_DC_GetSceneTransformAt(mi,p,r,s); sm->pos[0]=p[0]; sm->pos[1]=p[1]; sm->pos[2]=p[2]; sm->rot[0]=r[0]; sm->rot[1]=r[1]; sm->rot[2]=r[2]; sm->scale[0]=s[0]; sm->scale[1]=s[1]; sm->scale[2]=s[2]; } for(int i=0;i<MAX_SLOT;++i){ const char* tp=NB_DC_GetSceneTexturePathAt(mi,i); if(tp&&tp[0]){ strncpy(sm->texLogical[i],tp,127); const char* rt=NB_ResolveMappedRef(tp,kTexRefMap,kTexRefMapCount); strncpy(sm->texDisk[i],rt?rt:tp,127); } } if(mi<MAX_MESHES){ const char* ap=kSceneAnimDisk[gSceneMetaIndex][mi]; if(ap&&ap[0]) strncpy(sm->animDisk,ap,sizeof(sm->animDisk)-1); sm->runtimeTest=kSceneRuntimeTest[gSceneMetaIndex][mi]?1:0; sm->collisionSource=kSceneCollisionSource[gSceneMetaIndex][mi]?1:0; sm->animSlotCount=kSceneAnimSlotCount[gSceneMetaIndex][mi]; sm->animActiveSlot=-1; sm->animTime=0.0f; sm->animSpeed=1.0f; sm->animPlaying=0; sm->animFinished=0; for(int ai=0;ai<MAX_ANIM_SLOTS;++ai){ const char* sn=kSceneAnimSlotName[gSceneMetaIndex][mi][ai]; const char* sd=kSceneAnimSlotDisk[gSceneMetaIndex][mi][ai]; if(sn&&sn[0]) strncpy(sm->animSlotName[ai],sn,31); else sm->animSlotName[ai][0]=0; if(sd&&sd[0]) strncpy(sm->animSlotDisk[ai],sd,127); else sm->animSlotDisk[ai][0]=0; } } } { const char* nm=NB_DC_GetSceneName(); if(nm&&nm[0]){ strncpy(gSceneName,nm,sizeof(gSceneName)-1); gSceneName[sizeof(gSceneName)-1]=0; } } "
                                    "/* Use parent Node3D transform for movement (pos/rot), not child mesh. */ "
                                    "{ int si=gSceneMetaIndex; if(si<0) si=0; if(si>=" << (int)runtimeSceneFiles.size() << ") si=0; "
                                    "gMeshPos[0]=kScenePlayerParentPos[si][0]; gMeshPos[1]=kScenePlayerParentPos[si][1]; gMeshPos[2]=kScenePlayerParentPos[si][2]; "
@@ -15820,7 +16089,13 @@ RenderImGuiOnly:
                                 mc << "      float rxr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[0]) : deg2rad(smRot[2]);\n";
                                 mc << "      float ryr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[1]) : deg2rad(smRot[0]);\n";
                                 mc << "      float rzr = (mi == gPlayerMeshIdx || hasN3DParent) ? deg2rad(smRot[2]) : deg2rad(smRot[1]);\n";
-                                mc << "      const V3* srcBase = rm->base; if(sm->runtimeTest && rm->anim.loaded && rm->anim.frames && rm->anim.posed && rm->anim.frameCount>0){ int af=(int)floorf(sRuntimeClock * rm->anim.fps); if(rm->anim.frameCount>0) af%=rm->anim.frameCount; if(af<0) af=0; const V3* fr=&rm->anim.frames[(size_t)af*(size_t)rm->anim.vertCount]; int nv=rm->anim.vertCount; if(rm->anim.meshAligned){ for(int vi=0;vi<nv;++vi) rm->anim.posed[vi]=fr[vi]; } else { const V3* f0=&rm->anim.frames[0]; V3 bmin=rm->base[0], bmax=rm->base[0], bcen={0,0,0}, amin=f0[0], amax=f0[0], acen={0,0,0}; for(int vi=0; vi<nv; ++vi){ V3 bp=rm->base[vi], ap=f0[vi]; bcen.x+=bp.x; bcen.y+=bp.y; bcen.z+=bp.z; acen.x+=ap.x; acen.y+=ap.y; acen.z+=ap.z; if(bp.x<bmin.x)bmin.x=bp.x; if(bp.y<bmin.y)bmin.y=bp.y; if(bp.z<bmin.z)bmin.z=bp.z; if(bp.x>bmax.x)bmax.x=bp.x; if(bp.y>bmax.y)bmax.y=bp.y; if(bp.z>bmax.z)bmax.z=bp.z; if(ap.x<amin.x)amin.x=ap.x; if(ap.y<amin.y)amin.y=ap.y; if(ap.z<amin.z)amin.z=ap.z; if(ap.x>amax.x)amax.x=ap.x; if(ap.y>amax.y)amax.y=ap.y; if(ap.z>amax.z)amax.z=ap.z; } if(nv>0){ float inv=1.0f/(float)nv; bcen.x*=inv; bcen.y*=inv; bcen.z*=inv; acen.x*=inv; acen.y*=inv; acen.z*=inv; } float bd=sqrtf((bmax.x-bmin.x)*(bmax.x-bmin.x)+(bmax.y-bmin.y)*(bmax.y-bmin.y)+(bmax.z-bmin.z)*(bmax.z-bmin.z)); float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z)); float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f; for(int vi=0; vi<nv; ++vi){ rm->anim.posed[vi].x = bcen.x + (fr[vi].x - acen.x)*ds; rm->anim.posed[vi].y = bcen.y + (fr[vi].y - acen.y)*ds; rm->anim.posed[vi].z = bcen.z + (fr[vi].z - acen.z)*ds; } } for(int vi=nv;vi<rm->kVertCount;++vi) rm->anim.posed[vi]=rm->base[vi]; srcBase=rm->anim.posed; }\n";
+                                mc << "      /* Tick slot-based animation time */\n";
+                                mc << "      if(sm->animPlaying && rm->anim.loaded && rm->anim.frames && rm->anim.frameCount>0){\n";
+                                mc << "        sm->animTime += dt * sm->animSpeed;\n";
+                                mc << "        int af=(int)floorf(sm->animTime * rm->anim.fps);\n";
+                                mc << "        if(af>=(int)rm->anim.frameCount){ af=rm->anim.frameCount-1; sm->animFinished=1; sm->animTime=(float)(rm->anim.frameCount-1)/rm->anim.fps; }\n";
+                                mc << "      }\n";
+                                mc << "      const V3* srcBase = rm->base; if((sm->animPlaying||sm->animFinished||(sm->runtimeTest)) && rm->anim.loaded && rm->anim.frames && rm->anim.posed && rm->anim.frameCount>0){ int af; if(sm->animPlaying||sm->animFinished){ af=(int)floorf(sm->animTime*rm->anim.fps); if(af>=(int)rm->anim.frameCount) af=rm->anim.frameCount-1; if(af<0) af=0; } else { af=(int)floorf(sRuntimeClock * rm->anim.fps); if(rm->anim.frameCount>0) af%=rm->anim.frameCount; if(af<0) af=0; } const V3* fr=&rm->anim.frames[(size_t)af*(size_t)rm->anim.vertCount]; int nv=rm->anim.vertCount; if(rm->anim.meshAligned){ for(int vi=0;vi<nv;++vi) rm->anim.posed[vi]=fr[vi]; } else { const V3* f0=&rm->anim.frames[0]; V3 bmin=rm->base[0], bmax=rm->base[0], bcen={0,0,0}, amin=f0[0], amax=f0[0], acen={0,0,0}; for(int vi=0; vi<nv; ++vi){ V3 bp=rm->base[vi], ap=f0[vi]; bcen.x+=bp.x; bcen.y+=bp.y; bcen.z+=bp.z; acen.x+=ap.x; acen.y+=ap.y; acen.z+=ap.z; if(bp.x<bmin.x)bmin.x=bp.x; if(bp.y<bmin.y)bmin.y=bp.y; if(bp.z<bmin.z)bmin.z=bp.z; if(bp.x>bmax.x)bmax.x=bp.x; if(bp.y>bmax.y)bmax.y=bp.y; if(bp.z>bmax.z)bmax.z=bp.z; if(ap.x<amin.x)amin.x=ap.x; if(ap.y<amin.y)amin.y=ap.y; if(ap.z<amin.z)amin.z=ap.z; if(ap.x>amax.x)amax.x=ap.x; if(ap.y>amax.y)amax.y=ap.y; if(ap.z>amax.z)amax.z=ap.z; } if(nv>0){ float inv=1.0f/(float)nv; bcen.x*=inv; bcen.y*=inv; bcen.z*=inv; acen.x*=inv; acen.y*=inv; acen.z*=inv; } float bd=sqrtf((bmax.x-bmin.x)*(bmax.x-bmin.x)+(bmax.y-bmin.y)*(bmax.y-bmin.y)+(bmax.z-bmin.z)*(bmax.z-bmin.z)); float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z)); float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f; for(int vi=0; vi<nv; ++vi){ rm->anim.posed[vi].x = bcen.x + (fr[vi].x - acen.x)*ds; rm->anim.posed[vi].y = bcen.y + (fr[vi].y - acen.y)*ds; rm->anim.posed[vi].z = bcen.z + (fr[vi].z - acen.z)*ds; } } for(int vi=nv;vi<rm->kVertCount;++vi) rm->anim.posed[vi]=rm->base[vi]; srcBase=rm->anim.posed; }\n";
                                 mc << "      float _sx=sinf(rxr),_cx=cosf(rxr),_sy=sinf(ryr),_cy=cosf(ryr),_sz=sinf(rzr),_cz=cosf(rzr);\n";
                                 mc << "      /* Child visual rotation sin/cos (identity when cRx/cRy/cRz are 0). */\n";
                                 mc << "      float _csx=sinf(cRx),_ccx=cosf(cRx),_csy=sinf(cRy),_ccy=cosf(cRy),_csz=sinf(cRz),_ccz=cosf(cRz);\n";
@@ -19471,7 +19746,7 @@ RenderImGuiOnly:
                 ImGui::Text("%s", meshDisplayName.c_str());
 
                 ImGui::Spacing();
-                ImGui::Text("Load NebAnim");
+                ImGui::Text("Load NebAnim (legacy)");
                 static char animBuf[256] = {};
                 if (inspectorChanged)
                     strncpy_s(animBuf, n.vtxAnim.c_str(), sizeof(animBuf) - 1);
@@ -19501,6 +19776,149 @@ RenderImGuiOnly:
                     n.vtxAnim = s;
                 }
 
+                ImGui::Checkbox("Runtime test", &n.runtimeTest);
+
+                // --- Animation Slots ---
+                ImGui::Spacing();
+                if (ImGui::CollapsingHeader("Animation Slots", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    static char animSlotNameBuf[kStaticMeshAnimSlots][64] = {};
+                    static char animSlotPathBuf[kStaticMeshAnimSlots][256] = {};
+                    static int animSlotLastNode = -1;
+                    if (animSlotLastNode != inspectStatic || inspectorChanged)
+                    {
+                        animSlotLastNode = inspectStatic;
+                        for (int si = 0; si < kStaticMeshAnimSlots; ++si)
+                        {
+                            strncpy_s(animSlotNameBuf[si], n.animSlots[si].name.c_str(), sizeof(animSlotNameBuf[si]) - 1);
+                            strncpy_s(animSlotPathBuf[si], n.animSlots[si].path.c_str(), sizeof(animSlotPathBuf[si]) - 1);
+                        }
+                    }
+
+                    int removeIdx = -1;
+                    for (int si = 0; si < n.animSlotCount; ++si)
+                    {
+                        ImGui::PushID(si);
+                        ImGui::Text("Slot %d", si + 1);
+                        ImGui::SameLine();
+                        if (ImGui::Button("X##AnimSlotRemove"))
+                            removeIdx = si;
+
+                        // Name field
+                        std::string nameLabel = "##AnimSlotName" + std::to_string(si);
+                        ImGui::SetNextItemWidth(120.0f);
+                        if (!ImGui::IsAnyItemActive() && n.animSlots[si].name != animSlotNameBuf[si])
+                            strncpy_s(animSlotNameBuf[si], n.animSlots[si].name.c_str(), sizeof(animSlotNameBuf[si]) - 1);
+                        if (ImGui::InputText(nameLabel.c_str(), animSlotNameBuf[si], sizeof(animSlotNameBuf[si])))
+                            n.animSlots[si].name = animSlotNameBuf[si];
+                        ImGui::SameLine();
+                        ImGui::Text("Name");
+
+                        // Path assign button + field
+                        std::string btnId = ">##AnimSlotAssign" + std::to_string(si);
+                        if (ImGui::Button(btnId.c_str()))
+                        {
+                            if (!gSelectedAssetPath.empty() && gSelectedAssetPath.extension() == ".nebanim" && !gProjectDir.empty())
+                            {
+                                std::filesystem::path rel = std::filesystem::relative(gSelectedAssetPath, std::filesystem::path(gProjectDir));
+                                n.animSlots[si].path = rel.generic_string();
+                                strncpy_s(animSlotPathBuf[si], n.animSlots[si].path.c_str(), sizeof(animSlotPathBuf[si]) - 1);
+                                gViewportToast = "Anim slot " + std::to_string(si + 1) + " assigned";
+                            }
+                            else
+                            {
+                                gViewportToast = "Select a .nebanim in Assets";
+                            }
+                            gViewportToastUntil = glfwGetTime() + 2.0;
+                        }
+                        ImGui::SameLine();
+                        std::string pathLabel = "##AnimSlotPath" + std::to_string(si);
+                        if (!ImGui::IsAnyItemActive() && n.animSlots[si].path != animSlotPathBuf[si])
+                            strncpy_s(animSlotPathBuf[si], n.animSlots[si].path.c_str(), sizeof(animSlotPathBuf[si]) - 1);
+                        if (ImGui::InputText(pathLabel.c_str(), animSlotPathBuf[si], sizeof(animSlotPathBuf[si])))
+                        {
+                            std::string s = animSlotPathBuf[si];
+                            if (!s.empty() && s.rfind("Assets/", 0) != 0 && s.rfind("Assets\\", 0) != 0)
+                                s = "Assets/" + s;
+                            n.animSlots[si].path = s;
+                        }
+
+                        // Play button per slot
+                        std::filesystem::path slotAnimAbs = ResolveProjectAssetPath(n.animSlots[si].path);
+                        NebAnimClip* slotClip = nullptr;
+                        if (!slotAnimAbs.empty() && std::filesystem::exists(slotAnimAbs))
+                        {
+                            std::string key = slotAnimAbs.generic_string();
+                            auto it = gStaticAnimClipCache.find(key);
+                            if (it == gStaticAnimClipCache.end())
+                            {
+                                NebAnimClip clip;
+                                std::string err;
+                                if (LoadNebAnimClip(slotAnimAbs, clip, err))
+                                    it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
+                            }
+                            if (it != gStaticAnimClipCache.end() && it->second.valid)
+                                slotClip = &it->second;
+                        }
+                        if (slotClip && slotClip->frameCount > 0)
+                        {
+                            std::string playLabel = (gStaticAnimPreviewPlay && gStaticAnimPreviewNode == inspectStatic && gStaticAnimPreviewSlot == si) ? "Stop##AnimSlotPlay" : "Play##AnimSlotPlay";
+                            playLabel += std::to_string(si);
+                            if (ImGui::Button(playLabel.c_str()))
+                            {
+                                if (gStaticAnimPreviewPlay && gStaticAnimPreviewNode == inspectStatic && gStaticAnimPreviewSlot == si)
+                                {
+                                    gStaticAnimPreviewPlay = false;
+                                }
+                                else
+                                {
+                                    gStaticAnimPreviewNode = inspectStatic;
+                                    gStaticAnimPreviewSlot = si;
+                                    gStaticAnimPreviewFrame = 0;
+                                    gStaticAnimPreviewTimeSec = 0.0f;
+                                    gStaticAnimPreviewPlay = true;
+                                }
+                            }
+                            ImGui::SameLine();
+                            ImGui::Text("%d frames, %.1f fps", (int)slotClip->frameCount, slotClip->fps);
+                        }
+                        else if (!n.animSlots[si].path.empty())
+                        {
+                            ImGui::TextDisabled("(invalid .nebanim)");
+                        }
+
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+
+                    // Remove slot
+                    if (removeIdx >= 0 && removeIdx < n.animSlotCount)
+                    {
+                        for (int si = removeIdx; si < n.animSlotCount - 1; ++si)
+                            n.animSlots[si] = n.animSlots[si + 1];
+                        n.animSlots[n.animSlotCount - 1] = AnimSlot{};
+                        n.animSlotCount--;
+                        animSlotLastNode = -1; // force buffer resync
+                    }
+
+                    // Add slot button
+                    if (n.animSlotCount < kStaticMeshAnimSlots)
+                    {
+                        if (ImGui::Button("+ Add Animation Slot"))
+                        {
+                            n.animSlots[n.animSlotCount].name = "Anim" + std::to_string(n.animSlotCount + 1);
+                            n.animSlots[n.animSlotCount].path.clear();
+                            n.animSlotCount++;
+                            animSlotLastNode = -1; // force buffer resync
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Max %d animation slots", kStaticMeshAnimSlots);
+                    }
+                }
+
+                // Animation preview tick (for slot-based preview)
                 if (gStaticAnimPreviewLastNode != inspectStatic)
                 {
                     gStaticAnimPreviewLastNode = inspectStatic;
@@ -19508,78 +19926,56 @@ RenderImGuiOnly:
                     gStaticAnimPreviewPlay = false;
                     gStaticAnimPreviewTimeSec = 0.0f;
                     gStaticAnimPreviewFrame = 0;
+                    gStaticAnimPreviewSlot = -1;
                 }
 
-                std::filesystem::path animAbs = ResolveProjectAssetPath(n.vtxAnim);
-                NebAnimClip* previewClip = nullptr;
-                if (!animAbs.empty() && std::filesystem::exists(animAbs))
+                if (gStaticAnimPreviewPlay && gStaticAnimPreviewNode == inspectStatic && gStaticAnimPreviewSlot >= 0 && gStaticAnimPreviewSlot < n.animSlotCount)
                 {
-                    std::string key = animAbs.generic_string();
-                    auto it = gStaticAnimClipCache.find(key);
-                    if (it == gStaticAnimClipCache.end())
+                    std::filesystem::path previewAnimAbs = ResolveProjectAssetPath(n.animSlots[gStaticAnimPreviewSlot].path);
+                    NebAnimClip* previewClip = nullptr;
+                    if (!previewAnimAbs.empty() && std::filesystem::exists(previewAnimAbs))
                     {
-                        NebAnimClip clip;
-                        std::string err;
-                        if (LoadNebAnimClip(animAbs, clip, err))
-                            it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
+                        std::string key = previewAnimAbs.generic_string();
+                        auto it = gStaticAnimClipCache.find(key);
+                        if (it != gStaticAnimClipCache.end() && it->second.valid)
+                            previewClip = &it->second;
                     }
-                    if (it != gStaticAnimClipCache.end() && it->second.valid)
-                        previewClip = &it->second;
-                }
-
-                ImGui::Checkbox("Runtime test", &n.runtimeTest);
-
-                if (previewClip && previewClip->frameCount > 0)
-                {
-                    float fps = std::max(1.0f, previewClip->fps);
-                    const int maxFrame = (int)previewClip->frameCount - 1;
-                    if (gStaticAnimPreviewPlay)
+                    if (previewClip && previewClip->frameCount > 0)
                     {
+                        float fps = std::max(1.0f, previewClip->fps);
+                        const int maxFrame = (int)previewClip->frameCount - 1;
                         gStaticAnimPreviewTimeSec += ImGui::GetIO().DeltaTime;
                         int nextFrame = (int)std::floor(gStaticAnimPreviewTimeSec * fps);
                         if (gStaticAnimPreviewLoop)
                         {
                             if (maxFrame > 0)
-                            {
                                 nextFrame = nextFrame % (maxFrame + 1);
-                                gStaticAnimPreviewFrame = nextFrame;
-                            }
                         }
-                        else
+                        else if (nextFrame > maxFrame)
                         {
-                            if (nextFrame > maxFrame)
-                            {
-                                gStaticAnimPreviewFrame = maxFrame;
-                                gStaticAnimPreviewPlay = false;
-                            }
-                            else
-                            {
-                                gStaticAnimPreviewFrame = std::max(0, nextFrame);
-                            }
+                            nextFrame = maxFrame;
+                            gStaticAnimPreviewPlay = false;
                         }
-                    }
-                    gStaticAnimPreviewFrame = std::max(0, std::min(gStaticAnimPreviewFrame, maxFrame));
-
-                    if (ImGui::Button(gStaticAnimPreviewPlay ? "Pause Anim" : "Play Anim"))
-                    {
-                        gStaticAnimPreviewNode = inspectStatic;
-                        if (!gStaticAnimPreviewPlay && gStaticAnimPreviewFrame >= maxFrame)
-                        {
-                            gStaticAnimPreviewFrame = 0;
-                            gStaticAnimPreviewTimeSec = 0.0f;
-                        }
-                        gStaticAnimPreviewPlay = !gStaticAnimPreviewPlay;
-                    }
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Loop Anim", &gStaticAnimPreviewLoop);
-                    if (ImGui::SliderInt("Frame##StaticAnimFrame", &gStaticAnimPreviewFrame, 0, maxFrame))
-                    {
-                        gStaticAnimPreviewTimeSec = (float)gStaticAnimPreviewFrame / fps;
+                        gStaticAnimPreviewFrame = std::max(0, std::min(nextFrame, maxFrame));
                     }
                 }
-                else
+                // Legacy vtxAnim preview (when no slot preview is active)
+                else if (!n.vtxAnim.empty() && (gStaticAnimPreviewSlot < 0 || !gStaticAnimPreviewPlay))
                 {
-                    ImGui::TextDisabled("Anim preview: assign a valid .nebanim");
+                    std::filesystem::path animAbs = ResolveProjectAssetPath(n.vtxAnim);
+                    NebAnimClip* previewClip = nullptr;
+                    if (!animAbs.empty() && std::filesystem::exists(animAbs))
+                    {
+                        std::string key = animAbs.generic_string();
+                        auto it = gStaticAnimClipCache.find(key);
+                        if (it == gStaticAnimClipCache.end())
+                        {
+                            NebAnimClip clip;
+                            std::string err;
+                            if (LoadNebAnimClip(animAbs, clip, err))
+                                it = gStaticAnimClipCache.emplace(key, std::move(clip)).first;
+                        }
+                    }
                 }
 
                 ImGui::Text("Parent: %s", n.parent.empty() ? "(none)" : n.parent.c_str());

@@ -8,6 +8,13 @@
 #include "../audio3d.h"
 
 constexpr int kStaticMeshMaterialSlots = 14;
+constexpr int kStaticMeshAnimSlots = 8;
+
+struct AnimSlot
+{
+    std::string name;
+    std::string path;
+};
 
 struct StaticMesh3DNode
 {
@@ -19,6 +26,8 @@ struct StaticMesh3DNode
     int materialSlot = 0;
     std::string mesh;
     std::string vtxAnim;
+    std::array<AnimSlot, kStaticMeshAnimSlots> animSlots{};
+    int animSlotCount = 0;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;

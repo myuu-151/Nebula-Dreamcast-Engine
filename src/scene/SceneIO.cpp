@@ -135,6 +135,8 @@ namespace NebulaScene
             RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
             for (auto& ms : n.materialSlots)
                 RewritePathRefForRename(ms, oldRel, newRel, isDir);
+            for (int si = 0; si < n.animSlotCount; ++si)
+                RewritePathRefForRename(n.animSlots[si].path, oldRel, newRel, isDir);
         }
         for (auto& n : audioNodes)
             RewritePathRefForRename(n.script, oldRel, newRel, isDir);
@@ -156,6 +158,8 @@ namespace NebulaScene
                 RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
                 for (auto& ms : n.materialSlots)
                     RewritePathRefForRename(ms, oldRel, newRel, isDir);
+                for (int si = 0; si < n.animSlotCount; ++si)
+                    RewritePathRefForRename(n.animSlots[si].path, oldRel, newRel, isDir);
             }
             for (auto& n : sc.node3d)
             {
@@ -206,6 +210,8 @@ namespace NebulaScene
                         diskChanged |= RewritePathRefForRename(n.vtxAnim, oldRel, newRel, isDir);
                         for (auto& ms : n.materialSlots)
                             diskChanged |= RewritePathRefForRename(ms, oldRel, newRel, isDir);
+                        for (int si = 0; si < n.animSlotCount; ++si)
+                            diskChanged |= RewritePathRefForRename(n.animSlots[si].path, oldRel, newRel, isDir);
                     }
                     for (auto& n : diskScene.node3d)
                     {
@@ -262,6 +268,9 @@ namespace NebulaScene
             out << " " << (n.runtimeTest ? 1 : 0);
             out << " " << (n.navmeshReady ? 1 : 0);
             out << " " << n.wallThreshold;
+            out << " " << n.animSlotCount;
+            for (int si = 0; si < kStaticMeshAnimSlots; ++si)
+                out << " " << EncodeSceneToken(n.animSlots[si].name) << " " << EncodeSceneToken(n.animSlots[si].path);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -406,6 +415,28 @@ namespace NebulaScene
                 size_t wallThreshIdx = navmeshReadyIdx + 1;
                 if (wallThreshIdx < extra.size())
                     n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
+                size_t animSlotCountIdx = wallThreshIdx + 1;
+                if (animSlotCountIdx < extra.size())
+                {
+                    n.animSlotCount = atoi(extra[animSlotCountIdx].c_str());
+                    if (n.animSlotCount < 0) n.animSlotCount = 0;
+                    if (n.animSlotCount > kStaticMeshAnimSlots) n.animSlotCount = kStaticMeshAnimSlots;
+                    for (int si = 0; si < kStaticMeshAnimSlots; ++si)
+                    {
+                        size_t nameIdx = animSlotCountIdx + 1 + (size_t)si * 2;
+                        size_t pathIdx = nameIdx + 1;
+                        if (nameIdx < extra.size())
+                        {
+                            n.animSlots[si].name = extra[nameIdx];
+                            DecodeSceneToken(n.animSlots[si].name);
+                        }
+                        if (pathIdx < extra.size())
+                        {
+                            n.animSlots[si].path = extra[pathIdx];
+                            DecodeSceneToken(n.animSlots[si].path);
+                        }
+                    }
+                }
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;
                 outScene.staticMeshes.push_back(n);

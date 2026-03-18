@@ -1373,8 +1373,17 @@ static void DoRedo()
 
 static std::string GetPrefsPath()
 {
-    // Store preferences next to the editor executable
-    return "editor_prefs.ini";
+    // Store preferences next to the editor executable so the path is
+    // stable regardless of the working directory at launch time.
+    static std::string cached;
+    if (cached.empty())
+    {
+        char buf[MAX_PATH] = {0};
+        GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        std::filesystem::path p(buf);
+        cached = (p.parent_path() / "editor_prefs.ini").string();
+    }
+    return cached;
 }
 
 static std::filesystem::path ResolveVcvarsPathFromPreference(const std::string& pref)

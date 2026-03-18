@@ -21,6 +21,8 @@
 #include <unordered_set>
 #include <iterator>
 #include <array>
+#include <thread>
+#include <atomic>
 
 #define NOMINMAX
 #include <Windows.h>
@@ -292,6 +294,15 @@ static bool useScriptController = true;
 // Keep script-owned controls on desktop, but keep C++ fallback enabled on Dreamcast
 // until full runtime script parity is confirmed.
 static bool gEnableCppPlayFallbackControls = false;
+
+// Async script compilation state (so the UI stays responsive during MSVC builds).
+static std::atomic<int> gScriptCompileState{0};    // 0=idle, 1=compiling, 2=done
+static std::atomic<int> gScriptCompileDone{0};     // scripts compiled so far
+static int gScriptCompileTotal = 0;
+static std::thread gScriptCompileThread;
+static std::vector<std::filesystem::path> gScriptCompilePaths;
+static std::vector<std::filesystem::path> gScriptCompileDllPaths;
+static std::vector<bool> gScriptCompileResults;
 
 // Optional editor runtime hook. v1 only signals "scripts changed"; no compile/rebind yet.
 using ScriptHotReloadCallback = void(*)(const std::vector<std::filesystem::path>& changedFiles, bool manualTrigger);
@@ -699,15 +710,30 @@ static bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std:
     printf("[ScriptRuntime] OutDir=%s\n", outDir.string().c_str());
     printf("[ScriptRuntime] BuildLog=%s\n", buildLogPath.string().c_str());
 
+    std::string dllName = "nb_script_" + std::to_string(slotIdx);
+    outDllPath = outDir / (dllName + ".dll");
     std::filesystem::path bridgePath = outDir / "nb_editor_bridge.c";
+
+    // Skip recompilation if the DLL already exists and is newer than the
+    // script source.  Check BEFORE writing the bridge file so its timestamp
+    // doesn't invalidate the cache every time.
+    if (std::filesystem::exists(outDllPath, ec))
+    {
+        auto dllTime = std::filesystem::last_write_time(outDllPath, ec);
+        auto srcTime = std::filesystem::last_write_time(scriptPath, ec);
+        if (!ec && dllTime > srcTime)
+        {
+            printf("[ScriptRuntime] DLL up-to-date, skipping compile for %s\n", scriptPath.string().c_str());
+            return true;
+        }
+    }
+
     if (!WriteEditorScriptBridgeFile(bridgePath))
     {
         outError = "failed to write editor bridge file";
         return false;
     }
 
-    std::string dllName = "nb_script_" + std::to_string(slotIdx);
-    outDllPath = outDir / (dllName + ".dll");
     std::filesystem::remove(outDllPath, ec);
     std::filesystem::remove(buildLogPath, ec);
     std::filesystem::remove(outDir / (dllName + ".exp"), ec);
@@ -908,15 +934,84 @@ static void BeginPlayScriptRuntime()
     }
 
     UnloadEditorScriptRuntime();
-    int loaded = 0;
-    for (int i = 0; i < (int)scriptPaths.size(); ++i)
+
+    // Set up async compilation state
+    gScriptCompilePaths = scriptPaths;
+    gScriptCompileTotal = (int)scriptPaths.size();
+    gScriptCompileDone.store(0);
+    gScriptCompileDllPaths.assign(gScriptCompileTotal, std::filesystem::path());
+    gScriptCompileResults.assign(gScriptCompileTotal, false);
+    gScriptCompileState.store(1);
+
+    // Launch compilation on a background thread so the UI stays responsive
+    gScriptCompileThread = std::thread([]()
     {
-        if (LoadEditorScriptSlot(scriptPaths[i], i))
-            ++loaded;
+        for (int i = 0; i < gScriptCompileTotal; ++i)
+        {
+            std::filesystem::path dllPath;
+            std::string err;
+            bool ok = CompileEditorScriptDLL(gScriptCompilePaths[i], dllPath, err, i);
+            gScriptCompileDllPaths[i] = ok ? dllPath : std::filesystem::path();
+            gScriptCompileResults[i] = ok;
+            if (!ok)
+                printf("[ScriptRuntime] compile failed [%d]: %s\n", i, err.c_str());
+            gScriptCompileDone.store(i + 1);
+        }
+        gScriptCompileState.store(2);
+    });
+}
+
+// Called from the main loop each frame while gScriptCompileState != 0.
+// Returns true once compilation is finished and scripts are loaded.
+static bool PollPlayScriptCompile()
+{
+    int state = gScriptCompileState.load();
+    if (state != 2) return false;
+
+    // Join the compile thread
+    if (gScriptCompileThread.joinable())
+        gScriptCompileThread.join();
+
+    gScriptCompileState.store(0);
+
+    // Load the compiled DLLs on the main thread
+    int loaded = 0;
+    for (int i = 0; i < gScriptCompileTotal; ++i)
+    {
+        if (!gScriptCompileResults[i]) continue;
+
+        HMODULE mod = LoadLibraryA(gScriptCompileDllPaths[i].string().c_str());
+        if (!mod)
+        {
+            printf("[ScriptRuntime] LoadLibrary failed for %s\n", gScriptCompileDllPaths[i].string().c_str());
+            continue;
+        }
+
+        ScriptSlot slot;
+        slot.module = mod;
+        slot.path = gScriptCompilePaths[i].string();
+        slot.onStart = (EditorScriptStartFn)GetProcAddress(mod, "NB_Game_OnStart");
+        slot.onUpdate = (EditorScriptUpdateFn)GetProcAddress(mod, "NB_Game_OnUpdate");
+        slot.onSceneSwitch = (EditorScriptSceneSwitchFn)GetProcAddress(mod, "NB_Game_OnSceneSwitch");
+        slot.active = true;
+        slot.started = false;
+
+        printf("[ScriptRuntime] loaded [%d] %s\n", i, gScriptCompilePaths[i].string().c_str());
+        printf("[ScriptRuntime] symbols: start=%s update=%s scene=%s\n",
+            slot.onStart ? "yes" : "no",
+            slot.onUpdate ? "yes" : "no",
+            slot.onSceneSwitch ? "yes" : "no");
+
+        gEditorScripts.push_back(slot);
+        ++loaded;
     }
 
     if (loaded == 0)
-        return;
+    {
+        gViewportToast = "Script runtime failed: no scripts compiled";
+        gViewportToastUntil = glfwGetTime() + 2.5;
+        return true;
+    }
 
     gEditorScriptActive = true;
     gEditorScriptNextTickLog = 0.0;
@@ -933,10 +1028,15 @@ static void BeginPlayScriptRuntime()
 
     gViewportToast = "Script runtime active: " + std::to_string(loaded) + " script(s)";
     gViewportToastUntil = glfwGetTime() + 2.5;
+    return true;
 }
 
 static void EndPlayScriptRuntime()
 {
+    // Wait for any in-progress compile thread before unloading
+    if (gScriptCompileThread.joinable())
+        gScriptCompileThread.join();
+    gScriptCompileState.store(0);
     UnloadEditorScriptRuntime();
 }
 
@@ -9777,6 +9877,8 @@ int main(int, char**)
         if (deltaTime > 0.1f) deltaTime = 0.1f; // clamp
 
         PollScriptHotReloadV1(now);
+        if (gScriptCompileState.load() != 0)
+            PollPlayScriptCompile();
         TickPlayScriptRuntime(deltaTime, now);
 
         // Mouse orbit (MMB) / rotate in place (RMB)
@@ -10479,7 +10581,8 @@ int main(int, char**)
         // Debug overlay/HUD moved below once viewport layout is known.
 
         // Node3D gravity + per-triangle ground collision + slope alignment in play mode.
-        if (gPlayMode)
+        // Skip while scripts are still compiling so the player doesn't fall before controls load.
+        if (gPlayMode && gScriptCompileState.load() == 0)
         {
             const float gravity = -29.4f;
             float dt = io.DeltaTime > 0.0f ? io.DeltaTime : (1.0f / 60.0f);
@@ -21559,6 +21662,39 @@ RenderImGuiOnly:
         }
 
         DrawNebMeshInspectorWindow(ImGui::GetIO().DeltaTime);
+
+        // Script compile progress bar
+        if (gScriptCompileState.load() == 1)
+        {
+            int done = gScriptCompileDone.load();
+            int total = gScriptCompileTotal;
+            float pct = (total > 0) ? (float)done / (float)total : 0.0f;
+
+            char label[128];
+            snprintf(label, sizeof(label), "Compiling scripts... %d / %d", done, total);
+            ImVec2 textSize = ImGui::CalcTextSize(label);
+
+            float barW = 300.0f;
+            if (barW < textSize.x + 24.0f) barW = textSize.x + 24.0f;
+            float barH = 32.0f;
+
+            // Center in viewport
+            float vpCenterX = vp->Pos.x + leftPanelWidth + (vp->Size.x - leftPanelWidth - rightPanelWidth) * 0.5f;
+            float vpCenterY = vp->Pos.y + topBarH + (vp->Size.y - topBarH) * 0.5f;
+            ImVec2 pos(vpCenterX - barW * 0.5f, vpCenterY - barH * 0.5f);
+
+            auto* dl = ImGui::GetForegroundDrawList();
+            // Background
+            dl->AddRectFilled(pos, ImVec2(pos.x + barW, pos.y + barH), IM_COL32(20, 20, 20, 220), 6.0f);
+            // Fill
+            float fillW = (barW - 4.0f) * pct;
+            if (fillW > 0.0f)
+                dl->AddRectFilled(ImVec2(pos.x + 2.0f, pos.y + 2.0f), ImVec2(pos.x + 2.0f + fillW, pos.y + barH - 2.0f), IM_COL32(80, 160, 255, 255), 4.0f);
+            // Border
+            dl->AddRect(pos, ImVec2(pos.x + barW, pos.y + barH), IM_COL32(100, 100, 100, 200), 6.0f);
+            // Text
+            dl->AddText(ImVec2(pos.x + (barW - textSize.x) * 0.5f, pos.y + (barH - textSize.y) * 0.5f), IM_COL32(255, 255, 255, 255), label);
+        }
 
         // Save toast
         if (!gViewportToast.empty() && glfwGetTime() < gViewportToastUntil)

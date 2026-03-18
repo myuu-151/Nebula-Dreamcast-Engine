@@ -477,7 +477,10 @@ static void RunScriptHotReloadV1(const std::vector<std::filesystem::path>& chang
     }
     else
     {
-        gViewportToast = "Script Hot Reload v1: detected " + std::to_string((int)changedFiles.size()) + " .c change(s), state refreshed";
+        if (changedFiles.size() == 1)
+            gViewportToast = "Script updated: " + changedFiles[0].filename().string();
+        else
+            gViewportToast = "Scripts updated: " + std::to_string((int)changedFiles.size()) + " file(s)";
         printf("[ScriptHotReload] v1 %s reload: %zu .c file(s) changed. state update only (no compile/rebind). generation=%llu\n",
                mode.c_str(), changedFiles.size(), gScriptHotReloadGeneration);
         for (const auto& c : changedFiles)
@@ -12926,7 +12929,7 @@ RenderImGuiOnly:
                     gScriptHotReloadKnownMtimes.clear();
                     gScriptHotReloadTrackedProjectDir.clear();
                     gScriptHotReloadNextPollAt = 0.0;
-                    gViewportToast = "Script Hot Reload v1 enabled (detect + state refresh only)";
+                    gViewportToast = "Script Hot Reload enabled";
                     gViewportToastUntil = glfwGetTime() + 2.5;
                 }
             }

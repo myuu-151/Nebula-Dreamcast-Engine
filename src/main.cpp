@@ -918,13 +918,13 @@ static bool LoadEditorScriptSlot(const std::filesystem::path& scriptPath, int sl
     return true;
 }
 
-static void BeginPlayScriptRuntime()
+static bool BeginPlayScriptRuntime()
 {
     if (!useScriptController)
     {
         gEditorScriptActive = false;
         printf("[ScriptRuntime] skipped (engine-owned controls mode)\n");
-        return;
+        return true;
     }
 
     std::vector<std::filesystem::path> scriptPaths = ResolveAllScriptPaths();
@@ -933,10 +933,38 @@ static void BeginPlayScriptRuntime()
         printf("[ScriptRuntime] no gameplay scripts resolved\n");
         gViewportToast = "Script runtime failed: no scripts";
         gViewportToastUntil = glfwGetTime() + 2.5;
-        return;
+        return true;
     }
 
     UnloadEditorScriptRuntime();
+
+    // Quick check: do any scripts actually need compiling?  If so, verify
+    // MSVC is available before launching the compile thread.
+    {
+        bool anyNeedCompile = false;
+        std::filesystem::path outDir = std::filesystem::path(gProjectDir) / "Intermediate" / "EditorScript";
+        std::error_code ec;
+        for (int i = 0; i < (int)scriptPaths.size(); ++i)
+        {
+            std::filesystem::path dllPath = outDir / ("nb_script_" + std::to_string(i) + ".dll");
+            if (!std::filesystem::exists(dllPath, ec))
+            { anyNeedCompile = true; break; }
+            auto dllTime = std::filesystem::last_write_time(dllPath, ec);
+            auto srcTime = std::filesystem::last_write_time(scriptPaths[i], ec);
+            if (ec || dllTime <= srcTime)
+            { anyNeedCompile = true; break; }
+        }
+        if (anyNeedCompile)
+        {
+            int hasCl = system("cmd /c \"where cl >nul 2>nul\"");
+            if (hasCl != 0 && ResolveVcvarsPathFromPreference(gPrefVcvarsPath).empty())
+            {
+                gViewportToast = "MSVC not found! Set PATH in File > Preferences";
+                gViewportToastUntil = glfwGetTime() + 3.0;
+                return false;
+            }
+        }
+    }
 
     // Set up async compilation state
     gScriptCompilePaths = scriptPaths;
@@ -962,6 +990,7 @@ static void BeginPlayScriptRuntime()
         }
         gScriptCompileState.store(2);
     });
+    return true;
 }
 
 // Called from the main loop each frame while gScriptCompileState != 0.
@@ -12604,7 +12633,22 @@ RenderImGuiOnly:
                     }
                 }
 
-                BeginPlayScriptRuntime();
+                if (!BeginPlayScriptRuntime())
+                {
+                    // MSVC not available — revert play mode entirely
+                    gPlayMode = false;
+                    gPlayOriginalScenes.clear();
+                    if (playSceneSnapshotValid)
+                    {
+                        gOpenScenes = playSavedOpenScenes;
+                        gActiveScene = playSavedActiveScene;
+                        gAudio3DNodes = playSavedAudio3DNodes;
+                        gStaticMeshNodes = playSavedStaticMeshNodes;
+                        gCamera3DNodes = playSavedCamera3DNodes;
+                        gNode3DNodes = playSavedNode3DNodes;
+                        gNavMesh3DNodes = playSavedNavMesh3DNodes;
+                    }
+                }
             }
             else
             {

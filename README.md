@@ -63,6 +63,16 @@ where kos-cc
 - `assets/` - project assets
 - `thirdparty/` - dependencies/tooling integrations
 - `build_dreamcast/` - generated Dreamcast runtime/package output (project-local)
+- `docs/` - engine documentation
+
+## Documentation
+- [Dreamcast Binding API](docs/Dreamcast_Binding_API.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
+- [Dreamcast Header Reference](docs/Dreamcast_Header_Reference.md) — platform header files and types
+- [Multi-Script Runtime](docs/Multi_Script_Runtime.md) — running multiple gameplay scripts simultaneously
+- [Script Formatting & Syntax](docs/Script_Formatting_Syntax_Semantics.md) — how to write C gameplay scripts
+- [Editor Play Mode](docs/Editor_Play_Mode.md) — compilation, DLL caching, progress bar, hot reload, scene switching
+- [Asset Pipeline](docs/Asset_Pipeline.md) — texture, material, mesh, and animation formats and export
+- [Dependencies & Paths](docs/Nebula_Dependencies_and_Paths.md) — toolchain setup and path requirements
 
 ## File Formats
 - **.nebproj** - project file

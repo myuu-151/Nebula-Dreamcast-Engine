@@ -4,7 +4,7 @@
 
 # Nebula Dreamcast Engine
 
-**Nebula Dreamcast Engine** is an open-source 3D game engine purpose-built for the Sega Dreamcast. Build your scenes in the project editor, write your gameplay scripts in plain C, and package directly to CDI disc images that boot on real hardware.
+**Nebula Dreamcast Engine** is an open-source 3D game engine designed for the Sega Dreamcast. Build your scenes in the project editor, write your gameplay scripts in plain C, and package directly to CDI disc images that boot on real hardware.
 
 ## Highlights
 - **Dreamcast-first runtime path** with rapid package/rebuild loops

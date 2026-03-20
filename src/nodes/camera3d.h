@@ -30,9 +30,9 @@ struct Camera3DNode
 };
 
 // ---------------------------------------------------------------------------
-// Camera3DV2 — editor viewport camera
+// Camera3D — editor viewport camera (orientation-based, forward/up vectors)
 // ---------------------------------------------------------------------------
-struct Camera3DV2
+struct Camera3D
 {
     std::string name;
     std::string parent;
@@ -48,21 +48,21 @@ struct Camera3DV2
     bool main = false;
 };
 
-struct Camera3DV2Basis
+struct Camera3DBasis
 {
     Vec3 right = { 1.0f, 0.0f, 0.0f };
     Vec3 up = { 0.0f, 1.0f, 0.0f };
     Vec3 forward = { 0.0f, 0.0f, 1.0f };
 };
 
-struct Camera3DV2View
+struct Camera3DView
 {
     Vec3 eye = {};
     Vec3 target = {};
-    Camera3DV2Basis basis;
+    Camera3DBasis basis;
 };
 
-struct Camera3DV2Projection
+struct Camera3DProjection
 {
     bool perspective = true;
     float fovYDeg = 70.0f;
@@ -73,13 +73,13 @@ struct Camera3DV2Projection
     float orthoWidth = 12.8f;
 };
 
-Camera3DV2Basis BuildCamera3DV2Basis(const Vec3& forwardHint, const Vec3& upHint);
-Camera3DV2View BuildCamera3DV2View(const Camera3DV2& camera);
-Camera3DV2Projection BuildCamera3DV2Projection(const Camera3DV2& camera, float aspect);
-Mat4 BuildCamera3DV2ViewMatrix(const Camera3DV2View& view);
-Mat4 BuildCamera3DV2ProjectionMatrix(const Camera3DV2Projection& proj);
+Camera3DBasis BuildCamera3DBasis(const Vec3& forwardHint, const Vec3& upHint);
+Camera3DView BuildCamera3DView(const Camera3D& camera);
+Camera3DProjection BuildCamera3DProjection(const Camera3D& camera, float aspect);
+Mat4 BuildCamera3DViewMatrix(const Camera3DView& view);
+Mat4 BuildCamera3DProjectionMatrix(const Camera3DProjection& proj);
 
-Camera3DV2 BuildCamera3DV2FromLegacyEuler(
+Camera3D BuildCamera3DFromLegacyEuler(
     const std::string& name,
     const std::string& parent,
     float x, float y, float z,
@@ -97,9 +97,9 @@ Camera3DV2 BuildCamera3DV2FromLegacyEuler(
 // ---------------------------------------------------------------------------
 namespace NebulaCamera3D
 {
-    using Basis = Camera3DV2Basis;
-    using View = Camera3DV2View;
-    using Projection = Camera3DV2Projection;
+    using Basis = Camera3DBasis;
+    using View = Camera3DView;
+    using Projection = Camera3DProjection;
 
     struct DreamcastExport
     {
@@ -112,10 +112,10 @@ namespace NebulaCamera3D
     };
 
     Basis BuildBasis(const Vec3& forwardHint, const Vec3& upHint);
-    View BuildView(const Camera3DV2& camera);
+    View BuildView(const Camera3D& camera);
     View BuildLookAtView(const Vec3& eye, const Vec3& target, const Vec3& up);
-    Projection BuildProjection(const Camera3DV2& camera, float aspect);
+    Projection BuildProjection(const Camera3D& camera, float aspect);
     Mat4 BuildViewMatrix(const View& view);
     Mat4 BuildProjectionMatrix(const Projection& proj);
-    DreamcastExport BuildDreamcastExport(const Camera3DV2& camera, float aspect, const Vec3& targetOffset);
+    DreamcastExport BuildDreamcastExport(const Camera3D& camera, float aspect, const Vec3& targetOffset);
 }

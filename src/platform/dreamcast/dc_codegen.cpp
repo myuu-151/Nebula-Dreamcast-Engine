@@ -426,7 +426,7 @@ else
             float dcWorldX, dcWorldY, dcWorldZ, dcWorldRX, dcWorldRY, dcWorldRZ;
             getCamera3DWorldTR_export(camSrc, dcWorldX, dcWorldY, dcWorldZ, dcWorldRX, dcWorldRY, dcWorldRZ);
 
-            Camera3DV2 dcCamV2 = BuildCamera3DV2FromLegacyEuler(
+            Camera3D dcCam = BuildCamera3DFromLegacyEuler(
                 camSrc.name,
                 camSrc.parent,
                 dcWorldX, dcWorldY, dcWorldZ,
@@ -439,8 +439,8 @@ else
                 camSrc.priority,
                 camSrc.main);
 
-            NebulaCamera3D::View dcView = NebulaCamera3D::BuildView(dcCamV2);
-            NebulaCamera3D::Projection dcProj = NebulaCamera3D::BuildProjection(dcCamV2, 640.0f / 570.0f);
+            NebulaCamera3D::View dcView = NebulaCamera3D::BuildView(dcCam);
+            NebulaCamera3D::Projection dcProj = NebulaCamera3D::BuildProjection(dcCam, 640.0f / 570.0f);
 
             const float dcViewW = 640.0f;
             const float dcViewH = 570.0f;

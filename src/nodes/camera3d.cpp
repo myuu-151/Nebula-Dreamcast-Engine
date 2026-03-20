@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// camera3d.cpp — Merged Camera3DV2 (editor viewport) + NebulaCamera3D
+// camera3d.cpp — Camera3D (editor viewport) + NebulaCamera3D
 // (runtime/Dreamcast export) camera utilities.
 // ---------------------------------------------------------------------------
 
@@ -64,11 +64,11 @@ static Mat4 Mat4Identity()
 }
 
 // ---------------------------------------------------------------------------
-// Camera3DV2 functions (editor viewport)
+// Camera3D builder functions (editor viewport)
 // ---------------------------------------------------------------------------
-Camera3DV2Basis BuildCamera3DV2Basis(const Vec3& forwardHint, const Vec3& upHint)
+Camera3DBasis BuildCamera3DBasis(const Vec3& forwardHint, const Vec3& upHint)
 {
-    Camera3DV2Basis basis{};
+    Camera3DBasis basis{};
     basis.forward = NormalizeVec3Safe(forwardHint, Vec3{ 0.0f, 0.0f, 1.0f });
     basis.up = NormalizeVec3Safe(upHint, Vec3{ 0.0f, 1.0f, 0.0f });
     basis.right = NormalizeVec3Safe(CrossVec3(basis.up, basis.forward), Vec3{ 1.0f, 0.0f, 0.0f });
@@ -82,18 +82,18 @@ Camera3DV2Basis BuildCamera3DV2Basis(const Vec3& forwardHint, const Vec3& upHint
     return basis;
 }
 
-Camera3DV2View BuildCamera3DV2View(const Camera3DV2& camera)
+Camera3DView BuildCamera3DView(const Camera3D& camera)
 {
-    Camera3DV2View view{};
+    Camera3DView view{};
     view.eye = camera.position;
-    view.basis = BuildCamera3DV2Basis(camera.forward, camera.up);
+    view.basis = BuildCamera3DBasis(camera.forward, camera.up);
     view.target = { view.eye.x + view.basis.forward.x, view.eye.y + view.basis.forward.y, view.eye.z + view.basis.forward.z };
     return view;
 }
 
-Camera3DV2Projection BuildCamera3DV2Projection(const Camera3DV2& camera, float aspect)
+Camera3DProjection BuildCamera3DProjection(const Camera3D& camera, float aspect)
 {
-    Camera3DV2Projection proj{};
+    Camera3DProjection proj{};
     proj.perspective = camera.perspective;
     proj.fovYDeg = std::clamp(camera.fovY, 5.0f, 170.0f);
     proj.fovYRad = proj.fovYDeg * 3.14159f / 180.0f;
@@ -104,10 +104,10 @@ Camera3DV2Projection BuildCamera3DV2Projection(const Camera3DV2& camera, float a
     return proj;
 }
 
-Mat4 BuildCamera3DV2ViewMatrix(const Camera3DV2View& view)
+Mat4 BuildCamera3DViewMatrix(const Camera3DView& view)
 {
     Mat4 r = Mat4Identity();
-    const Camera3DV2Basis& b = view.basis;
+    const Camera3DBasis& b = view.basis;
     r.m[0] = b.right.x; r.m[1] = b.up.x; r.m[2] = -b.forward.x;
     r.m[4] = b.right.y; r.m[5] = b.up.y; r.m[6] = -b.forward.y;
     r.m[8] = b.right.z; r.m[9] = b.up.z; r.m[10] = -b.forward.z;
@@ -117,7 +117,7 @@ Mat4 BuildCamera3DV2ViewMatrix(const Camera3DV2View& view)
     return r;
 }
 
-Mat4 BuildCamera3DV2ProjectionMatrix(const Camera3DV2Projection& proj)
+Mat4 BuildCamera3DProjectionMatrix(const Camera3DProjection& proj)
 {
     Mat4 r = {};
     if (proj.perspective)
@@ -143,7 +143,7 @@ Mat4 BuildCamera3DV2ProjectionMatrix(const Camera3DV2Projection& proj)
     return r;
 }
 
-Camera3DV2 BuildCamera3DV2FromLegacyEuler(
+Camera3D BuildCamera3DFromLegacyEuler(
     const std::string& name,
     const std::string& parent,
     float x, float y, float z,
@@ -159,7 +159,7 @@ Camera3DV2 BuildCamera3DV2FromLegacyEuler(
     Vec3 right{}, up{}, forward{};
     GetLocalAxesFromEuler(rotX, rotY, rotZ, right, up, forward);
 
-    Camera3DV2 cam{};
+    Camera3D cam{};
     cam.name = name;
     cam.parent = parent;
     cam.position = { x, y, z };
@@ -196,7 +196,7 @@ namespace NebulaCamera3D
         return basis;
     }
 
-    View BuildView(const Camera3DV2& camera)
+    View BuildView(const Camera3D& camera)
     {
         View view{};
         view.eye = camera.position;
@@ -214,7 +214,7 @@ namespace NebulaCamera3D
         return view;
     }
 
-    Projection BuildProjection(const Camera3DV2& camera, float aspect)
+    Projection BuildProjection(const Camera3D& camera, float aspect)
     {
         Projection proj{};
         proj.perspective = camera.perspective;
@@ -264,7 +264,7 @@ namespace NebulaCamera3D
         return r;
     }
 
-    DreamcastExport BuildDreamcastExport(const Camera3DV2& camera, float aspect, const Vec3& targetOffset)
+    DreamcastExport BuildDreamcastExport(const Camera3D& camera, float aspect, const Vec3& targetOffset)
     {
         DreamcastExport out{};
         out.projection = BuildProjection(camera, aspect);

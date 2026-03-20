@@ -840,7 +840,7 @@ int main(int, char**)
             float camX, camY, camZ, camRX, camRY, camRZ;
             GetCamera3DWorldTR(activeCamIdx, camX, camY, camZ, camRX, camRY, camRZ);
 
-            Camera3DV2 playCam = BuildCamera3DV2FromLegacyEuler(
+            Camera3D playCam = BuildCamera3DFromLegacyEuler(
                 activeCam->name,
                 activeCam->parent,
                 camX, camY, camZ,

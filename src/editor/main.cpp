@@ -68,7 +68,7 @@
 #include "viewport/node_gizmos.h"
 #include "viewport/background.h"
 #include "viewport/static_mesh_render.h"
-#include "viewport/picking.h"
+#include "viewport/viewport_selection.h"
 #include "viewport/node_helpers.h"
 #include "editor/editor_state.h"
 #include "editor/undo.h"
@@ -1302,7 +1302,7 @@ RenderImGuiOnly:
             ImGui::End();
         }
 
-        TickViewportPicking(window, io.MousePos.x, io.MousePos.y,
+        TickViewportSelection(window, io.MousePos.x, io.MousePos.y,
                             io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
                             ImGui::IsMouseClicked(0) && mouseInViewport);
         DrawSceneOutliner(vp, topBarH, leftPanelWidth, leftPanelHeight, assetsHeight);

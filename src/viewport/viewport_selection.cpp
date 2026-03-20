@@ -1,4 +1,4 @@
-#include "picking.h"
+#include "viewport_selection.h"
 #include "viewport_render.h"
 #include "viewport_transform.h"
 #include "node_helpers.h"
@@ -13,8 +13,8 @@
 
 #include <GLFW/glfw3.h>
 
-void TickViewportPicking(GLFWwindow* window, float mouseX, float mouseY,
-                         float scaleX, float scaleY, bool mouseClicked)
+void TickViewportSelection(GLFWwindow* window, float mouseX, float mouseY,
+                           float scaleX, float scaleY, bool mouseClicked)
 {
     if (!mouseClicked) return;
 
@@ -42,14 +42,14 @@ void TickViewportPicking(GLFWwindow* window, float mouseX, float mouseY,
             if (d < bestDist) { bestDist = d; clearBest(); bestAudioIndex = i; }
         }
     }
-    // StaticMesh3D: test mouse against projected triangles for accurate picking.
+    // StaticMesh3D: test mouse against projected triangles for accurate selection.
     // Falls back to origin-point distance if mesh data is unavailable.
     for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
     {
         const auto& s = gStaticMeshNodes[i];
         bool hitMesh = false;
 
-        // Try triangle-based picking if mesh geometry is loaded
+        // Try triangle-based selection if mesh geometry is loaded
         if (!s.mesh.empty() && !gProjectDir.empty())
         {
             std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;

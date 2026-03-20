@@ -1,12 +1,12 @@
 #pragma once
 
 // Per-node type headers
-#include "Audio3D.h"
+#include "Audio3DNode.h"
 #include "Camera3DNode.h"
 #include "../core/camera3d.h"
-#include "NavMesh3D.h"
-#include "Node3D.h"
-#include "StaticMesh3D.h"
+#include "NavMesh3DNode.h"
+#include "Node3DNode.h"
+#include "StaticMesh3DNode.h"
 
 #include <filesystem>
 #include <string>

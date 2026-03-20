@@ -20,7 +20,7 @@
 #include "ui/asset_browser.h"
 #include "ui/mesh_inspector.h"
 #include "nodes/NodeTypes.h"
-#include "nodes/Audio3D.h"
+#include "nodes/Audio3DNode.h"
 #include "core/meta_io.h"
 #include "core/mesh_io.h"
 #include "core/anim_io.h"

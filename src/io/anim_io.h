@@ -1,6 +1,6 @@
 #pragma once
 
-#include "math_types.h"
+#include "../math/math_types.h"
 #include "mesh_io.h"
 
 #include <assimp/scene.h>

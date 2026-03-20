@@ -2,17 +2,17 @@
 
 #include "../../editor/project.h"
 #include "../../editor/prefs.h"
-#include "../../core/meta_io.h"
-#include "../../core/mesh_io.h"
-#include "../../core/anim_io.h"
+#include "../../io/meta_io.h"
+#include "../../io/mesh_io.h"
+#include "../../io/anim_io.h"
 #include "../../scene/scene_io.h"
 #include "../../nodes/NodeTypes.h"
 #include "build_helpers.h"
 #include "../../navmesh/NavMeshBuilder.h"
-#include "../../core/math_types.h"
+#include "../../math/math_types.h"
 #include "../../camera/camera3d.h"
-#include "../../core/math_utils.h"
-#include "../../core/texture_io.h"
+#include "../../math/math_utils.h"
+#include "../../io/texture_io.h"
 
 #include <GLFW/glfw3.h>
 

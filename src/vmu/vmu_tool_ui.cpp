@@ -14,7 +14,7 @@
 #include "../platform/dreamcast/dc_codegen.h"  // VmuAnimLayer
 #include "vmu_tool.h"                           // LoadVmuPngToMono, SaveVmuFrameData, LoadVmuFrameData
 #include "../editor/project.h"                     // gProjectDir, SetProjectVmuAnim, SetProjectVmuLoadOnBoot
-#include "../core/texture_io.h"         // SaveVmuMonoPng
+#include "../io/texture_io.h"           // SaveVmuMonoPng
 #include "../editor/file_dialogs.h"            // PickPngFileDialog, PickVmuFrameDataDialog
 
 #include "../editor/editor_state.h"

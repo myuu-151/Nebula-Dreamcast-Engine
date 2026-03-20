@@ -10,7 +10,7 @@
 #include <filesystem>
 
 #include "../nodes/NodeTypes.h"
-#include "../core/mesh_io.h"
+#include "../io/mesh_io.h"
 #include "../editor/project.h"
 #include "../editor/editor_state.h"
 #include "../editor/undo.h"

@@ -6,9 +6,9 @@
 #include <string>
 #include <unordered_map>
 
-#include "../core/mesh_io.h"
-#include "../core/meta_io.h"
-#include "../core/math_utils.h"
+#include "../io/mesh_io.h"
+#include "../io/meta_io.h"
+#include "../math/math_utils.h"
 
 extern std::unordered_map<std::string, GLuint> gNebTextureCache;
 

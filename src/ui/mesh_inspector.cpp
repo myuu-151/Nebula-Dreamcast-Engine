@@ -12,9 +12,9 @@
 
 #include "editor/project.h"
 #include "asset_browser.h"
-#include "core/meta_io.h"
-#include "core/mesh_io.h"
-#include "core/anim_io.h"
+#include "io/meta_io.h"
+#include "io/mesh_io.h"
+#include "io/anim_io.h"
 #include "nodes/NodeTypes.h"
 
 #include <algorithm>

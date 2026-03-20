@@ -6,8 +6,8 @@
 
 #include "collision.h"
 #include "runtime_bridge.h"
-#include "core/mesh_io.h"
-#include "core/math_utils.h"
+#include "io/mesh_io.h"
+#include "math/math_utils.h"
 #include "nodes/NodeTypes.h"
 #include "editor/project.h"
 

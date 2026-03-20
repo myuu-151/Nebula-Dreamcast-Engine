@@ -5,7 +5,7 @@
 #include <assimp/postprocess.h>
 
 #include "mesh_io.h"
-#include "editor/project.h"
+#include "../editor/project.h"
 
 #include <cmath>
 #include <cstring>

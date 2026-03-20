@@ -1,8 +1,8 @@
 #pragma once
 
-#include "core/math_types.h"
-#include "core/mesh_io.h"
-#include "core/anim_io.h"
+#include "math/math_types.h"
+#include "io/mesh_io.h"
+#include "io/anim_io.h"
 
 #include <filesystem>
 #include <string>

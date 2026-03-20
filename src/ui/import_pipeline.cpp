@@ -14,10 +14,10 @@
 #include <assimp/postprocess.h>
 
 #include "editor/project.h"                     // gProjectDir
-#include "../core/meta_io.h"           // NebulaAssets::*, kStaticMeshMaterialSlots
-#include "../core/mesh_io.h"        // ExportNebMesh, LoadNebMesh, ApplyImportBasis, NebMesh, Vec3
-#include "../core/anim_io.h"       // NebMeshEmbeddedAnimMeta, BuildDefaultEmbeddedMetaFromScene, SaveNebMeshEmbeddedMeta
-#include "../core/texture_io.h"     // ExportNebTexturePNG
+#include "../io/meta_io.h"             // NebulaAssets::*, kStaticMeshMaterialSlots
+#include "../io/mesh_io.h"          // ExportNebMesh, LoadNebMesh, ApplyImportBasis, NebMesh, Vec3
+#include "../io/anim_io.h"         // NebMeshEmbeddedAnimMeta, BuildDefaultEmbeddedMetaFromScene, SaveNebMeshEmbeddedMeta
+#include "../io/texture_io.h"       // ExportNebTexturePNG
 #include "../nodes/NodeTypes.h"          // kStaticMeshMaterialSlots, StaticMesh3DNode
 
 // ---------------------------------------------------------------------------

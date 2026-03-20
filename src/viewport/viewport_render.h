@@ -1,7 +1,7 @@
 #pragma once
 
 #include <filesystem>
-#include "../core/math_types.h"
+#include "../math/math_types.h"
 #include "../nodes/NodeTypes.h"
 
 #define NOMINMAX

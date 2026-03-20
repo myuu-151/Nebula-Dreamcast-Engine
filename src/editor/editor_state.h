@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <cstdint>
 
-#include "../core/math_types.h"
+#include "../math/math_types.h"
 #include "../nodes/NodeTypes.h"
 #include "../platform/dreamcast/dc_codegen.h"
 

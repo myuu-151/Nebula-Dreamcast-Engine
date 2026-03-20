@@ -1,7 +1,7 @@
 #pragma once
 
 #include "math_types.h"
-#include "nodes/NodeTypes.h"
+#include "../nodes/NodeTypes.h"
 
 // ── Quaternion type ──
 

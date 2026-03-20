@@ -1,10 +1,10 @@
 #include "asset_browser.h"
 #include "editor/project.h"
-#include "core/meta_io.h"
-#include "core/anim_io.h"
+#include "io/meta_io.h"
+#include "io/anim_io.h"
 #include "scene/scene_io.h"
 #include "nodes/NodeTypes.h"
-#include "core/texture_io.h"
+#include "io/texture_io.h"
 #include "mesh_inspector.h"
 #include "imgui.h"
 

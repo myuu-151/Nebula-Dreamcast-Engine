@@ -1,5 +1,5 @@
 #include "NodeTypes.h"
-#include "../core/meta_io.h"
+#include "../io/meta_io.h"
 
 #include <algorithm>
 #include <cctype>

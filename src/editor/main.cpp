@@ -35,14 +35,14 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
-#include "core/math_types.h"
+#include "math/math_types.h"
 #include "camera/camera3d.h"
 #include "editor/prefs.h"
 #include "editor/project.h"
 #include "ui/import_pipeline.h"
 #include "ui/asset_browser.h"
-#include "core/meta_io.h"
-#include "core/mesh_io.h"
+#include "io/meta_io.h"
+#include "io/mesh_io.h"
 #include "platform/dreamcast/build_helpers.h"
 #include "scene/scene_io.h"
 #include "nodes/NodeTypes.h"
@@ -51,9 +51,9 @@
 #include "runtime/script_compile.h"
 #include "runtime/physics.h"
 #include "editor/file_dialogs.h"
-#include "core/math_utils.h"
-#include "core/texture_io.h"
-#include "core/anim_io.h"
+#include "math/math_utils.h"
+#include "io/texture_io.h"
+#include "io/anim_io.h"
 #include "platform/dreamcast/dc_codegen.h"
 #include "ui/mesh_inspector.h"
 #include "vmu/vmu_tool.h"
@@ -254,7 +254,7 @@ static GLuint gCheckerOverlayTex = 0;
 
 // DrawNebMeshInspectorWindow - moved to editor/mesh_inspector.cpp
 
-// LoadImageWIC, LoadTextureWIC, SaveVmuMonoPng, ExportNebTexturePNG moved to core/texture_io.cpp
+// LoadImageWIC, LoadTextureWIC, SaveVmuMonoPng, ExportNebTexturePNG moved to io/texture_io.cpp
 
 // CreateCircleTexture, LoadNebTexture, GetNebTexture, ProjectToScreenGL, GetLocalAxes
 // moved to viewport/viewport_render.cpp

@@ -5,12 +5,12 @@
 // ---------------------------------------------------------------------------
 
 #include "runtime_bridge.h"
-#include "core/mesh_io.h"
-#include "core/math_types.h"
+#include "io/mesh_io.h"
+#include "math/math_types.h"
 #include "nodes/NodeTypes.h"
 #include "navmesh/NavMeshBuilder.h"
 #include "editor/project.h"
-#include "core/math_utils.h"
+#include "math/math_utils.h"
 
 #include <vector>
 #include <string>

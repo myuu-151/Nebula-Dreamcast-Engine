@@ -1,6 +1,6 @@
 #include "vmu_tool.h"
 #include "../platform/dreamcast/dc_codegen.h"
-#include "../core/texture_io.h"
+#include "../io/texture_io.h"
 
 #include <filesystem>
 #include <fstream>

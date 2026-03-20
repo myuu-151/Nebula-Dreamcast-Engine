@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <vector>
-#include "../core/math_types.h"
+#include "../math/math_types.h"
 
 // ---------------------------------------------------------------------------
 // NavMeshBuilder — builds and queries a Recast/Detour navigation mesh.

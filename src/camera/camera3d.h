@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../core/math_types.h"
+#include "../math/math_types.h"
 #include <string>
 
 // ---------------------------------------------------------------------------

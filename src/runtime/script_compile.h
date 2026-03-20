@@ -50,7 +50,6 @@ extern std::vector<ScriptSlot>    gEditorScripts;
 extern bool                       gEditorScriptActive;
 extern double                     gEditorScriptNextTickLog;
 extern bool                       useScriptController;
-extern bool                       gEnableCppPlayFallbackControls;
 
 extern std::atomic<int>           gScriptCompileState;
 extern std::atomic<int>           gScriptCompileDone;

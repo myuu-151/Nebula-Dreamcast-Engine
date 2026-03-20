@@ -50,8 +50,6 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/runtime/physics.h"
     "${CMAKE_SOURCE_DIR}/src/runtime/collision.cpp"
     "${CMAKE_SOURCE_DIR}/src/runtime/collision.h"
-    "${CMAKE_SOURCE_DIR}/src/runtime/fallback_controller.cpp"
-    "${CMAKE_SOURCE_DIR}/src/runtime/fallback_controller.h"
     "${CMAKE_SOURCE_DIR}/src/platform/dreamcast/dc_codegen.cpp"
     "${CMAKE_SOURCE_DIR}/src/platform/dreamcast/dc_codegen.h"
     "${CMAKE_SOURCE_DIR}/src/ui/asset_browser.cpp"

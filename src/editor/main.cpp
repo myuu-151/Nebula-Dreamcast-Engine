@@ -69,7 +69,6 @@
 #include "viewport/background.h"
 #include "viewport/static_mesh_render.h"
 #include "viewport/picking.h"
-#include "runtime/fallback_controller.h"
 #include "viewport/node_helpers.h"
 #include "editor/editor_state.h"
 #include "editor/undo.h"
@@ -547,8 +546,6 @@ int main(int, char**)
                 orbitCenter.y -= move;
             }
         }
-
-        TickFallbackControls(window, deltaTime, navKeyAllowed);
 
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);

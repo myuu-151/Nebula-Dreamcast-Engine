@@ -24,7 +24,6 @@ std::vector<ScriptSlot>    gEditorScripts;
 bool                       gEditorScriptActive = false;
 double                     gEditorScriptNextTickLog = 0.0;
 bool                       useScriptController = true;
-bool                       gEnableCppPlayFallbackControls = false;
 
 std::atomic<int>           gScriptCompileState{0};
 std::atomic<int>           gScriptCompileDone{0};

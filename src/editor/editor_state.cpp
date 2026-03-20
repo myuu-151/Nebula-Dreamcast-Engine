@@ -1,0 +1,111 @@
+#include "editor_state.h"
+
+// --- Node vectors ---
+// gAudio3DNodes — defined in nodes/Audio3D.cpp
+std::vector<StaticMesh3DNode>  gStaticMeshNodes;
+std::vector<Camera3DNode>      gCamera3DNodes;
+std::vector<Node3DNode>        gNode3DNodes;
+std::vector<NavMesh3DNode>     gNavMesh3DNodes;
+
+// --- Scene state ---
+std::vector<SceneData> gOpenScenes;
+int gActiveScene = -1;
+int gForceSelectSceneTab = -1;
+bool gPlayMode = false;
+std::vector<SceneData> gPlayOriginalScenes;
+bool gRequestDreamcastGenerate = false;
+bool gSaveAllInProgress = false;
+
+// --- Selection ---
+int gSelectedAudio3D = -1;
+int gSelectedStaticMesh = -1;
+int gSelectedCamera3D = -1;
+int gSelectedNode3D = -1;
+int gSelectedNavMesh3D = -1;
+int gInspectorPinnedAudio3D = -1;
+int gInspectorPinnedStaticMesh = -1;
+int gInspectorPinnedCamera3D = -1;
+int gInspectorPinnedNode3D = -1;
+int gInspectorPinnedNavMesh3D = -1;
+int gInspectorSel = -1;
+char gInspectorName[256] = {};
+
+// --- Node rename ---
+int gNodeRenameIndex = -1;
+bool gNodeRenameStatic = false;
+bool gNodeRenameCamera = false;
+bool gNodeRenameNode3D = false;
+char gNodeRenameBuffer[256] = {};
+bool gNodeRenameOpen = false;
+
+// --- Transform mouse state ---
+double gLastTransformMouseX = 0.0;
+double gLastTransformMouseY = 0.0;
+
+// --- Viewport toast ---
+std::string gViewportToast;
+double gViewportToastUntil = 0.0;
+
+// --- Viewport camera bridge ---
+float gViewYaw = 0.0f;
+float gViewPitch = 0.0f;
+float gViewDistance = 0.0f;
+Vec3  gOrbitCenter = {};
+Vec3  gEye = {};
+int   gDisplayW = 0;
+int   gDisplayH = 0;
+
+// --- Rotate preview ---
+bool  gHasRotatePreview = false;
+int   gRotatePreviewIndex = -1;
+float gRotatePreviewX = 0.0f;
+float gRotatePreviewY = 0.0f;
+float gRotatePreviewZ = 0.0f;
+
+// --- Animation preview ---
+bool  gStaticAnimPreviewPlay = false;
+bool  gStaticAnimPreviewLoop = true;
+float gStaticAnimPreviewTimeSec = 0.0f;
+int   gStaticAnimPreviewFrame = 0;
+int   gStaticAnimPreviewLastNode = -1;
+int   gStaticAnimPreviewNode = -1;
+int   gStaticAnimPreviewSlot = -1;
+
+// --- Editor play-mode animation state ---
+std::unordered_map<int, int>   gEditorAnimActiveSlot;
+std::unordered_map<int, float> gEditorAnimTime;
+std::unordered_map<int, float> gEditorAnimSpeed;
+std::unordered_map<int, bool>  gEditorAnimPlaying;
+std::unordered_map<int, bool>  gEditorAnimFinished;
+std::unordered_map<int, bool>  gEditorAnimLoop;
+
+// --- VMU state ---
+bool gShowVmuTool = false;
+bool gVmuHasImage = false;
+bool gVmuLoadOnBoot = false;
+std::string gVmuAssetPath;
+std::vector<VmuAnimLayer> gVmuAnimLayers = { {"Layer 1", true, 0, 0} };
+int gVmuAnimLayerSel = 0;
+int gVmuAnimTotalFrames = 24;
+int gVmuAnimPlayhead = 0;
+bool gVmuAnimLoop = false;
+int gVmuAnimSpeedMode = 1;
+int gVmuCurrentLoadedType = 0;
+std::string gVmuLinkedPngPath;
+std::string gVmuLinkedAnimPath;
+std::array<uint8_t, 48 * 32> gVmuMono = {};
+
+// --- Outliner collapse state ---
+std::unordered_set<std::string> gCollapsedAudioRoots;
+std::unordered_set<std::string> gCollapsedStaticRoots;
+std::unordered_set<std::string> gCollapsedCameraRoots;
+std::unordered_set<std::string> gCollapsedNode3DRoots;
+
+// --- Inspector material/texture ---
+bool gMaterialInspectorOpen = false;
+std::filesystem::path gMaterialInspectorPath;
+bool gNebTexInspectorOpen = false;
+std::filesystem::path gNebTexInspectorPath;
+
+// --- Wireframe ---
+bool gHideUnselectedWireframes = false;

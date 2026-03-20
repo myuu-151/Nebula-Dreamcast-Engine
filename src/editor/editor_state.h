@@ -120,4 +120,5 @@ extern bool gNebTexInspectorOpen;
 extern std::filesystem::path gNebTexInspectorPath;
 
 // --- Wireframe ---
+extern bool gWireframePreview;
 extern bool gHideUnselectedWireframes;

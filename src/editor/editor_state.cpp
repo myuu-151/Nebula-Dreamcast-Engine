@@ -108,4 +108,5 @@ bool gNebTexInspectorOpen = false;
 std::filesystem::path gNebTexInspectorPath;
 
 // --- Wireframe ---
+bool gWireframePreview = false;
 bool gHideUnselectedWireframes = false;

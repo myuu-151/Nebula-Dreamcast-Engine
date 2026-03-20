@@ -82,6 +82,8 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/viewport/background.h"
     "${CMAKE_SOURCE_DIR}/src/viewport/static_mesh_render.cpp"
     "${CMAKE_SOURCE_DIR}/src/viewport/static_mesh_render.h"
+    "${CMAKE_SOURCE_DIR}/src/viewport/picking.cpp"
+    "${CMAKE_SOURCE_DIR}/src/viewport/picking.h"
     "${CMAKE_SOURCE_DIR}/src/editor/editor_state.cpp"
     "${CMAKE_SOURCE_DIR}/src/editor/editor_state.h"
     "${CMAKE_SOURCE_DIR}/src/editor/undo.cpp"

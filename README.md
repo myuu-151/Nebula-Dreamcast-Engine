@@ -4,7 +4,7 @@
 
 # Nebula Dreamcast Engine
 
-**Nebula Dreamcast Engine** is an open-source 3D game engine designed for the Sega Dreamcast. Build your scenes in the project editor, write your gameplay scripts in plain C, and package directly to CDI disc images that boot on real hardware.
+**Nebula Dreamcast Engine** is an open-source 3D game engine purpose-built for the Sega Dreamcast. Build your scenes in the project editor, write your gameplay scripts in plain C, and package directly to CDI disc images that boot on real hardware.
 
 ## Highlights
 - **Dreamcast-first runtime path** with rapid package/rebuild loops
@@ -57,13 +57,26 @@ where kos-cc
 - Material refs are staged to `data/materials` for packaging parity.
 
 ## Repository Layout
-- `src/` - editor + runtime generator/source code
+- `src/` - engine source ([directory guide](docs/Source_Directory_Structure.md))
+  - `camera/` - camera math and viewport utilities
+  - `editor/` - editor application, shared state, preferences
+  - `io/` - file format loaders and exporters
+  - `math/` - math primitives and utility functions
+  - `navmesh/` - navigation mesh building
+  - `nodes/` - scene node type definitions
+  - `platform/dreamcast/` - Dreamcast codegen and KOS bindings
+  - `runtime/` - play-mode physics, collision, script bridge
+  - `scene/` - scene serialization and management
+  - `ui/` - ImGui editor panels
+  - `viewport/` - 3D viewport rendering and gizmos
+  - `vmu/` - VMU icon tool
 - `assets/` - project assets
-- `thirdparty/` - dependencies/tooling integrations
+- `thirdparty/` - vendored dependencies (GLFW, ImGui, Recast/Detour)
 - `build_dreamcast/` - generated Dreamcast runtime/package output (project-local)
 - `docs/` - engine documentation
 
 ## Documentation
+- [Source Directory Structure](docs/Source_Directory_Structure.md) — module layout, dependency flow, and file format reference
 - [Dreamcast Binding API](docs/Dreamcast_Binding_API.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
 - [Dreamcast Header Reference](docs/Dreamcast_Header_Reference.md) — platform header files and types
 - [Multi-Script Runtime](docs/Multi_Script_Runtime.md) — running multiple gameplay scripts simultaneously

@@ -36,7 +36,7 @@
 #include <assimp/postprocess.h>
 
 #include "core/math_types.h"
-#include "core/camera3d.h"
+#include "camera/camera3d.h"
 #include "editor/prefs.h"
 #include "editor/project.h"
 #include "ui/import_pipeline.h"

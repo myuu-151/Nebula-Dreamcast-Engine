@@ -9,8 +9,8 @@ set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/thirdparty/imgui")
 add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/editor/main.cpp"
     "${CMAKE_SOURCE_DIR}/src/nodes/Camera3DNode.h"
-    "${CMAKE_SOURCE_DIR}/src/core/camera3d.cpp"
-    "${CMAKE_SOURCE_DIR}/src/core/camera3d.h"
+    "${CMAKE_SOURCE_DIR}/src/camera/camera3d.cpp"
+    "${CMAKE_SOURCE_DIR}/src/camera/camera3d.h"
     "${CMAKE_SOURCE_DIR}/src/core/math_types.h"
     "${CMAKE_SOURCE_DIR}/src/editor/prefs.cpp"
     "${CMAKE_SOURCE_DIR}/src/editor/prefs.h"

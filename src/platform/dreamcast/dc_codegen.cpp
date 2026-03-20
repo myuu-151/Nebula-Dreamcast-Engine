@@ -10,7 +10,7 @@
 #include "build_helpers.h"
 #include "../../navmesh/NavMeshBuilder.h"
 #include "../../core/math_types.h"
-#include "../../core/camera3d.h"
+#include "../../camera/camera3d.h"
 #include "../../core/math_utils.h"
 #include "../../core/texture_io.h"
 

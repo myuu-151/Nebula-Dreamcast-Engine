@@ -1,5 +1,5 @@
 #include "math_utils.h"
-#include "camera3d.h"
+#include "../camera/camera3d.h"
 #include <cmath>
 #include <cfloat>
 #include <algorithm>

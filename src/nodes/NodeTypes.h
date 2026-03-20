@@ -3,7 +3,7 @@
 // Per-node type headers
 #include "Audio3DNode.h"
 #include "Camera3DNode.h"
-#include "../core/camera3d.h"
+#include "../camera/camera3d.h"
 #include "NavMesh3DNode.h"
 #include "Node3DNode.h"
 #include "StaticMesh3DNode.h"

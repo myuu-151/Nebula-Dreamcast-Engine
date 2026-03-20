@@ -23,3 +23,11 @@ bool TransformChanged(const NavMesh3DNode& a, const NavMesh3DNode& b);
 void BeginTransformSnapshot();
 void EndTransformSnapshot();
 void CancelTransformSnapshot();
+
+// Unified transform interaction for the selected node.
+// Call once per frame while in the main loop.
+// forward/up/eye are the current camera vectors.
+// mouseX/mouseY are the current mouse position.
+// mouseClicked is true if LMB was just pressed this frame.
+void TickTransformInteraction(const Vec3& forward, const Vec3& up, const Vec3& eye,
+                              float mouseX, float mouseY, bool mouseClicked);

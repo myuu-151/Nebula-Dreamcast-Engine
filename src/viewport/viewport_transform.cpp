@@ -3,9 +3,11 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <cmath>
 
 #include "../editor/editor_state.h"
 #include "../editor/undo.h"
+#include "../math/math_utils.h"
 
 TransformMode gTransformMode = Transform_None;
 char gAxisLock = 0;
@@ -193,4 +195,219 @@ void CancelTransformSnapshot()
         gAudio3DNodes[gTransformIndex] = gTransformBefore;
 
     gHasTransformSnapshot = false;
+}
+
+// ---------------------------------------------------------------------------
+// Unified transform interaction
+// ---------------------------------------------------------------------------
+
+static float sRotateStartX = 0.0f;
+static float sRotateStartY = 0.0f;
+static float sRotateStartZ = 0.0f;
+static float sRotateStartMouseX = 0.0f;
+static float sRotateStartMouseY = 0.0f;
+
+struct TransformTarget
+{
+    float* x;
+    float* y;
+    float* z;
+    float* rotX;
+    float* rotY;
+    float* rotZ;
+    float* scaleX;
+    float* scaleY;
+    float* scaleZ;
+    int selectedId;
+    bool isNode3D;
+    bool isAudio3D;
+    float* innerRadius;
+    float* outerRadius;
+};
+
+static bool GetSelectedTransformTarget(TransformTarget& t)
+{
+    t = {};
+    t.innerRadius = nullptr;
+    t.outerRadius = nullptr;
+    t.isNode3D = false;
+    t.isAudio3D = false;
+
+    if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
+    {
+        auto& n = gAudio3DNodes[gSelectedAudio3D];
+        t = { &n.x, &n.y, &n.z, &n.rotX, &n.rotY, &n.rotZ,
+              &n.scaleX, &n.scaleY, &n.scaleZ,
+              gSelectedAudio3D, false, true, &n.innerRadius, &n.outerRadius };
+        return true;
+    }
+    if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
+    {
+        auto& n = gStaticMeshNodes[gSelectedStaticMesh];
+        t = { &n.x, &n.y, &n.z, &n.rotX, &n.rotY, &n.rotZ,
+              &n.scaleX, &n.scaleY, &n.scaleZ,
+              10000 + gSelectedStaticMesh, false, false, nullptr, nullptr };
+        return true;
+    }
+    if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
+    {
+        auto& n = gNode3DNodes[gSelectedNode3D];
+        t = { &n.x, &n.y, &n.z, &n.rotX, &n.rotY, &n.rotZ,
+              &n.scaleX, &n.scaleY, &n.scaleZ,
+              40000 + gSelectedNode3D, true, false, nullptr, nullptr };
+        return true;
+    }
+    if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+    {
+        auto& n = gNavMesh3DNodes[gSelectedNavMesh3D];
+        t = { &n.x, &n.y, &n.z, &n.rotX, &n.rotY, &n.rotZ,
+              &n.scaleX, &n.scaleY, &n.scaleZ,
+              50000 + gSelectedNavMesh3D, false, false, nullptr, nullptr };
+        return true;
+    }
+    return false;
+}
+
+void TickTransformInteraction(const Vec3& forward, const Vec3& up, const Vec3& eye,
+                              float mouseX, float mouseY, bool mouseClicked)
+{
+    TransformTarget t;
+    if (!GetSelectedTransformTarget(t))
+    {
+        gTransforming = false;
+        return;
+    }
+
+    if (gTransformMode == Transform_None)
+    {
+        gTransforming = false;
+        return;
+    }
+
+    float dx = 0.0f;
+    float dy = 0.0f;
+    if (!gTransforming)
+    {
+        gTransforming = true;
+        gLastTransformMouseX = mouseX;
+        gLastTransformMouseY = mouseY;
+    }
+    else
+    {
+        dx = mouseX - (float)gLastTransformMouseX;
+        dy = mouseY - (float)gLastTransformMouseY;
+        gLastTransformMouseX = mouseX;
+        gLastTransformMouseY = mouseY;
+    }
+
+    if ((dx != 0.0f || dy != 0.0f) && !gHasTransformSnapshot)
+    {
+        BeginTransformSnapshot();
+    }
+
+    // Build camera-space right/up axes
+    Vec3 right, upAxis;
+    Vec3 forwardAxis = forward;
+    right = { forwardAxis.y * up.z - forwardAxis.z * up.y,
+              forwardAxis.z * up.x - forwardAxis.x * up.z,
+              forwardAxis.x * up.y - forwardAxis.y * up.x };
+    float rlen = sqrtf(right.x*right.x + right.y*right.y + right.z*right.z);
+    if (rlen > 0.0001f) { right.x /= rlen; right.y /= rlen; right.z /= rlen; }
+    upAxis = { right.y * forwardAxis.z - right.z * forwardAxis.y,
+               right.z * forwardAxis.x - right.x * forwardAxis.z,
+               right.x * forwardAxis.y - right.y * forwardAxis.x };
+    float ulen = sqrtf(upAxis.x*upAxis.x + upAxis.y*upAxis.y + upAxis.z*upAxis.z);
+    if (ulen > 0.0001f) { upAxis.x /= ulen; upAxis.y /= ulen; upAxis.z /= ulen; }
+
+    float distToCam = sqrtf((*t.x - eye.x)*(*t.x - eye.x) +
+                            (*t.y - eye.y)*(*t.y - eye.y) +
+                            (*t.z - eye.z)*(*t.z - eye.z));
+    float moveScale = 0.0015f * distToCam;
+
+    if (gTransformMode == Transform_Grab)
+    {
+        Vec3 delta = { right.x * -dx * moveScale + upAxis.x * -dy * moveScale,
+                       right.y * -dx * moveScale + upAxis.y * -dy * moveScale,
+                       right.z * -dx * moveScale + upAxis.z * -dy * moveScale };
+
+        if (gAxisLock == 'X') { *t.x += delta.x; }
+        else if (gAxisLock == 'Y') { *t.y += delta.y; }
+        else if (gAxisLock == 'Z') { *t.z += delta.z; }
+        else { *t.x += delta.x; *t.y += delta.y; *t.z += delta.z; }
+
+        if (mouseClicked)
+        {
+            if (!gHasTransformSnapshot) BeginTransformSnapshot();
+            EndTransformSnapshot();
+            gTransformMode = Transform_None;
+        }
+    }
+    else if (gTransformMode == Transform_Rotate)
+    {
+        float rotScale = 1.5f;
+        if (!gHasRotatePreview || gRotatePreviewIndex != t.selectedId)
+        {
+            gHasRotatePreview = true;
+            gRotatePreviewIndex = t.selectedId;
+            sRotateStartX = *t.rotX;
+            sRotateStartY = *t.rotY;
+            sRotateStartZ = *t.rotZ;
+            sRotateStartMouseX = mouseX;
+            sRotateStartMouseY = mouseY;
+        }
+
+        float rdx = mouseX - sRotateStartMouseX;
+        float rdy = mouseY - sRotateStartMouseY;
+        gRotatePreviewX = sRotateStartX;
+        gRotatePreviewY = sRotateStartY;
+        gRotatePreviewZ = sRotateStartZ;
+
+        if (gAxisLock == 'X') gRotatePreviewX += rdy * rotScale;
+        else if (gAxisLock == 'Y') gRotatePreviewY += rdx * rotScale;
+        else if (gAxisLock == 'Z') gRotatePreviewZ += rdx * rotScale;
+        else { gRotatePreviewY += rdx * rotScale; gRotatePreviewX += rdy * rotScale; }
+
+        if (mouseClicked)
+        {
+            *t.rotX = gRotatePreviewX;
+            *t.rotY = gRotatePreviewY;
+            *t.rotZ = gRotatePreviewZ;
+            if (t.isNode3D)
+                SyncNode3DQuatFromEuler(gNode3DNodes[gSelectedNode3D]);
+            sRotateStartX = *t.rotX;
+            sRotateStartY = *t.rotY;
+            sRotateStartZ = *t.rotZ;
+            sRotateStartMouseX = mouseX;
+            sRotateStartMouseY = mouseY;
+            gHasRotatePreview = false;
+            if (!gHasTransformSnapshot) BeginTransformSnapshot();
+            EndTransformSnapshot();
+            gTransformMode = Transform_None;
+        }
+    }
+    else if (gTransformMode == Transform_Scale)
+    {
+        float s = 1.0f + ((-dy + dx) * 0.03f);
+        if (s < 0.01f) s = 0.01f;
+
+        if (t.isAudio3D && t.innerRadius && t.outerRadius)
+        {
+            *t.innerRadius *= s;
+            *t.outerRadius *= s;
+            if (*t.innerRadius < 0.01f) *t.innerRadius = 0.01f;
+            if (*t.outerRadius < 0.01f) *t.outerRadius = 0.01f;
+        }
+
+        if (gAxisLock == 'X') *t.scaleX *= s;
+        else if (gAxisLock == 'Y') *t.scaleY *= s;
+        else if (gAxisLock == 'Z') *t.scaleZ *= s;
+        else { *t.scaleX *= s; *t.scaleY *= s; *t.scaleZ *= s; }
+
+        if (mouseClicked)
+        {
+            if (!gHasTransformSnapshot) BeginTransformSnapshot();
+            EndTransformSnapshot();
+            gTransformMode = Transform_None;
+        }
+    }
 }

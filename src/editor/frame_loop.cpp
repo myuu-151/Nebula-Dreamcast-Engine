@@ -2,6 +2,7 @@
 #include "viewport_nav.h"
 #include "hotkeys.h"
 #include "editor_state.h"
+#include "../vmu/vmu_tool.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"

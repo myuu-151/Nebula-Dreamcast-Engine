@@ -1,5 +1,4 @@
 #include "vmu_tool.h"
-#include "../platform/dreamcast/dc_codegen.h"
 #include "../io/texture_io.h"
 
 #include <filesystem>
@@ -11,19 +10,21 @@
 #include <cstdlib>
 #include <cstdint>
 
-// Extern declarations for VMU globals defined in main.cpp
-extern std::array<uint8_t, 48 * 32> gVmuMono;
-extern bool gVmuHasImage;
-extern std::string gVmuAssetPath;
-extern int gVmuCurrentLoadedType;
-extern std::vector<VmuAnimLayer> gVmuAnimLayers;
-extern int gVmuAnimLayerSel;
-extern int gVmuAnimTotalFrames;
-extern int gVmuAnimPlayhead;
-extern bool gVmuAnimLoop;
-extern int gVmuAnimSpeedMode;
-extern std::string gVmuLinkedPngPath;
-extern std::string gVmuLinkedAnimPath;
+// --- VMU state ---
+bool gShowVmuTool = false;
+bool gVmuHasImage = false;
+bool gVmuLoadOnBoot = false;
+std::string gVmuAssetPath;
+std::vector<VmuAnimLayer> gVmuAnimLayers = { {"Layer 1", true, 0, 0} };
+int gVmuAnimLayerSel = 0;
+int gVmuAnimTotalFrames = 24;
+int gVmuAnimPlayhead = 0;
+bool gVmuAnimLoop = false;
+int gVmuAnimSpeedMode = 1;
+int gVmuCurrentLoadedType = 0;
+std::string gVmuLinkedPngPath;
+std::string gVmuLinkedAnimPath;
+std::array<uint8_t, 48 * 32> gVmuMono = {};
 
 bool LoadVmuPngToMono(const std::string& path, std::string& outErr)
 {

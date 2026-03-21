@@ -2,16 +2,12 @@
 
 #include <string>
 #include <vector>
-#include <array>
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
-#include <cstdint>
 
 #include "../math/math_types.h"
 #include "../nodes/NodeTypes.h"
-#include "../platform/dreamcast/dc_codegen.h"
-
 // --- Node vectors ---
 extern std::vector<Audio3DNode>       gAudio3DNodes;
 extern std::vector<StaticMesh3DNode>  gStaticMeshNodes;
@@ -90,22 +86,6 @@ extern std::unordered_map<int, float> gEditorAnimSpeed;
 extern std::unordered_map<int, bool>  gEditorAnimPlaying;
 extern std::unordered_map<int, bool>  gEditorAnimFinished;
 extern std::unordered_map<int, bool>  gEditorAnimLoop;
-
-// --- VMU state ---
-extern bool gShowVmuTool;
-extern bool gVmuHasImage;
-extern bool gVmuLoadOnBoot;
-extern std::string gVmuAssetPath;
-extern std::vector<VmuAnimLayer> gVmuAnimLayers;
-extern int gVmuAnimLayerSel;
-extern int gVmuAnimTotalFrames;
-extern int gVmuAnimPlayhead;
-extern bool gVmuAnimLoop;
-extern int gVmuAnimSpeedMode;
-extern int gVmuCurrentLoadedType;
-extern std::string gVmuLinkedPngPath;
-extern std::string gVmuLinkedAnimPath;
-extern std::array<uint8_t, 48 * 32> gVmuMono;
 
 // --- Outliner collapse state ---
 extern std::unordered_set<std::string> gCollapsedAudioRoots;

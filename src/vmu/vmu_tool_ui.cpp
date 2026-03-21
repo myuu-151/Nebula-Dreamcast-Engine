@@ -11,8 +11,7 @@
 #include <cctype>
 #include <cstdint>
 
-#include "../platform/dreamcast/dc_codegen.h"  // VmuAnimLayer
-#include "vmu_tool.h"                           // LoadVmuPngToMono, SaveVmuFrameData, LoadVmuFrameData
+#include "vmu_tool.h"
 #include "../editor/project.h"                     // gProjectDir, SetProjectVmuAnim, SetProjectVmuLoadOnBoot
 #include "../io/texture_io.h"           // SaveVmuMonoPng
 #include "../editor/file_dialogs.h"            // PickPngFileDialog, PickVmuFrameDataDialog

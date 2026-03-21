@@ -2,6 +2,7 @@
 #include "main_menu.h"
 #include "../editor/editor_state.h"
 #include "../editor/viewport_nav.h"
+#include "../vmu/vmu_tool.h"
 #include "../editor/project.h"
 #include "../runtime/script_compile.h"
 #include "../scene/scene_manager.h"

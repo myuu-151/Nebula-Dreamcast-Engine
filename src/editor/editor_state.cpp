@@ -79,22 +79,6 @@ std::unordered_map<int, bool>  gEditorAnimPlaying;
 std::unordered_map<int, bool>  gEditorAnimFinished;
 std::unordered_map<int, bool>  gEditorAnimLoop;
 
-// --- VMU state ---
-bool gShowVmuTool = false;
-bool gVmuHasImage = false;
-bool gVmuLoadOnBoot = false;
-std::string gVmuAssetPath;
-std::vector<VmuAnimLayer> gVmuAnimLayers = { {"Layer 1", true, 0, 0} };
-int gVmuAnimLayerSel = 0;
-int gVmuAnimTotalFrames = 24;
-int gVmuAnimPlayhead = 0;
-bool gVmuAnimLoop = false;
-int gVmuAnimSpeedMode = 1;
-int gVmuCurrentLoadedType = 0;
-std::string gVmuLinkedPngPath;
-std::string gVmuLinkedAnimPath;
-std::array<uint8_t, 48 * 32> gVmuMono = {};
-
 // --- Outliner collapse state ---
 std::unordered_set<std::string> gCollapsedAudioRoots;
 std::unordered_set<std::string> gCollapsedStaticRoots;

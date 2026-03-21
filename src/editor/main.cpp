@@ -69,6 +69,7 @@
 #include "viewport/background.h"
 #include "viewport/static_mesh_render.h"
 #include "viewport/viewport_selection.h"
+#include "editor/viewport_nav.h"
 #include "viewport/node_helpers.h"
 #include "editor/editor_state.h"
 #include "editor/undo.h"
@@ -258,27 +259,8 @@ int main(int, char**)
     if (!glfwInit())
         return 1;
 
-    float orbitYaw = -139.75f;
-    float orbitPitch = -14.3f;
-    float viewYaw = -138.45f;
-    float viewPitch = -12.1f;
-    float distance = 3.2f;
-    Vec3 orbitCenter = { 1.407f, 0.960f, 2.759f };
+    EditorViewportNav nav;
     Vec3 camPos = { 0.0f, 0.0f, 0.0f };
-    double lastX = 0.0, lastY = 0.0;
-    bool dragging = false;
-    bool rotating = false;
-    bool viewLocked = true;
-    float scrollDelta = 0.0f;
-
-    // Preserve editor camera when entering play mode so exit can restore cleanly.
-    bool playCamSnapshotValid = false;
-    float playSavedOrbitYaw = 0.0f;
-    float playSavedOrbitPitch = 0.0f;
-    float playSavedViewYaw = 0.0f;
-    float playSavedViewPitch = 0.0f;
-    float playSavedDistance = 10.0f;
-    Vec3 playSavedOrbitCenter = { 0.0f, 0.0f, 0.0f };
 
     bool playSceneSnapshotValid = false;
     int playSavedActiveScene = -1;
@@ -338,11 +320,11 @@ int main(int, char**)
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
-    glfwSetWindowUserPointer(window, &scrollDelta);
+    glfwSetWindowUserPointer(window, &nav);
     glfwSetScrollCallback(window, [](GLFWwindow* win, double, double yoff)
     {
-        float* sd = (float*)glfwGetWindowUserPointer(win);
-        if (sd) *sd += (float)yoff;
+        auto* n = (EditorViewportNav*)glfwGetWindowUserPointer(win);
+        if (n) n->scrollDelta += (float)yoff;
     });
     glfwSetDropCallback(window, [](GLFWwindow*, int count, const char** paths)
     {
@@ -401,151 +383,7 @@ int main(int, char**)
             PollPlayScriptCompile();
         TickPlayScriptRuntime(deltaTime, now);
 
-        // Mouse orbit (MMB) / rotate in place (RMB)
-        double mx, my;
-        glfwGetCursorPos(window, &mx, &my);
-        int mmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE);
-        int rmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
-
-        const float orbitSensitivity = 0.25f;
-        const float rotateSensitivity = 0.10f;
-
-        bool navMouseAllowed = !ImGui::GetIO().WantCaptureMouse;
-        bool navKeyAllowed = !ImGui::GetIO().WantCaptureKeyboard;
-
-        if (mmb == GLFW_PRESS && navMouseAllowed)
-        {
-            if (!dragging)
-            {
-                dragging = true;
-                lastX = mx;
-                lastY = my;
-
-                // lock orbit center to current view target before orbiting
-                float viewYawRad = viewYaw * 3.14159f / 180.0f;
-                float viewPitchRad = viewPitch * 3.14159f / 180.0f;
-                Vec3 forward = {
-                    cosf(viewPitchRad) * cosf(viewYawRad),
-                    sinf(viewPitchRad),
-                    cosf(viewPitchRad) * sinf(viewYawRad)
-                };
-                // compute eye from current orbit params
-                float oYawRad = orbitYaw * 3.14159f / 180.0f;
-                float oPitchRad = orbitPitch * 3.14159f / 180.0f;
-                Vec3 eye = {
-                    orbitCenter.x - distance * cosf(oPitchRad) * cosf(oYawRad),
-                    orbitCenter.y - distance * sinf(oPitchRad),
-                    orbitCenter.z - distance * cosf(oPitchRad) * sinf(oYawRad)
-                };
-                orbitCenter = { eye.x + forward.x * distance, eye.y + forward.y * distance, eye.z + forward.z * distance };
-                orbitYaw = viewYaw;
-                orbitPitch = viewPitch;
-            }
-            else
-            {
-                double dx = mx - lastX;
-                double dy = my - lastY;
-                lastX = mx;
-                lastY = my;
-
-                orbitYaw   -= (float)dx * orbitSensitivity;
-                orbitPitch -= (float)dy * orbitSensitivity;
-                if (orbitPitch > 89.0f) orbitPitch = 89.0f;
-                if (orbitPitch < -89.0f) orbitPitch = -89.0f;
-
-                // keep view aligned to orbit (look at orbit center)
-                viewLocked = true;
-                viewYaw = orbitYaw;
-                viewPitch = orbitPitch;
-            }
-        }
-        else
-        {
-            dragging = false;
-        }
-
-        if (rmb == GLFW_PRESS && navMouseAllowed)
-        {
-            if (!rotating)
-            {
-                rotating = true;
-                lastX = mx;
-                lastY = my;
-            }
-            else
-            {
-                double dx = mx - lastX;
-                double dy = my - lastY;
-                lastX = mx;
-                lastY = my;
-
-                viewLocked = false;
-                viewYaw   -= (float)dx * rotateSensitivity;
-                viewPitch -= (float)dy * rotateSensitivity;
-                if (viewPitch > 89.0f) viewPitch = 89.0f;
-                if (viewPitch < -89.0f) viewPitch = -89.0f;
-            }
-        }
-        else
-        {
-            rotating = false;
-        }
-
-        if (scrollDelta != 0.0f && navMouseAllowed)
-        {
-            float viewYawRad = viewYaw * 3.14159f / 180.0f;
-            float viewPitchRad = viewPitch * 3.14159f / 180.0f;
-            Vec3 forward = {
-                cosf(viewPitchRad) * cosf(viewYawRad),
-                sinf(viewPitchRad),
-                cosf(viewPitchRad) * sinf(viewYawRad)
-            };
-            float move = scrollDelta * 0.5f;
-            orbitCenter.x += forward.x * move;
-            orbitCenter.y += forward.y * move;
-            orbitCenter.z += forward.z * move;
-            scrollDelta = 0.0f;
-        }
-
-        // WASD roaming (only while RMB held)
-        if (rmb == GLFW_PRESS && navMouseAllowed && navKeyAllowed)
-        {
-            float moveSpeed = 5.0f; // units per second
-            float move = moveSpeed * deltaTime;
-
-            float yawRad = viewYaw * 3.14159f / 180.0f;
-            Vec3 forwardXZ = { cosf(yawRad), 0.0f, sinf(yawRad) };
-            Vec3 rightXZ = { -sinf(yawRad), 0.0f, cosf(yawRad) };
-
-            if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            {
-                orbitCenter.x += forwardXZ.x * move;
-                orbitCenter.z += forwardXZ.z * move;
-            }
-            if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            {
-                orbitCenter.x -= forwardXZ.x * move;
-                orbitCenter.z -= forwardXZ.z * move;
-            }
-            if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            {
-                orbitCenter.x += rightXZ.x * move;
-                orbitCenter.z += rightXZ.z * move;
-            }
-            if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            {
-                orbitCenter.x -= rightXZ.x * move;
-                orbitCenter.z -= rightXZ.z * move;
-            }
-            if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
-            {
-                orbitCenter.y += move;
-            }
-            if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
-            {
-                orbitCenter.y -= move;
-            }
-        }
+        TickEditorViewportNav(nav, window, deltaTime);
 
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
@@ -570,13 +408,7 @@ int main(int, char**)
         // Camera
         float aspect = (float)display_w / (float)display_h;
         Mat4 proj = Mat4Perspective(45.0f * 3.14159f / 180.0f, aspect, 0.1f, 2000.0f);
-        float orbitYawRad = orbitYaw * 3.14159f / 180.0f;
-        float orbitPitchRad = orbitPitch * 3.14159f / 180.0f;
-        Vec3 eye = {
-            orbitCenter.x - distance * cosf(orbitPitchRad) * cosf(orbitYawRad),
-            orbitCenter.y - distance * sinf(orbitPitchRad),
-            orbitCenter.z - distance * cosf(orbitPitchRad) * sinf(orbitYawRad)
-        };
+        Vec3 eye = nav.ComputeEye();
         gEye = eye;
 
         Camera3DNode* activeCam = nullptr;
@@ -621,8 +453,8 @@ int main(int, char**)
             eye = playView.eye;
 
             Vec3 playForward = playView.basis.forward;
-            viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
-            viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
+            nav.viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
+            nav.viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
 
             static double sLastParityCamLog = -10.0;
             if ((now - sLastParityCamLog) >= 1.0)
@@ -639,15 +471,15 @@ int main(int, char**)
         UpdateAudio3DNodes(eye.x, eye.y, eye.z);
 
         // If view is locked, keep looking at orbit center
-        if (viewLocked && !(activeCam && gPlayMode))
+        if (nav.viewLocked && !(activeCam && gPlayMode))
         {
-            Vec3 dir = { orbitCenter.x - eye.x, orbitCenter.y - eye.y, orbitCenter.z - eye.z };
+            Vec3 dir = { nav.orbitCenter.x - eye.x, nav.orbitCenter.y - eye.y, nav.orbitCenter.z - eye.z };
             float dlen = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
             if (dlen > 0.0001f)
             {
                 dir.x /= dlen; dir.y /= dlen; dir.z /= dlen;
-                viewYaw = atan2f(dir.z, dir.x) * 180.0f / 3.14159f;
-                viewPitch = asinf(dir.y) * 180.0f / 3.14159f;
+                nav.viewYaw = atan2f(dir.z, dir.x) * 180.0f / 3.14159f;
+                nav.viewPitch = asinf(dir.y) * 180.0f / 3.14159f;
             }
         }
 
@@ -661,8 +493,8 @@ int main(int, char**)
         }
         else
         {
-            float viewYawRad = viewYaw * 3.14159f / 180.0f;
-            float viewPitchRad = viewPitch * 3.14159f / 180.0f;
+            float viewYawRad = nav.viewYaw * 3.14159f / 180.0f;
+            float viewPitchRad = nav.viewPitch * 3.14159f / 180.0f;
             forward = {
                 cosf(viewPitchRad) * cosf(viewYawRad),
                 sinf(viewPitchRad),
@@ -745,15 +577,7 @@ int main(int, char**)
                     gPlayMode = false;
                     gPlayOriginalScenes.clear();
                     EndPlayScriptRuntime();
-                    if (playCamSnapshotValid)
-                    {
-                        orbitYaw = playSavedOrbitYaw;
-                        orbitPitch = playSavedOrbitPitch;
-                        viewYaw = playSavedViewYaw;
-                        viewPitch = playSavedViewPitch;
-                        distance = playSavedDistance;
-                        orbitCenter = playSavedOrbitCenter;
-                    }
+                    nav.Restore();
                     if (playSceneSnapshotValid)
                     {
                         gOpenScenes = playSavedOpenScenes;
@@ -972,13 +796,7 @@ RenderImGuiOnly:
         {
             if (!gPlayMode)
             {
-                playSavedOrbitYaw = orbitYaw;
-                playSavedOrbitPitch = orbitPitch;
-                playSavedViewYaw = viewYaw;
-                playSavedViewPitch = viewPitch;
-                playSavedDistance = distance;
-                playSavedOrbitCenter = orbitCenter;
-                playCamSnapshotValid = true;
+                nav.Snapshot();
 
                 // Snapshot scene/editor state so play-mode changes do not persist after stop.
                 playSavedActiveScene = gActiveScene;
@@ -1040,15 +858,7 @@ RenderImGuiOnly:
                 gPlayMode = false;
                 gPlayOriginalScenes.clear();
                 EndPlayScriptRuntime();
-                if (playCamSnapshotValid)
-                {
-                    orbitYaw = playSavedOrbitYaw;
-                    orbitPitch = playSavedOrbitPitch;
-                    viewYaw = playSavedViewYaw;
-                    viewPitch = playSavedViewPitch;
-                    distance = playSavedDistance;
-                    orbitCenter = playSavedOrbitCenter;
-                }
+                nav.Restore();
                 if (playSceneSnapshotValid)
                 {
                     gOpenScenes = playSavedOpenScenes;
@@ -1296,9 +1106,9 @@ RenderImGuiOnly:
             ImGui::Separator();
             ImGui::Text("Editor Camera");
             ImGui::Text("pos: %.3f, %.3f, %.3f", camPos.x, camPos.y, camPos.z);
-            ImGui::Text("view rot(yaw/pitch): %.2f, %.2f", viewYaw, viewPitch);
-            ImGui::Text("orbit rot(yaw/pitch): %.2f, %.2f", orbitYaw, orbitPitch);
-            ImGui::Text("orbit center: %.3f, %.3f, %.3f", orbitCenter.x, orbitCenter.y, orbitCenter.z);
+            ImGui::Text("view rot(yaw/pitch): %.2f, %.2f", nav.viewYaw, nav.viewPitch);
+            ImGui::Text("orbit rot(yaw/pitch): %.2f, %.2f", nav.orbitYaw, nav.orbitPitch);
+            ImGui::Text("orbit center: %.3f, %.3f, %.3f", nav.orbitCenter.x, nav.orbitCenter.y, nav.orbitCenter.z);
             ImGui::End();
         }
 
@@ -1594,17 +1404,17 @@ RenderImGuiOnly:
         ImGui::End();
 
         // Right panel: Inspector (extracted to src/ui/inspector.cpp)
-        gViewYaw = viewYaw;
-        gViewPitch = viewPitch;
-        gViewDistance = distance;
-        gOrbitCenter = orbitCenter;
+        gViewYaw = nav.viewYaw;
+        gViewPitch = nav.viewPitch;
+        gViewDistance = nav.distance;
+        gOrbitCenter = nav.orbitCenter;
         gDisplayW = display_w;
         gDisplayH = display_h;
         DrawInspectorPanel(vp, topBarH, rightPanelWidth);
-        viewYaw = gViewYaw;
-        viewPitch = gViewPitch;
-        distance = gViewDistance;
-        orbitCenter = gOrbitCenter;
+        nav.viewYaw = gViewYaw;
+        nav.viewPitch = gViewPitch;
+        nav.distance = gViewDistance;
+        nav.orbitCenter = gOrbitCenter;
         // NOTE: eye is recomputed each frame from orbitCenter/viewYaw/viewPitch/distance
 
         DrawSceneTabs(vp, topBarH, leftPanelWidth, rightPanelWidth);
@@ -1664,7 +1474,7 @@ RenderImGuiOnly:
             glGetFloatv(GL_POINT_SIZE_RANGE, pointRange);
             pointRangeInit = true;
         }
-        ImGui::Text("Debug: distance=%.2f FOV=45", distance);
+        ImGui::Text("Debug: distance=%.2f FOV=45", nav.distance);
         ImGui::Text("Star radius=200, count=4000");
         ImGui::Text("Screen-space star size=40px");
         ImGui::Text("GL_POINT_SIZE_RANGE: %.1f - %.1f", pointRange[0], pointRange[1]);

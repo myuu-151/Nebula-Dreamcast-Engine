@@ -38,12 +38,12 @@ The editor application entry point, frame loop, shared editor state, and input h
 
 | File | Purpose |
 |------|---------|
-| `main.cpp` | Editor entry point: GLFW/ImGui init, window setup, delegates to `TickEditorFrame` |
-| `frame_loop.h/.cpp` | Per-frame tick: input polling, script runtime, 3D rendering, ImGui UI dispatch |
-| `viewport_nav.h/.cpp` | Editor viewport camera controller (orbit, pan, zoom, WASD roam), `EvaluateFrameCamera` (per-frame camera evaluation) |
+| `main.cpp` | Editor entry point: GLFW/ImGui init, window icon, callback wiring, main loop, shutdown |
+| `frame_loop.h/.cpp` | Per-frame tick: input polling, script runtime, 3D rendering, ImGui UI dispatch. `InstallDropCallback` (drag-and-drop import) |
+| `viewport_nav.h/.cpp` | Editor viewport camera controller (orbit, pan, zoom, WASD roam), `EvaluateFrameCamera` (per-frame camera evaluation), `InstallViewportScrollCallback` |
 | `hotkeys.h/.cpp` | GLFW-level transform hotkeys (G/R/S/X/Y/Z), Esc (play-mode stop), Delete (node deletion), Ctrl shortcuts (undo/redo, save, copy/paste) |
 | `editor_state.h/.cpp` | Shared global state: node arrays (`gStaticMeshNodes`, `gNode3DNodes`, etc.), selection, play-mode flags, scene snapshot helpers |
-| `project.h/.cpp` | Project file management (`gProjectDir`, `gProjectFile`), open/save |
+| `project.h/.cpp` | Project file management (`gProjectDir`, `gProjectFile`), open/save, path utilities (`GetExecutableDirectory`, `ResolveEditorAssetPath`, `ToProjectRelativePath`, `GetNebMeshMetaPath`) |
 | `prefs.h/.cpp` | Editor preferences (DreamSDK path, MSVC path), persisted in `editor_prefs.ini` |
 | `file_dialogs.h/.cpp` | Win32 open/save file dialogs |
 | `undo.h/.cpp` | Undo/redo system |

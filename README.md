@@ -58,7 +58,7 @@ where kos-cc
 - Material refs are staged to `data/materials` for packaging parity.
 
 ## Repository Layout
-- `src/` - engine source ([directory guide](docs/Source_Directory_Structure.md))
+- `src/` - engine source ([directory guide](docs/getting-started/Source_Directory_Structure.md))
   - `camera/` - camera math and viewport utilities
   - `editor/` - editor application, shared state, preferences
   - `io/` - file format loaders and exporters
@@ -77,14 +77,20 @@ where kos-cc
 - `docs/` - engine documentation
 
 ## Documentation
-- [Source Directory Structure](docs/Source_Directory_Structure.md) — module layout, dependency flow, and file format reference
-- [Dreamcast Binding API](docs/Dreamcast_Binding_API.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
-- [Dreamcast Header Reference](docs/Dreamcast_Header_Reference.md) — platform header files and types
-- [Multi-Script Runtime](docs/Multi_Script_Runtime.md) — running multiple gameplay scripts simultaneously
-- [Script Formatting & Syntax](docs/Script_Formatting_Syntax_Semantics.md) — how to write C gameplay scripts
-- [Editor Play Mode](docs/Editor_Play_Mode.md) — compilation, DLL caching, progress bar, hot reload, scene switching
-- [Asset Pipeline](docs/Asset_Pipeline.md) — texture, material, mesh, and animation formats and export
-- [Dependencies & Paths](docs/Nebula_Dependencies_and_Paths.md) — toolchain setup and path requirements
+
+See [docs/README.md](docs/README.md) for the full documentation index and learning path.
+
+- [Quickstart Tutorial](docs/getting-started/Quickstart_Tutorial.md) — build, create a project, write a script, run on Dreamcast
+- [Source Directory Structure](docs/getting-started/Source_Directory_Structure.md) — module layout and dependency flow
+- [Scripting](docs/getting-started/Scripting.md) — C gameplay scripts and NB_RT_* API reference
+- [Dreamcast Binding API](docs/dreamcast/Dreamcast_Binding_API.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
+- [Dreamcast Export](docs/dreamcast/Dreamcast_Export.md) — codegen, packaging, disc layout
+- [Dreamcast Header Reference](docs/dreamcast/Dreamcast_Header_Reference.md) — platform header files and types
+- [Script Formatting & Syntax](docs/getting-started/Script_Formatting_Syntax_Semantics.md) — how to write C gameplay scripts
+- [Multi-Script Runtime](docs/getting-started/Multi_Script_Runtime.md) — running multiple gameplay scripts simultaneously
+- [Editor Play Mode](docs/editor/Editor_Play_Mode.md) — compilation, DLL caching, progress bar, hot reload, scene switching
+- [Asset Pipeline](docs/assets/Asset_Pipeline.md) — texture, material, mesh, and animation formats and export
+- [Dependencies & Paths](docs/getting-started/Nebula_Dependencies_and_Paths.md) — toolchain setup and path requirements
 
 ## File Formats
 - **.nebproj** - project file

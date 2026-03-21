@@ -410,3 +410,11 @@ After `GenerateDreamcastPackage()` writes all files and stages all assets, the u
 7. **CDI creation**: `cdi4dc` converts the ISO into a `.cdi` disc image (`nebula_dreamcast.cdi`), which is the standard format for Dreamcast emulators and disc burning tools.
 
 The final output, `nebula_dreamcast.cdi`, can be loaded directly in an emulator (e.g. lxdream, Flycast, redream) or burned to a CD-R for real hardware.
+
+## See Also
+
+- [Scripting](../getting-started/Scripting.md) -- gameplay script system and NB_RT_* bridge functions
+- [Dreamcast Binding API](Dreamcast_Binding_API.md) -- platform binding layer reference
+- [Dreamcast Header Reference](Dreamcast_Header_Reference.md) -- KosBindings and KosInput header details
+- [File Formats](../assets/File_Formats.md) -- binary and text format specifications
+- [VMU Tool](../editor/VMU_Tool.md) -- VMU icon and animation editor

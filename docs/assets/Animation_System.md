@@ -284,3 +284,10 @@ The function `DrawNebMeshMiniPreview()` renders a small wireframe 3D viewport wi
 | `src/platform/dreamcast/dc_codegen.cpp` | Dreamcast code generation for animation slots and bridge functions |
 | `src/platform/dreamcast/KosBindings.h` | Runtime animation bridge API declarations |
 | `src/platform/dreamcast/KosBindings.c` | Weak fallback stubs for animation bridge functions |
+
+## See Also
+
+- [Mesh and Materials](Mesh_and_Materials.md) -- mesh import pipeline and material slots
+- [File Formats](File_Formats.md) -- .nebanim binary format specification
+- [Node Types](../scene-and-nodes/Node_Types.md) -- StaticMesh3DNode animation slot fields
+- [Dreamcast Export](../dreamcast/Dreamcast_Export.md) -- animation staging and runtime code generation

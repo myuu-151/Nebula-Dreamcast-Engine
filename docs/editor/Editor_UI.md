@@ -424,6 +424,13 @@ When using embedded playback:
 - `RefreshNebMeshInspectorClipIfNeeded()` -- reloads the animation clip when the source path changes.
 - `GetMeshUvLayerCountForMaterial()` -- looks up how many UV layers the mesh that uses a given material has (used by the material inspector's "Vertex Shading UVs" combo).
 
+## See Also
+
+- [Editor Core](../getting-started/Editor_Core.md) -- editor setup and project management
+- [Viewport and Rendering](Viewport_and_Rendering.md) -- 3D viewport and rendering pipeline
+- [Scene System](../scene-and-nodes/Scene_System.md) -- scene serialization and multi-scene management
+- [Mesh and Materials](../assets/Mesh_and_Materials.md) -- mesh import, material slots, and textures
+
 ---
 
 ## 10. Import Pipeline

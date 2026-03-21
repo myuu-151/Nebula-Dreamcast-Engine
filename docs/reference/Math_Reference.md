@@ -404,3 +404,9 @@ Each branch computes one component from a square root of a positive quantity (gu
 | Nlerp instead of Slerp | Cheaper, sufficient for per-frame interpolation with small time steps |
 | Shepperd's method | Robust matrix-to-quaternion for arbitrary orientations (surface alignment) |
 | 0.0001 thresholds | Prevent NaN/Inf from degenerate inputs without rejecting valid near-zero values |
+
+## See Also
+
+- [Camera System](../scene-and-nodes/Camera_System.md) -- camera matrix pipeline and projection
+- [Viewport and Rendering](../editor/Viewport_and_Rendering.md) -- 3D viewport rendering and transform interaction
+- [Node Types](../scene-and-nodes/Node_Types.md) -- quaternion rotation on Node3DNode

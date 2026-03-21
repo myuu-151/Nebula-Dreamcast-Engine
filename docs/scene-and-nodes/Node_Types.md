@@ -370,3 +370,11 @@ The quaternion approach is essential for Node3D because these nodes are used for
 - `Q4FromAxisAngle(ax, ay, az, angleDeg)` -- Constructs a quaternion from an axis and angle in degrees.
 - `EulerToQ4(rotX, rotY, rotZ)` -- Converts Euler angles to a quaternion using the `Rz * Ry * Rx` convention.
 - `Q4ToEuler(q, rotX, rotY, rotZ)` -- Extracts Euler angles from a quaternion, with clamping to avoid singularities near the poles.
+
+## See Also
+
+- [Scene System](Scene_System.md) -- scene serialization and multi-scene management
+- [Camera System](Camera_System.md) -- camera nodes, projection, and viewport navigation
+- [Mesh and Materials](../assets/Mesh_and_Materials.md) -- mesh import, material slots, and textures
+- [Physics and Collision](../gameplay/Physics_and_Collision.md) -- runtime collision and physics system
+- [Navigation](../gameplay/Navigation.md) -- navmesh building and pathfinding

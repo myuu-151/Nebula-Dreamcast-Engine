@@ -279,3 +279,10 @@ Where `xxxxx` is the 1-based scene index, zero-padded to 5 digits. For example, 
 4. **Query paths.** Use `NB_RT_NavMeshFindPath()` to get a series of waypoints from start to goal. Move your agent along the waypoints each frame.
 
 5. **Package for Dreamcast.** The packaging step in `dc_codegen.cpp` builds a navmesh for each scene and writes the BIN files to the disc image. No manual export step is needed.
+
+## See Also
+
+- [Node Types](../scene-and-nodes/Node_Types.md) -- NavMesh3DNode volume definitions
+- [Physics and Collision](Physics_and_Collision.md) -- runtime collision and ground snap system
+- [Scripting](../getting-started/Scripting.md) -- NB_RT_NavMesh* bridge functions
+- [Dreamcast Export](../dreamcast/Dreamcast_Export.md) -- per-scene navmesh binary export

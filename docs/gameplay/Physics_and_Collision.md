@@ -443,3 +443,9 @@ Source: `src/runtime/runtime_bridge.cpp` (NB_RT_RaycastDown, NB_RT_RaycastDownWi
 | `src/runtime/runtime_bridge.cpp` | Raycast, AABB overlap, on-floor, and collision property get/set implementations |
 | `src/nodes/Node3DNode.h` | `Node3DNode` struct with collision fields |
 | `src/math/math_utils.h` | `QuatFromNormalAndYaw`, `SyncNode3DEulerFromQuat`, and other math helpers |
+
+## See Also
+
+- [Node Types](../scene-and-nodes/Node_Types.md) -- Node3DNode collision fields and hierarchy
+- [Scripting](../getting-started/Scripting.md) -- NB_RT_* bridge functions for collision and physics
+- [Navigation](Navigation.md) -- navmesh pathfinding system

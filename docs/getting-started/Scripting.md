@@ -351,3 +351,11 @@ On Dreamcast, the scripting system works differently at the implementation level
 **Script hooks not called** -- Make sure your hook functions are marked with `NB_SCRIPT_EXPORT` and have the exact signatures shown above. Missing the export macro means `GetProcAddress` cannot find the symbols in the DLL.
 
 **Node not found at runtime** -- Node name strings are case-sensitive and must match the scene exactly. Check for trailing spaces or typos.
+
+## See Also
+
+- [Script Formatting Syntax Semantics](Script_Formatting_Syntax_Semantics.md) -- script file conventions and syntax rules
+- [Multi Script Runtime](Multi_Script_Runtime.md) -- running multiple scripts simultaneously
+- [Dreamcast Binding API v2](Dreamcast_Binding_API_v2.md) -- complete NB_RT_* function reference
+- [Physics and Collision](../gameplay/Physics_and_Collision.md) -- runtime collision and physics system
+- [Navigation](../gameplay/Navigation.md) -- navmesh pathfinding system

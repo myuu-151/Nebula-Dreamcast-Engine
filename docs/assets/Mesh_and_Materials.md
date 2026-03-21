@@ -550,3 +550,10 @@ Dreamcast packaging
   - Deterministic short names: Mxxxxx, Txxxxx, Sxxxxx
   - Build disc image
 ```
+
+## See Also
+
+- [Node Types](../scene-and-nodes/Node_Types.md) -- StaticMesh3DNode fields and material slot resolution
+- [Animation System](Animation_System.md) -- vertex animation baking and playback
+- [File Formats](File_Formats.md) -- binary format specifications for .nebmesh, .nebtex, .nebmat
+- [Dreamcast Export](../dreamcast/Dreamcast_Export.md) -- asset staging and texture conversion for Dreamcast

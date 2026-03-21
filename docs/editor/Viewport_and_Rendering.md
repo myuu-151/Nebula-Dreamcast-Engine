@@ -334,3 +334,11 @@ This module provides world-transform computation and hierarchy utilities used th
 ### IsCameraUnderNode3D
 
 `IsCameraUnderNode3D(cam, nodeName)` walks up the camera's parent chain to determine if it is a descendant of the named node. Used to determine if moving a Node3D should also affect the viewport camera.
+
+## See Also
+
+- [Editor Core](../getting-started/Editor_Core.md) -- editor setup and project management
+- [Editor UI](Editor_UI.md) -- ImGui-based UI panels and inspectors
+- [Node Types](../scene-and-nodes/Node_Types.md) -- scene node definitions and hierarchy
+- [Camera System](../scene-and-nodes/Camera_System.md) -- camera nodes, projection, and matrix construction
+- [Math Reference](../reference/Math_Reference.md) -- Vec3, Mat4, quaternion operations

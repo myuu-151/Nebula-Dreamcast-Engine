@@ -279,3 +279,8 @@ cd_root/data/vmu/
 |-----|---------|--------|
 | Space | When text input is not focused | Toggle Play/Stop |
 | Ctrl+Z | Anytime in VMU Tool | Undo last draw stroke (up to 64 levels) |
+
+## See Also
+
+- [Dreamcast Export](../dreamcast/Dreamcast_Export.md) -- VMU icon baking and disc image packaging
+- [Editor Core](../getting-started/Editor_Core.md) -- editor setup and project management

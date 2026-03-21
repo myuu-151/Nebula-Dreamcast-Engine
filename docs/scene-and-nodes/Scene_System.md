@@ -306,3 +306,10 @@ The function also updates `selectedAssetPath` (the currently selected item in th
 ```
 
 The global node vectors are always the "live" copy of the active scene. Switching scenes saves the live copy back and loads the new scene out. Saving writes the live copy (or the stored copy for non-active scenes) to disk through the text serializer.
+
+## See Also
+
+- [Node Types](Node_Types.md) -- scene node definitions and hierarchy
+- [Editor Core](../getting-started/Editor_Core.md) -- editor setup and project management
+- [File Formats](../assets/File_Formats.md) -- binary and text format specifications
+- [Dreamcast Export](../dreamcast/Dreamcast_Export.md) -- packaging scenes for Dreamcast

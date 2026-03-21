@@ -3,6 +3,7 @@
 #include "../math/math_types.h"
 
 struct GLFWwindow;
+struct Camera3DNode;
 
 // Editor viewport navigation state (orbit, pan, zoom, WASD roam).
 // Separate from scene Camera3DNodes — this is the editor's own camera controller.
@@ -57,6 +58,22 @@ struct EditorViewportNav
     Vec3 ComputeEye() const;
 };
 
+// Result of per-frame camera evaluation.
+struct FrameCameraResult
+{
+    Mat4 proj;
+    Mat4 view;
+    Vec3 eye;
+    Vec3 forward;
+    Vec3 up;
+    Camera3DNode* activeCam = nullptr;
+};
+
 // Handle MMB orbit, RMB rotate, scroll zoom, WASD roam.
 // Call once per frame before computing view/projection matrices.
 void TickEditorViewportNav(EditorViewportNav& nav, GLFWwindow* window, float deltaTime);
+
+// Evaluate the camera for this frame: find the active Camera3DNode, build
+// projection/view matrices, handle play-mode camera override & view-lock orbit.
+// Modifies nav.viewYaw/viewPitch when play camera or view-lock is active.
+FrameCameraResult EvaluateFrameCamera(EditorViewportNav& nav, float aspect, double now);

@@ -34,12 +34,15 @@ Camera math shared by both the editor viewport and Dreamcast runtime export.
 `Camera3D` uses forward/up vectors instead of Euler angles. `BuildCamera3DFromLegacyEuler` converts from Euler (used by `Camera3DNode` in scenes) to this representation.
 
 ### `editor/`
-The editor application entry point and shared editor state.
+The editor application entry point, frame loop, shared editor state, and input handling.
 
 | File | Purpose |
 |------|---------|
-| `main.cpp` | Editor entry point, ImGui main loop, viewport, asset import (Assimp), Dreamcast packaging |
-| `editor_state.h/.cpp` | Shared global state: node arrays (`gStaticMeshNodes`, `gNode3DNodes`, etc.), selection, play-mode flags |
+| `main.cpp` | Editor entry point: GLFW/ImGui init, window setup, delegates to `TickEditorFrame` |
+| `frame_loop.h/.cpp` | Per-frame tick: input polling, script runtime, 3D rendering, ImGui UI dispatch |
+| `viewport_nav.h/.cpp` | Editor viewport camera controller (orbit, pan, zoom, WASD roam), `EvaluateFrameCamera` (per-frame camera evaluation) |
+| `hotkeys.h/.cpp` | GLFW-level transform hotkeys (G/R/S/X/Y/Z), Esc (play-mode stop), Delete (node deletion), Ctrl shortcuts (undo/redo, save, copy/paste) |
+| `editor_state.h/.cpp` | Shared global state: node arrays (`gStaticMeshNodes`, `gNode3DNodes`, etc.), selection, play-mode flags, scene snapshot helpers |
 | `project.h/.cpp` | Project file management (`gProjectDir`, `gProjectFile`), open/save |
 | `prefs.h/.cpp` | Editor preferences (DreamSDK path, MSVC path), persisted in `editor_prefs.ini` |
 | `file_dialogs.h/.cpp` | Win32 open/save file dialogs |
@@ -124,11 +127,13 @@ ImGui editor panels. Each panel is a self-contained widget.
 
 | File | Purpose |
 |------|---------|
-| `inspector.h/.cpp` | Property inspector for selected nodes |
+| `toolbar.h/.cpp` | Top toolbar (File/Edit/VMU/Package/Play buttons, window controls, quit confirmation) |
+| `main_menu.h/.cpp` | Popup menus for toolbar (File, Edit, Tools, Package), preferences dialog |
+| `inspector.h/.cpp` | Property inspector for selected nodes and assets |
 | `scene_outliner.h/.cpp` | Scene hierarchy tree view |
 | `scene_tabs.h/.cpp` | Multi-scene tab bar |
-| `main_menu.h/.cpp` | Top menu bar (File, Edit, View, etc.) |
-| `asset_browser.h/.cpp` | Project asset browser panel |
+| `assets_panel.h/.cpp` | Assets panel (context menu, rename, FBX convert, import) |
+| `asset_browser.h/.cpp` | Project asset browser utilities (create scene/material/folder, rename, delete) |
 | `mesh_inspector.h/.cpp` | Mesh/animation preview and inspection |
 | `import_pipeline.h/.cpp` | Asset import dialog (mesh, texture, animation) |
 
@@ -137,9 +142,13 @@ ImGui editor panels. Each panel is a self-contained widget.
 
 | File | Purpose |
 |------|---------|
-| `viewport_render.h/.cpp` | OpenGL2 scene rendering (meshes, gizmos, grid, bounds) |
+| `viewport_render.h/.cpp` | OpenGL2 texture cache, screen projection, local axes |
 | `viewport_transform.h/.cpp` | Translate/rotate/scale gizmo interaction |
-| `node_helpers.h/.cpp` | Node picking, world transform queries for viewport |
+| `viewport_selection.h/.cpp` | Click-to-select node picking in the 3D viewport |
+| `node_helpers.h/.cpp` | Node world transform queries, camera hierarchy helpers |
+| `node_gizmos.h/.cpp` | Audio3D spheres, Camera3D helpers, Node3D boxes, NavMesh3D bounds |
+| `background.h/.cpp` | Viewport background (gradient, stars, nebula, grid, axes) |
+| `static_mesh_render.h/.cpp` | StaticMesh3D node rendering |
 
 ### `vmu/`
 Sega Dreamcast VMU (Visual Memory Unit) icon creation tool.

@@ -122,3 +122,16 @@ extern std::filesystem::path gNebTexInspectorPath;
 // --- Wireframe ---
 extern bool gWireframePreview;
 extern bool gHideUnselectedWireframes;
+
+// --- Play-mode scene snapshot ---
+extern bool playSceneSnapshotValid;
+extern int playSavedActiveScene;
+extern std::vector<SceneData> playSavedOpenScenes;
+extern std::vector<Audio3DNode> playSavedAudio3DNodes;
+extern std::vector<StaticMesh3DNode> playSavedStaticMeshNodes;
+extern std::vector<Camera3DNode> playSavedCamera3DNodes;
+extern std::vector<Node3DNode> playSavedNode3DNodes;
+extern std::vector<NavMesh3DNode> playSavedNavMesh3DNodes;
+
+void SnapshotPlaySceneState();
+void RestorePlaySceneState();

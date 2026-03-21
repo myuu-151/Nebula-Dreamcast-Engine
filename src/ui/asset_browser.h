@@ -31,6 +31,7 @@ std::filesystem::path CreateSceneAsset(const std::filesystem::path& assetsRoot);
 void CreateAssetFolderAt(const std::filesystem::path& folder);
 std::filesystem::path CreateAssetFolder(const std::filesystem::path& assetsRoot);
 std::filesystem::path MakeUniqueAssetPath(const std::filesystem::path& root, const std::string& baseName, const std::string& ext);
+std::filesystem::path CreateMaterialAsset(const std::filesystem::path& assetsRoot);
 
 // --- Main asset browser UI ---
 void DrawAssetsBrowser(const std::filesystem::path& root);

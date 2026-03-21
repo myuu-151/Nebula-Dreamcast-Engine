@@ -223,8 +223,6 @@ void DrawMainMenus(bool& showPreferences, float& uiScale, int& themeMode)
             ImGui::EndPopup();
         }
 
-        ImGui::End();
-
         if (showPreferences)
         {
             ImGui::Begin("Preferences", &showPreferences);

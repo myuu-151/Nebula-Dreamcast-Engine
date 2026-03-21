@@ -1,8 +1,16 @@
 #include "viewport_nav.h"
+#include "editor_state.h"
 
 #include <cmath>
+#include <algorithm>
+#include <cstdio>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
+
+#include "../camera/camera3d.h"
+#include "../nodes/NodeTypes.h"
+#include "../viewport/node_helpers.h"
+#include "../math/math_utils.h"
 
 Vec3 EditorViewportNav::ComputeEye() const
 {
@@ -161,4 +169,128 @@ void TickEditorViewportNav(EditorViewportNav& nav, GLFWwindow* window, float del
             nav.orbitCenter.y -= move;
         }
     }
+}
+
+FrameCameraResult EvaluateFrameCamera(EditorViewportNav& nav, float aspect, double now)
+{
+    FrameCameraResult result{};
+
+    Mat4 proj = Mat4Perspective(45.0f * 3.14159f / 180.0f, aspect, 0.1f, 2000.0f);
+    Vec3 eye = nav.ComputeEye();
+    gEye = eye;
+
+    Camera3DNode* activeCam = nullptr;
+    if (!gCamera3DNodes.empty())
+    {
+        for (auto& c : gCamera3DNodes)
+        {
+            if (c.main && (!activeCam || c.priority > activeCam->priority))
+                activeCam = &c;
+        }
+        if (!activeCam)
+            activeCam = &gCamera3DNodes[0];
+    }
+
+    NebulaCamera3D::View playView{};
+    NebulaCamera3D::Projection playProj{};
+    bool hasPlayCam = false;
+    if (activeCam && gPlayMode)
+    {
+        int activeCamIdx = (int)(activeCam - &gCamera3DNodes[0]);
+        float camX, camY, camZ, camRX, camRY, camRZ;
+        GetCamera3DWorldTR(activeCamIdx, camX, camY, camZ, camRX, camRY, camRZ);
+
+        Camera3D playCam = BuildCamera3DFromLegacyEuler(
+            activeCam->name,
+            activeCam->parent,
+            camX, camY, camZ,
+            camRX, camRY, camRZ,
+            activeCam->perspective,
+            activeCam->fovY,
+            activeCam->nearZ,
+            activeCam->farZ,
+            activeCam->orthoWidth,
+            activeCam->priority,
+            activeCam->main);
+
+        playView = NebulaCamera3D::BuildView(playCam);
+        playProj = NebulaCamera3D::BuildProjection(playCam, aspect);
+        hasPlayCam = true;
+
+        proj = NebulaCamera3D::BuildProjectionMatrix(playProj);
+        eye = playView.eye;
+
+        Vec3 playForward = playView.basis.forward;
+        nav.viewYaw = atan2f(playForward.z, playForward.x) * 180.0f / 3.14159f;
+        nav.viewPitch = asinf(std::clamp(playForward.y, -1.0f, 1.0f)) * 180.0f / 3.14159f;
+
+        static double sLastParityCamLog = -10.0;
+        if ((now - sLastParityCamLog) >= 1.0)
+        {
+            sLastParityCamLog = now;
+            printf("[CameraParity][EditorPlay] eye=(%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f) r=(%.3f,%.3f,%.3f) u=(%.3f,%.3f,%.3f)\n",
+                playView.eye.x, playView.eye.y, playView.eye.z,
+                playView.basis.forward.x, playView.basis.forward.y, playView.basis.forward.z,
+                playView.basis.right.x, playView.basis.right.y, playView.basis.right.z,
+                playView.basis.up.x, playView.basis.up.y, playView.basis.up.z);
+        }
+    }
+
+    // If view is locked, keep looking at orbit center
+    if (nav.viewLocked && !(activeCam && gPlayMode))
+    {
+        Vec3 dir = { nav.orbitCenter.x - eye.x, nav.orbitCenter.y - eye.y, nav.orbitCenter.z - eye.z };
+        float dlen = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (dlen > 0.0001f)
+        {
+            dir.x /= dlen; dir.y /= dlen; dir.z /= dlen;
+            nav.viewYaw = atan2f(dir.z, dir.x) * 180.0f / 3.14159f;
+            nav.viewPitch = asinf(dir.y) * 180.0f / 3.14159f;
+        }
+    }
+
+    Vec3 forward{};
+    Vec3 up = { 0.0f, 1.0f, 0.0f };
+
+    if (hasPlayCam)
+    {
+        up = playView.basis.up;
+        forward = playView.basis.forward;
+    }
+    else
+    {
+        float viewYawRad = nav.viewYaw * 3.14159f / 180.0f;
+        float viewPitchRad = nav.viewPitch * 3.14159f / 180.0f;
+        forward = {
+            cosf(viewPitchRad) * cosf(viewYawRad),
+            sinf(viewPitchRad),
+            cosf(viewPitchRad) * sinf(viewYawRad)
+        };
+    }
+
+    Mat4 view = {};
+    if (hasPlayCam)
+    {
+        view = NebulaCamera3D::BuildViewMatrix(playView);
+    }
+    else
+    {
+        Vec3 target = { eye.x + forward.x, eye.y + forward.y, eye.z + forward.z };
+        view = Mat4LookAt(eye, target, up);
+    }
+
+    // Editor parity toggle: mirror runtime + viewport horizontally (right-to-left).
+    const bool kMirrorViewportRTL = false;
+    if (kMirrorViewportRTL)
+    {
+        proj.m[0] = -proj.m[0];
+    }
+
+    result.proj = proj;
+    result.view = view;
+    result.eye = eye;
+    result.forward = forward;
+    result.up = up;
+    result.activeCam = activeCam;
+    return result;
 }

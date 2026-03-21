@@ -90,6 +90,14 @@ add_executable(NebulaEditor
     "${CMAKE_SOURCE_DIR}/src/editor/undo.h"
     "${CMAKE_SOURCE_DIR}/src/editor/viewport_nav.cpp"
     "${CMAKE_SOURCE_DIR}/src/editor/viewport_nav.h"
+    "${CMAKE_SOURCE_DIR}/src/editor/hotkeys.cpp"
+    "${CMAKE_SOURCE_DIR}/src/editor/hotkeys.h"
+    "${CMAKE_SOURCE_DIR}/src/editor/frame_loop.cpp"
+    "${CMAKE_SOURCE_DIR}/src/editor/frame_loop.h"
+    "${CMAKE_SOURCE_DIR}/src/ui/toolbar.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ui/toolbar.h"
+    "${CMAKE_SOURCE_DIR}/src/ui/assets_panel.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ui/assets_panel.h"
 )
 
 set(IMGUI_SOURCES

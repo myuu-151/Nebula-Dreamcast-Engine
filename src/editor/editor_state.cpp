@@ -110,3 +110,37 @@ std::filesystem::path gNebTexInspectorPath;
 // --- Wireframe ---
 bool gWireframePreview = false;
 bool gHideUnselectedWireframes = false;
+
+// --- Play-mode scene snapshot ---
+bool playSceneSnapshotValid = false;
+int playSavedActiveScene = -1;
+std::vector<SceneData> playSavedOpenScenes;
+std::vector<Audio3DNode> playSavedAudio3DNodes;
+std::vector<StaticMesh3DNode> playSavedStaticMeshNodes;
+std::vector<Camera3DNode> playSavedCamera3DNodes;
+std::vector<Node3DNode> playSavedNode3DNodes;
+std::vector<NavMesh3DNode> playSavedNavMesh3DNodes;
+
+void SnapshotPlaySceneState()
+{
+    playSavedActiveScene = gActiveScene;
+    playSavedOpenScenes = gOpenScenes;
+    playSavedAudio3DNodes = gAudio3DNodes;
+    playSavedStaticMeshNodes = gStaticMeshNodes;
+    playSavedCamera3DNodes = gCamera3DNodes;
+    playSavedNode3DNodes = gNode3DNodes;
+    playSavedNavMesh3DNodes = gNavMesh3DNodes;
+    playSceneSnapshotValid = true;
+}
+
+void RestorePlaySceneState()
+{
+    if (!playSceneSnapshotValid) return;
+    gOpenScenes = playSavedOpenScenes;
+    gActiveScene = playSavedActiveScene;
+    gAudio3DNodes = playSavedAudio3DNodes;
+    gStaticMeshNodes = playSavedStaticMeshNodes;
+    gCamera3DNodes = playSavedCamera3DNodes;
+    gNode3DNodes = playSavedNode3DNodes;
+    gNavMesh3DNodes = playSavedNavMesh3DNodes;
+}

@@ -259,6 +259,30 @@ void CommitInlineAssetRename()
     gViewportToastUntil = glfwGetTime() + 2.0;
 }
 
+std::filesystem::path CreateMaterialAsset(const std::filesystem::path& assetsRoot)
+{
+    std::filesystem::create_directories(assetsRoot);
+    std::filesystem::path matPath = MakeUniqueAssetPath(assetsRoot, "NewMaterial", ".nebmat");
+    std::ofstream out(matPath, std::ios::out | std::ios::trunc);
+    if (out.is_open())
+    {
+        out << "texture=\n";
+        out << "uv_scale=0\n";
+        out << "saturn_allow_uv_repeat=0\n";
+        out << "uv_scale_u=1\n";
+        out << "uv_scale_v=1\n";
+        out << "uv_offset_u=0\n";
+        out << "uv_offset_v=0\n";
+        out << "uv_rotate_deg=0\n";
+        out << "shading_mode=0\n";
+        out << "light_rotation=0\n";
+        out << "light_pitch=0\n";
+        out << "light_roll=0\n";
+        out << "shadow_intensity=1\n";
+    }
+    return matPath;
+}
+
 // ---------------------------------------------------------------------------
 // DrawAssetsBrowser
 // ---------------------------------------------------------------------------

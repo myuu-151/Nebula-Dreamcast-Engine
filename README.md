@@ -30,7 +30,7 @@ Active development / prototyping, with a working Dreamcast package flow and hard
 - **DreamSDK (KallistiOS toolchain)**
   - Provides Dreamcast compile/link/package tools (e.g. `sh-elf-gcc`, `kos-cc`, `mkisofs`, CDI tooling).
   - Required for building `nebula_dreamcast.elf` and packaging CDI output.
-  - **WARNING:** DreamSDK must be fully installed with KOS integration, or the Dreamcast CDI build will fail.
+  - **WARNING:** DreamSDK must be fully installed with KOS toolchain, or the Dreamcast CDI build will fail.
 
 ### Quick checks
 ```bat

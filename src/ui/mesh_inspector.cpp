@@ -51,9 +51,6 @@ extern const aiScene* gImportScene;
 extern std::vector<bool> gImportAnimConvert;
 extern std::string gImportBaseNebMeshPath;
 
-// Helpers defined in main.cpp — made non-static for this module
-extern std::string ToProjectRelativePath(const std::filesystem::path& p);
-extern std::filesystem::path GetNebMeshMetaPath(const std::filesystem::path& absMeshPath);
 extern bool LoadNebMeshVtxAnimLink(const std::filesystem::path& absMeshPath, std::string& outAnimPath);
 
 // ---------------------------------------------------------------------------

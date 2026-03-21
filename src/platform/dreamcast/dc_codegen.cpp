@@ -36,11 +36,9 @@
 
 extern std::string gPrefDreamSdkHome;
 
-// Functions defined in main.cpp (must be non-static)
 extern bool LoadSceneFromPath(const std::filesystem::path& path, SceneData& outScene);
 extern bool LoadVmuPngToMono(const std::string& path, std::string& outErr);
 extern bool LoadVmuFrameData(const std::filesystem::path& inPath);
-extern std::filesystem::path GetExecutableDirectory();
 
 void GenerateDreamcastPackage()
 {

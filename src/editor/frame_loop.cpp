@@ -40,6 +40,18 @@
 
 std::vector<std::string> gPendingDroppedImports;
 
+void InstallDropCallback(GLFWwindow* window)
+{
+    glfwSetDropCallback(window, [](GLFWwindow*, int count, const char** paths)
+    {
+        for (int i = 0; i < count; ++i)
+        {
+            if (paths && paths[i] && paths[i][0] != '\0')
+                gPendingDroppedImports.push_back(paths[i]);
+        }
+    });
+}
+
 void TickEditorFrame(GLFWwindow* window, EditorViewportNav& nav, EditorFrameContext& ctx)
 {
     glfwPollEvents();

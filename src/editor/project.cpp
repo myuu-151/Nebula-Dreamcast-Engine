@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <cctype>
 
+#define NOMINMAX
+#include <Windows.h>
+
 std::string gProjectDir;
 std::string gProjectFile;
 std::vector<std::string> gRecentProjects;
@@ -236,4 +239,71 @@ void CreateNebulaProject(const std::string& folder)
     }
 
     gProjectDir = projDir.string();
+}
+
+std::filesystem::path GetExecutableDirectory()
+{
+    char pathBuf[MAX_PATH] = {};
+    DWORD len = GetModuleFileNameA(NULL, pathBuf, (DWORD)MAX_PATH);
+    if (len == 0 || len >= MAX_PATH)
+        return std::filesystem::current_path();
+    std::filesystem::path p(pathBuf);
+    return p.parent_path();
+}
+
+std::filesystem::path ResolveEditorAssetPath(const std::filesystem::path& relPath)
+{
+    std::vector<std::filesystem::path> roots;
+    auto addRootChain = [&](std::filesystem::path base)
+    {
+        std::error_code ec;
+        for (int i = 0; i < 7 && !base.empty(); ++i)
+        {
+            if (std::filesystem::exists(base, ec) && !ec)
+                roots.push_back(base);
+            std::filesystem::path parent = base.parent_path();
+            if (parent == base) break;
+            base = parent;
+        }
+    };
+
+    addRootChain(std::filesystem::current_path());
+    addRootChain(GetExecutableDirectory());
+
+    std::vector<std::filesystem::path> relCandidates;
+    relCandidates.push_back(relPath);
+
+    auto relGeneric = relPath.generic_string();
+    if (relGeneric.rfind("assets/", 0) == 0)
+        relCandidates.push_back(std::filesystem::path("Assets") / relPath.lexically_relative("assets"));
+    else if (relGeneric.rfind("Assets/", 0) == 0)
+        relCandidates.push_back(std::filesystem::path("assets") / relPath.lexically_relative("Assets"));
+
+    std::error_code ec;
+    for (const auto& root : roots)
+    {
+        for (const auto& rel : relCandidates)
+        {
+            std::filesystem::path p = root / rel;
+            if (std::filesystem::exists(p, ec) && !ec)
+                return p;
+        }
+    }
+    return {};
+}
+
+std::string ToProjectRelativePath(const std::filesystem::path& p)
+{
+    if (gProjectDir.empty())
+        return p.filename().generic_string();
+
+    std::error_code ec;
+    std::filesystem::path rel = std::filesystem::relative(p, std::filesystem::path(gProjectDir), ec);
+    if (ec) return p.filename().generic_string();
+    return rel.generic_string();
+}
+
+std::filesystem::path GetNebMeshMetaPath(const std::filesystem::path& absMeshPath)
+{
+    return absMeshPath.parent_path() / "animmeta" / (absMeshPath.stem().string() + ".animmeta.animmeta");
 }

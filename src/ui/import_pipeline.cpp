@@ -40,7 +40,7 @@ bool        gImportDoubleSampleRate    = false;
 std::string gImportWarning;
 
 // ---------------------------------------------------------------------------
-// Internal helpers (duplicated from main.cpp to avoid cross-TU coupling)
+// Internal helpers
 // ---------------------------------------------------------------------------
 static std::string SanitizeToken(const std::string& in)
 {
@@ -54,17 +54,6 @@ static std::string SanitizeToken(const std::string& in)
     }
     if (out.empty()) out = "slot";
     return out;
-}
-
-static std::string ToProjectRelativePath(const std::filesystem::path& p)
-{
-    if (gProjectDir.empty())
-        return p.filename().generic_string();
-
-    std::error_code ec;
-    std::filesystem::path rel = std::filesystem::relative(p, std::filesystem::path(gProjectDir), ec);
-    if (ec) return p.filename().generic_string();
-    return rel.generic_string();
 }
 
 static std::filesystem::path MakeUniqueAssetPath(const std::filesystem::path& root,

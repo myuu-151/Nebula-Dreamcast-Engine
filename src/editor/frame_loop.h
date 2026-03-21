@@ -22,3 +22,6 @@ extern std::vector<std::string> gPendingDroppedImports;
 
 // Run one editor frame: input, simulation, rendering, UI.
 void TickEditorFrame(GLFWwindow* window, EditorViewportNav& nav, EditorFrameContext& ctx);
+
+// Install GLFW drop callback that populates gPendingDroppedImports.
+void InstallDropCallback(GLFWwindow* window);

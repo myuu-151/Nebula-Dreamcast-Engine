@@ -16,3 +16,8 @@ std::string GetProjectVmuAnim(const std::filesystem::path& projectDir);
 bool SetProjectVmuAnim(const std::filesystem::path& projectDir, const std::string& animPath);
 bool SetProjectDefaultScene(const std::filesystem::path& projectDir, const std::filesystem::path& scenePath);
 void CreateNebulaProject(const std::string& folder);
+
+std::filesystem::path GetExecutableDirectory();
+std::filesystem::path ResolveEditorAssetPath(const std::filesystem::path& relPath);
+std::string ToProjectRelativePath(const std::filesystem::path& p);
+std::filesystem::path GetNebMeshMetaPath(const std::filesystem::path& absMeshPath);

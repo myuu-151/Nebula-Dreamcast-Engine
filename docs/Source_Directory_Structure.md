@@ -151,11 +151,11 @@ ImGui editor panels. Each panel is a self-contained widget.
 | `static_mesh_render.h/.cpp` | StaticMesh3D node rendering |
 
 ### `vmu/`
-Sega Dreamcast VMU (Visual Memory Unit) icon creation tool.
+Sega Dreamcast VMU (Visual Memory Unit) icon creation tool. Owns all VMU state (`gVmu*` globals) and the `VmuAnimLayer` struct.
 
 | File | Purpose |
 |------|---------|
-| `vmu_tool.h/.cpp` | VMU icon data manipulation (48x32 monochrome bitmaps) |
+| `vmu_tool.h/.cpp` | VMU state globals, `VmuAnimLayer` struct, icon data manipulation (48x32 monochrome bitmaps), animation frame load/save |
 | `vmu_tool_ui.h/.cpp` | ImGui VMU icon editor panel |
 
 ## Dependency Flow

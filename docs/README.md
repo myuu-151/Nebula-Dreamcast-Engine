@@ -106,7 +106,7 @@ A recommended reading order for programmers new to the engine.
 | Doc | What you will learn |
 |-----|---------------------|
 | [Dreamcast_Export.md](dreamcast/Dreamcast_Export.md) | Packaging a disc image, build flow, staging layout |
-| [Dreamcast_Binding_API.md](dreamcast/Dreamcast_Binding_API.md) | NB_RT_* / NB_DC_* / NB_KOS_* function reference |
+| [Dreamcast_Binding_API_v2.md](getting-started/Dreamcast_Binding_API_v2.md) | NB_RT_* / NB_DC_* / NB_KOS_* function reference |
 | [Dreamcast_Header_Reference.md](dreamcast/Dreamcast_Header_Reference.md) | Generated header structs and constants |
 
 ### 7. Reference
@@ -126,12 +126,14 @@ A recommended reading order for programmers new to the engine.
 
 | File | Description |
 |------|-------------|
+| [Quickstart_Tutorial.md](getting-started/Quickstart_Tutorial.md) | Step-by-step: build, create a project, write a script, run on Dreamcast |
 | [Source_Directory_Structure.md](getting-started/Source_Directory_Structure.md) | Map of the repository: every folder and its purpose |
 | [Editor_Core.md](getting-started/Editor_Core.md) | Architecture of the ImGui editor monolith (src/main.cpp) |
 | [Nebula_Dependencies_and_Paths.md](getting-started/Nebula_Dependencies_and_Paths.md) | Build dependencies, DreamSDK paths, CMake configuration |
 | [Scripting.md](getting-started/Scripting.md) | Writing gameplay scripts in C for the Dreamcast runtime |
 | [Script_Formatting_Syntax_Semantics.md](getting-started/Script_Formatting_Syntax_Semantics.md) | Script syntax rules, formatting constraints, and semantics |
 | [Multi_Script_Runtime.md](getting-started/Multi_Script_Runtime.md) | Multi-script support: per-scene assignment and execution model |
+| [Dreamcast_Binding_API_v2.md](getting-started/Dreamcast_Binding_API_v2.md) | Complete NB_RT_* / NB_DC_* / NB_KOS_* function reference |
 
 ### `scene-and-nodes/` -- Scene graph and node types
 

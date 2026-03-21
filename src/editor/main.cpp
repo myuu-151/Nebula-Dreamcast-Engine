@@ -258,11 +258,7 @@ int main(int, char**)
     glfwSwapInterval(1);
 
     glfwSetWindowUserPointer(window, &nav);
-    glfwSetScrollCallback(window, [](GLFWwindow* win, double, double yoff)
-    {
-        auto* n = (EditorViewportNav*)glfwGetWindowUserPointer(win);
-        if (n) n->scrollDelta += (float)yoff;
-    });
+    InstallViewportScrollCallback(window);
     glfwSetDropCallback(window, [](GLFWwindow*, int count, const char** paths)
     {
         for (int i = 0; i < count; ++i)

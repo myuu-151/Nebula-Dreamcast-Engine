@@ -171,6 +171,15 @@ void TickEditorViewportNav(EditorViewportNav& nav, GLFWwindow* window, float del
     }
 }
 
+void InstallViewportScrollCallback(GLFWwindow* window)
+{
+    glfwSetScrollCallback(window, [](GLFWwindow* win, double, double yoff)
+    {
+        auto* n = (EditorViewportNav*)glfwGetWindowUserPointer(win);
+        if (n) n->scrollDelta += (float)yoff;
+    });
+}
+
 FrameCameraResult EvaluateFrameCamera(EditorViewportNav& nav, float aspect, double now)
 {
     FrameCameraResult result{};

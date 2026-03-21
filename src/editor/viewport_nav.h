@@ -77,3 +77,7 @@ void TickEditorViewportNav(EditorViewportNav& nav, GLFWwindow* window, float del
 // projection/view matrices, handle play-mode camera override & view-lock orbit.
 // Modifies nav.viewYaw/viewPitch when play camera or view-lock is active.
 FrameCameraResult EvaluateFrameCamera(EditorViewportNav& nav, float aspect, double now);
+
+// Install GLFW scroll callback that feeds EditorViewportNav::scrollDelta.
+// Call once after window creation. The window's user pointer must be set to &nav.
+void InstallViewportScrollCallback(GLFWwindow* window);

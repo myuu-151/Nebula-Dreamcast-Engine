@@ -27,6 +27,7 @@
 #include "math/math_utils.h"
 #include "editor/editor_state.h"
 #include "viewport/viewport_transform.h"
+#include "runtime/script_compile.h"
 
 // Functions defined in main.cpp
 void GetCamera3DWorldTR(int idx, float& ox, float& oy, float& oz, float& orx, float& ory, float& orz);
@@ -231,6 +232,27 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                         gViewportToast = (n.script.empty() ? "(none)" : n.script) + " script unvalidated";
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
+                if (ImGui::Button("Deinit Script##Audio"))
+                {
+                    n.script.clear();
+                    scriptBuf[0] = '\0';
+                    if (!gProjectDir.empty())
+                    {
+                        std::filesystem::path outDir = std::filesystem::path(gProjectDir) / "Intermediate" / "EditorScript";
+                        std::error_code ec;
+                        if (std::filesystem::exists(outDir, ec))
+                        {
+                            for (auto& e : std::filesystem::directory_iterator(outDir, ec))
+                            {
+                                if (e.is_regular_file() && e.path().extension() == ".dll")
+                                    std::filesystem::remove(e.path(), ec);
+                            }
+                        }
+                    }
+                    UnloadEditorScriptRuntime();
+                    gViewportToast = "Script hook removed";
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
                 ImGui::DragFloat3("Position", &n.x, 0.1f);
                 float rotArr[3] = { displayRotX, displayRotY, displayRotZ };
                 ImGui::Text("Rotation"); ImGui::SameLine();
@@ -302,6 +324,27 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                         gViewportToast = n.script + " script validated";
                     else
                         gViewportToast = (n.script.empty() ? "(none)" : n.script) + " script unvalidated";
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+                if (ImGui::Button("Deinit Script##Static"))
+                {
+                    n.script.clear();
+                    scriptBuf[0] = '\0';
+                    if (!gProjectDir.empty())
+                    {
+                        std::filesystem::path outDir = std::filesystem::path(gProjectDir) / "Intermediate" / "EditorScript";
+                        std::error_code ec;
+                        if (std::filesystem::exists(outDir, ec))
+                        {
+                            for (auto& e : std::filesystem::directory_iterator(outDir, ec))
+                            {
+                                if (e.is_regular_file() && e.path().extension() == ".dll")
+                                    std::filesystem::remove(e.path(), ec);
+                            }
+                        }
+                    }
+                    UnloadEditorScriptRuntime();
+                    gViewportToast = "Script hook removed";
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
 
@@ -966,6 +1009,27 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                         gViewportToast = n.script + " script validated";
                     else
                         gViewportToast = (n.script.empty() ? "(none)" : n.script) + " script unvalidated";
+                    gViewportToastUntil = glfwGetTime() + 2.0;
+                }
+                if (ImGui::Button("Deinit Script##Node3D"))
+                {
+                    n.script.clear();
+                    scriptBuf[0] = '\0';
+                    if (!gProjectDir.empty())
+                    {
+                        std::filesystem::path outDir = std::filesystem::path(gProjectDir) / "Intermediate" / "EditorScript";
+                        std::error_code ec;
+                        if (std::filesystem::exists(outDir, ec))
+                        {
+                            for (auto& e : std::filesystem::directory_iterator(outDir, ec))
+                            {
+                                if (e.is_regular_file() && e.path().extension() == ".dll")
+                                    std::filesystem::remove(e.path(), ec);
+                            }
+                        }
+                    }
+                    UnloadEditorScriptRuntime();
+                    gViewportToast = "Script hook removed";
                     gViewportToastUntil = glfwGetTime() + 2.0;
                 }
 

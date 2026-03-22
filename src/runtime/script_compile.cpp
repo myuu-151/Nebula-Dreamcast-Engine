@@ -225,8 +225,12 @@ std::vector<std::filesystem::path> ResolveAllScriptPaths()
         result.push_back(p);
         printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
     };
-    // From current scene's nodes
+    // From current scene's nodes (Node3D, StaticMesh3D, Audio3D)
     for (const auto& n : gNode3DNodes)
+        addScript(resolvePath(n.script));
+    for (const auto& n : gStaticMeshNodes)
+        addScript(resolvePath(n.script));
+    for (const auto& n : gAudio3DNodes)
         addScript(resolvePath(n.script));
     // From all other open scenes
     for (int i = 0; i < (int)gOpenScenes.size(); ++i)
@@ -234,8 +238,12 @@ std::vector<std::filesystem::path> ResolveAllScriptPaths()
         if (i == gActiveScene) continue;
         for (const auto& n : gOpenScenes[i].node3d)
             addScript(resolvePath(n.script));
+        for (const auto& n : gOpenScenes[i].staticMeshes)
+            addScript(resolvePath(n.script));
+        for (const auto& n : gOpenScenes[i].nodes)
+            addScript(resolvePath(n.script));
     }
-    // From project Scripts/ folder (matches DC build — all .c files)
+    // From project Scripts/ folder — compile all available scripts
     {
         std::filesystem::path scriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
         std::error_code ec2;
@@ -337,7 +345,7 @@ bool CompileEditorScriptDLL(const std::filesystem::path& scriptPath, std::filesy
     printf("[ScriptRuntime] OutDir=%s\n", outDir.string().c_str());
     printf("[ScriptRuntime] BuildLog=%s\n", buildLogPath.string().c_str());
 
-    std::string dllName = "nb_script_" + std::to_string(slotIdx);
+    std::string dllName = "nb_script_" + scriptPath.stem().string();
     outDllPath = outDir / (dllName + ".dll");
     std::filesystem::path bridgePath = outDir / "nb_editor_bridge.c";
 
@@ -579,7 +587,7 @@ bool BeginPlayScriptRuntime()
         std::error_code ec;
         for (int i = 0; i < (int)scriptPaths.size(); ++i)
         {
-            std::filesystem::path dllPath = outDir / ("nb_script_" + std::to_string(i) + ".dll");
+            std::filesystem::path dllPath = outDir / ("nb_script_" + scriptPaths[i].stem().string() + ".dll");
             if (!std::filesystem::exists(dllPath, ec))
             { anyNeedCompile = true; break; }
             auto dllTime = std::filesystem::last_write_time(dllPath, ec);

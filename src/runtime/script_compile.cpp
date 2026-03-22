@@ -2,10 +2,13 @@
 #include "editor/prefs.h"
 #include "editor/project.h"
 #include "nodes/NodeTypes.h"
+#include "scene/scene_io.h"
 
 #include <stdio.h>
 #include <fstream>
+#include <sstream>
 #include <algorithm>
+#include <set>
 #include <cctype>
 #include <GLFW/glfw3.h>
 
@@ -213,7 +216,9 @@ std::vector<std::filesystem::path> ResolveAllScriptPaths()
         return std::filesystem::path(gProjectDir) / p;
     };
 
-    // Collect unique script paths from all open scenes' Node3D nodes + Scripts folder
+    // Collect unique script paths from ALL scene files in the project,
+    // not just open scenes.  This ensures scripts referenced by closed scenes
+    // still compile, while Deinited scripts (field cleared) are excluded.
     std::vector<std::string> seen;
     auto addScript = [&](const std::filesystem::path& p)
     {
@@ -225,27 +230,54 @@ std::vector<std::filesystem::path> ResolveAllScriptPaths()
         result.push_back(p);
         printf("[ScriptRuntime] ResolvedScript=%s\n", p.string().c_str());
     };
-    // From current scene's nodes (Node3D, StaticMesh3D, Audio3D)
+
+    // Helper: extract scripts from a SceneData
+    auto addFromScene = [&](const SceneData& sd)
+    {
+        for (const auto& n : sd.node3d)
+            addScript(resolvePath(n.script));
+        for (const auto& n : sd.staticMeshes)
+            addScript(resolvePath(n.script));
+        for (const auto& n : sd.nodes)
+            addScript(resolvePath(n.script));
+    };
+
+    // From current scene's live nodes (may have unsaved changes like Deinit)
     for (const auto& n : gNode3DNodes)
         addScript(resolvePath(n.script));
     for (const auto& n : gStaticMeshNodes)
         addScript(resolvePath(n.script));
     for (const auto& n : gAudio3DNodes)
         addScript(resolvePath(n.script));
-    // From all other open scenes
+    // From other open scenes (live in-memory data)
     for (int i = 0; i < (int)gOpenScenes.size(); ++i)
     {
         if (i == gActiveScene) continue;
-        for (const auto& n : gOpenScenes[i].node3d)
-            addScript(resolvePath(n.script));
-        for (const auto& n : gOpenScenes[i].staticMeshes)
-            addScript(resolvePath(n.script));
-        for (const auto& n : gOpenScenes[i].nodes)
-            addScript(resolvePath(n.script));
+        addFromScene(gOpenScenes[i]);
     }
-    // Scripts are only compiled if referenced by a node in any open scene.
-    // The Scripts/ folder is NOT scanned — Deinit removes a script by clearing
-    // the node field, and we must respect that.
+    // From all .nebscene files on disk that aren't currently open —
+    // covers scenes the user hasn't opened this session.
+    {
+        std::set<std::string> openSceneNames;
+        for (const auto& s : gOpenScenes)
+        {
+            std::error_code ec;
+            if (!s.path.empty())
+                openSceneNames.insert(std::filesystem::canonical(s.path, ec).generic_string());
+        }
+        std::error_code ec2;
+        for (auto& entry : std::filesystem::recursive_directory_iterator(gProjectDir, ec2))
+        {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".nebscene") continue;
+            std::error_code ec3;
+            std::string canon = std::filesystem::canonical(entry.path(), ec3).generic_string();
+            if (openSceneNames.count(canon)) continue; // already handled above
+            SceneData sd;
+            if (NebulaScene::LoadSceneFromPath(entry.path(), sd))
+                addFromScene(sd);
+        }
+    }
 
     return result;
 }

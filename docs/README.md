@@ -122,6 +122,4 @@ disc image that runs on real Dreamcast hardware or an emulator.
 
 ---
 
-## Learning Path
-
-New to the engine? See the [Learning Path](Learning_Path.md) for a recommended reading order.
+**New to the engine? See the [Learning Path](Learning_Path.md) for a recommended reading order.**

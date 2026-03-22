@@ -16,24 +16,39 @@
 void TickPlayModePhysics(float dt)
 {
     const float gravity = -29.4f;
+    const float kMaxStep = 1.0f / 60.0f; // sub-step if frame dips below 60fps
+    const int kMaxSubSteps = 4;           // cap to avoid spiral of death
 
-    for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
+    // Determine sub-step count
+    int steps = 1;
+    float stepDt = dt;
+    if (dt > kMaxStep)
     {
-        auto& n3 = gNode3DNodes[ni];
-        if (!n3.physicsEnabled && !n3.collisionSource && !n3.simpleCollision) continue;
-
-        // Gravity (physicsEnabled only)
-        if (n3.physicsEnabled)
-        {
-            n3.velY += gravity * dt;
-            n3.y += n3.velY * dt;
-        }
-
-        // Ground snap, slope alignment, wall collision
-        if (n3.collisionSource || n3.simpleCollision)
-            ResolveNodeCollision(ni, dt);
+        steps = (int)ceilf(dt / kMaxStep);
+        if (steps > kMaxSubSteps) steps = kMaxSubSteps;
+        stepDt = dt / (float)steps;
     }
 
-    // Node3D-vs-Node3D AABB collision
-    ResolveNode3DOverlaps();
+    for (int step = 0; step < steps; ++step)
+    {
+        for (int ni = 0; ni < (int)gNode3DNodes.size(); ++ni)
+        {
+            auto& n3 = gNode3DNodes[ni];
+            if (!n3.physicsEnabled && !n3.collisionSource && !n3.simpleCollision) continue;
+
+            // Gravity (physicsEnabled only)
+            if (n3.physicsEnabled)
+            {
+                n3.velY += gravity * stepDt;
+                n3.y += n3.velY * stepDt;
+            }
+
+            // Ground snap, slope alignment, wall collision
+            if (n3.collisionSource || n3.simpleCollision)
+                ResolveNodeCollision(ni, stepDt);
+        }
+
+        // Node3D-vs-Node3D AABB collision
+        ResolveNode3DOverlaps();
+    }
 }

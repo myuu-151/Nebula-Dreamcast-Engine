@@ -174,9 +174,7 @@ Nebula validates these paths in Preferences and shows status (OK/missing). Save 
 - Continue exporter/import cleanup for geometry stability
 - Preserve pragmatic runtime behavior over feature bloat
 
-## Learning Path
-
-New to the engine? See the [Learning Path](docs/Learning_Path.md) for a recommended reading order.
+**New to the engine? See the [Learning Path](docs/Learning_Path.md) for a recommended reading order.**
 
 ## License
 > TODO: add license

@@ -83,7 +83,7 @@ See [docs/README.md](docs/README.md) for the full documentation index and learni
 - [Quickstart Tutorial](docs/getting-started/Quickstart_Tutorial.md) — build, create a project, write a script, run on Dreamcast
 - [Source Directory Structure](docs/getting-started/Source_Directory_Structure.md) — module layout and dependency flow
 - [Scripting](docs/getting-started/Scripting.md) — C gameplay scripts and NB_RT_* API reference
-- [Dreamcast Binding API](docs/getting-started/Dreamcast_Binding_API_v2.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
+- [Dreamcast Binding API v2](docs/getting-started/Dreamcast_Binding_API_v2.md) — all `NB_RT_*`, `NB_DC_*`, `NB_KOS_*` runtime APIs
 - [Dreamcast Export](docs/dreamcast/Dreamcast_Export.md) — codegen, packaging, disc layout
 - [Dreamcast Header Reference](docs/dreamcast/Dreamcast_Header_Reference.md) — platform header files and types
 - [Script Formatting & Syntax](docs/getting-started/Script_Formatting_Syntax_Semantics.md) — how to write C gameplay scripts

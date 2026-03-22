@@ -687,6 +687,20 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                     }
                 }
 
+                // Dreamcast animation loading mode
+                if (n.animSlotCount > 0)
+                {
+                    ImGui::Separator();
+                    ImGui::Text("DC Anim Loading:");
+                    bool preload = n.animPreload;
+                    bool discIO = !n.animPreload;
+                    if (ImGui::RadioButton("RAM Preload", preload))
+                        n.animPreload = true;
+                    ImGui::SameLine();
+                    if (ImGui::RadioButton("Disc I/O", discIO))
+                        n.animPreload = false;
+                }
+
                 // Animation preview tick (for slot-based preview)
                 if (gStaticAnimPreviewLastNode != inspectStatic)
                 {

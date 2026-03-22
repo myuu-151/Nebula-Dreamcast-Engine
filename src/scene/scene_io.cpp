@@ -271,6 +271,7 @@ namespace NebulaScene
             out << " " << n.animSlotCount;
             for (int si = 0; si < kStaticMeshAnimSlots; ++si)
                 out << " " << EncodeSceneToken(n.animSlots[si].name) << " " << EncodeSceneToken(n.animSlots[si].path) << " " << n.animSlots[si].speed << " " << (n.animSlots[si].loop ? 1 : 0);
+            out << " " << (n.animPreload ? 1 : 0);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -454,6 +455,9 @@ namespace NebulaScene
                         if (tokensPerSlot >= 4 && loopIdx < extra.size())
                             n.animSlots[si].loop = (atoi(extra[loopIdx].c_str()) != 0);
                     }
+                    size_t animPreloadIdx = animSlotCountIdx + 1 + (size_t)kStaticMeshAnimSlots * tokensPerSlot;
+                    if (animPreloadIdx < extra.size())
+                        n.animPreload = (atoi(extra[animPreloadIdx].c_str()) != 0);
                 }
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;

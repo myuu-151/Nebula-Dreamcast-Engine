@@ -3107,7 +3107,7 @@ else
                 mc << "  float ad=sqrtf((amax.x-amin.x)*(amax.x-amin.x)+(amax.y-amin.y)*(amax.y-amin.y)+(amax.z-amin.z)*(amax.z-amin.z));\n";
                 mc << "  float ds=(ad>1e-6f&&bd>1e-6f)?(bd/ad):1.0f;\n";
                 mc << "  for(int fr=0;fr<ac->frameCount;++fr){ V3* fp=&ac->frames[(size_t)fr*(size_t)nv]; for(int vi=0;vi<nv;++vi){ fp[vi].x=bcen.x+(fp[vi].x-acen.x)*ds; fp[vi].y=bcen.y+(fp[vi].y-acen.y)*ds; fp[vi].z=bcen.z+(fp[vi].z-acen.z)*ds; } }\n";
-                mc << "  ac->baked=1; ac->precomputed=1;\n";
+                mc << "  ac->baked=1; ac->precomputed=1; ac->lastPosedFrame=-1;\n";
                 mc << "}\n";
                 mc << "\n";
                 // RuntimeSceneMesh typedef and meshRt at file scope (needed by animation bridge)

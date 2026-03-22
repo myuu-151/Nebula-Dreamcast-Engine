@@ -243,17 +243,9 @@ std::vector<std::filesystem::path> ResolveAllScriptPaths()
         for (const auto& n : gOpenScenes[i].nodes)
             addScript(resolvePath(n.script));
     }
-    // From project Scripts/ folder — compile all available scripts
-    {
-        std::filesystem::path scriptsDir = std::filesystem::path(gProjectDir) / "Scripts";
-        std::error_code ec2;
-        for (auto& e : std::filesystem::recursive_directory_iterator(scriptsDir, ec2))
-        {
-            if (!e.is_regular_file()) continue;
-            if (e.path().extension() == ".c")
-                addScript(e.path());
-        }
-    }
+    // Scripts are only compiled if referenced by a node in any open scene.
+    // The Scripts/ folder is NOT scanned — Deinit removes a script by clearing
+    // the node field, and we must respect that.
 
     return result;
 }

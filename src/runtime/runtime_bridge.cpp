@@ -492,6 +492,7 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
     {
         const auto& sm = gStaticMeshNodes[si];
         if (sm.mesh.empty() || gProjectDir.empty()) continue;
+        if (!sm.collisionSource) continue;
 
         std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / sm.mesh;
         std::ifstream mf(meshPath, std::ios::binary);

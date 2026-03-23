@@ -1416,6 +1416,7 @@ else
                         for (const auto& sm : ls.data.staticMeshes)
                         {
                             if (sm.mesh.empty()) continue;
+                            if (!sm.collisionSource) continue;
                             std::filesystem::path meshAbs = sm.mesh;
                             if (meshAbs.is_relative())
                                 meshAbs = std::filesystem::path(gProjectDir) / meshAbs;

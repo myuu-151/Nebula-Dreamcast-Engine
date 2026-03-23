@@ -24,7 +24,7 @@ struct NavMeshParams
     float walkableSlopeDeg  = 89.0f;  // near-90 = capture all geometry including steep seams
     float walkableHeight    = 2.0f;   // agent height
     float walkableClimb     = 2.0f;   // high = bridge height gaps at seams between connected surfaces
-    float walkableRadius    = 0.0f;   // zero = navmesh reaches geometry edges; agent radius handled at query time
+    float walkableRadius    = 0.3f;   // erode navmesh edges inward to keep AI off drop-offs
     float maxEdgeLen        = 12.0f;
     float maxSimplError     = 0.5f;   // low = preserve detail at edge seams
     int   minRegionArea     = 4;      // allow small walkable patches

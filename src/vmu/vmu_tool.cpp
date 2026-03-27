@@ -132,7 +132,7 @@ bool LoadVmuFrameData(const std::filesystem::path& inPath)
     gVmuAnimTotalFrames = loadedFrames;
     gVmuAnimPlayhead = std::max(0, std::min(loadedPlayhead, gVmuAnimTotalFrames - 1));
     gVmuAnimLoop = (loadedLoop != 0);
-    gVmuAnimSpeedMode = std::max(0, std::min(loadedSpeedMode, 2));
+    gVmuAnimSpeedMode = std::max(0, std::min(loadedSpeedMode, 3));
     gVmuAnimLayers = loadedLayers;
     gVmuAnimLayerSel = 0;
     gVmuCurrentLoadedType = 2;

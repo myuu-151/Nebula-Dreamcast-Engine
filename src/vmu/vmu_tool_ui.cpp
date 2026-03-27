@@ -442,10 +442,10 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                 }
 
                 // Right-side playback controls.
-                float speedBtnW = 86.0f;
-                float loopBtnW = 78.0f;
-                float playBtnW = 56.0f;
-                float groupW = playBtnW + loopBtnW + speedBtnW + 12.0f;
+                float speedBtnW = 140.0f;
+                float loopBtnW = 110.0f;
+                float playBtnW = 70.0f;
+                float groupW = playBtnW + loopBtnW + speedBtnW + 24.0f;
                 float groupX = ImGui::GetWindowContentRegionMax().x - groupW - 8.0f;
                 if (groupX > ImGui::GetCursorPosX())
                 {
@@ -474,16 +474,16 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                 }
 
                 ImGui::SameLine();
-                const char* speedLabel = (gVmuAnimSpeedMode == 0) ? "Speed x0.5" : (gVmuAnimSpeedMode == 1) ? "Speed x1" : "Speed x2";
+                const char* speedLabel = (gVmuAnimSpeedMode == 0) ? "Speed x1" : (gVmuAnimSpeedMode == 1) ? "Speed x2" : (gVmuAnimSpeedMode == 2) ? "Speed x3" : "Speed x4";
                 if (ImGui::Button(speedLabel, ImVec2(speedBtnW, 0.0f)))
                 {
-                    gVmuAnimSpeedMode = (gVmuAnimSpeedMode + 1) % 3;
+                    gVmuAnimSpeedMode = (gVmuAnimSpeedMode + 1) % 4;
                 }
 
                 if (gVmuAnimPlaying)
                 {
                     const double baseFps = 8.0;
-                    const double mult = (gVmuAnimSpeedMode == 0) ? 0.5 : (gVmuAnimSpeedMode == 1) ? 1.0 : 2.0;
+                    const double mult = (gVmuAnimSpeedMode == 0) ? 0.5 : (gVmuAnimSpeedMode == 1) ? 1.0 : (gVmuAnimSpeedMode == 2) ? 1.5 : 2.0;
                     const double frameStep = 1.0 / (baseFps * mult);
                     gVmuAnimAccum += ImGui::GetIO().DeltaTime;
                     while (gVmuAnimAccum >= frameStep)

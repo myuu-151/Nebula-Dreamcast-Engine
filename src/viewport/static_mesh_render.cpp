@@ -24,10 +24,6 @@
 #define GL_POLYGON_OFFSET_LINE 0x2A02
 #endif
 
-// Cached centroid+scale for anim-to-mesh mapping (computed once per anim+mesh pair)
-struct AnimPoseCache { Vec3 aC, bC; float ds; };
-static std::unordered_map<std::string, AnimPoseCache> gAnimPoseCache;
-
 void RenderStaticMeshNodes()
 {
     // StaticMesh3D rendering (basic)
@@ -96,52 +92,8 @@ void RenderStaticMeshNodes()
                     if (nv > 0)
                     {
                         staticAnimPosed.resize(mesh->positions.size());
-                        if (it->second.meshAligned)
-                        {
-                            // Animation already in mesh-local space — direct replacement
-                            for (size_t vi = 0; vi < nv; ++vi)
-                                staticAnimPosed[vi] = ff[vi];
-                        }
-                        else
-                        {
-                            // Look up or compute cached centroid+scale (once per anim+mesh pair)
-                            std::string poseKey = key + "|" + meshPath.generic_string();
-                            auto pcIt = gAnimPoseCache.find(poseKey);
-                            if (pcIt == gAnimPoseCache.end())
-                            {
-                                Vec3 bMin = mesh->positions[0], bMax = mesh->positions[0], bC = {0,0,0};
-                                Vec3 aMin = f0[0], aMax = f0[0], aC = {0,0,0};
-                                for (size_t vi = 0; vi < nv; ++vi)
-                                {
-                                    const Vec3& bp = mesh->positions[vi];
-                                    const Vec3& ap = f0[vi];
-                                    bC.x += bp.x; bC.y += bp.y; bC.z += bp.z;
-                                    aC.x += ap.x; aC.y += ap.y; aC.z += ap.z;
-                                    bMin.x = std::min(bMin.x, bp.x); bMin.y = std::min(bMin.y, bp.y); bMin.z = std::min(bMin.z, bp.z);
-                                    bMax.x = std::max(bMax.x, bp.x); bMax.y = std::max(bMax.y, bp.y); bMax.z = std::max(bMax.z, bp.z);
-                                    aMin.x = std::min(aMin.x, ap.x); aMin.y = std::min(aMin.y, ap.y); aMin.z = std::min(aMin.z, ap.z);
-                                    aMax.x = std::max(aMax.x, ap.x); aMax.y = std::max(aMax.y, ap.y); aMax.z = std::max(aMax.z, ap.z);
-                                }
-                                const float invN = 1.0f / (float)nv;
-                                bC.x *= invN; bC.y *= invN; bC.z *= invN;
-                                aC.x *= invN; aC.y *= invN; aC.z *= invN;
-                                const float bDiag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
-                                const float aDiag = sqrtf((aMax.x-aMin.x)*(aMax.x-aMin.x) + (aMax.y-aMin.y)*(aMax.y-aMin.y) + (aMax.z-aMin.z)*(aMax.z-aMin.z));
-                                float ds = 1.0f;
-                                if (aDiag > 1e-6f && bDiag > 1e-6f) ds = bDiag / aDiag;
-                                pcIt = gAnimPoseCache.emplace(poseKey, AnimPoseCache{aC, bC, ds}).first;
-                            }
-                            const Vec3& aC = pcIt->second.aC;
-                            const Vec3& bC = pcIt->second.bC;
-                            const float ds = pcIt->second.ds;
-
-                            for (size_t vi = 0; vi < nv; ++vi)
-                            {
-                                staticAnimPosed[vi].x = bC.x + (ff[vi].x - aC.x) * ds;
-                                staticAnimPosed[vi].y = bC.y + (ff[vi].y - aC.y) * ds;
-                                staticAnimPosed[vi].z = bC.z + (ff[vi].z - aC.z) * ds;
-                            }
-                        }
+                        for (size_t vi = 0; vi < nv; ++vi)
+                            staticAnimPosed[vi] = ff[vi];
                         for (size_t vi = nv; vi < mesh->positions.size(); ++vi)
                             staticAnimPosed[vi] = mesh->positions[vi];
                         renderPositions = &staticAnimPosed;

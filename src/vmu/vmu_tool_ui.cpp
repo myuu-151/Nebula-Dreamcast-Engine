@@ -27,6 +27,13 @@ static int gVmuLastDrawX = -1;
 static int gVmuLastDrawY = -1;
 static std::vector<std::array<uint8_t, 48 * 32>> gVmuUndoStack;
 
+// Layer bar drag state
+static int gVmuBarDragLayer = -1;
+static int gVmuBarDragMode = 0;       // 0=none, 1=move, 2=resize-left, 3=resize-right
+static int gVmuBarDragOrigStart = 0;
+static int gVmuBarDragOrigEnd = 0;
+static float gVmuBarDragAnchorX = 0.0f;
+
 void DrawVmuToolUI(const ImGuiViewport* vp)
 {
         if (gShowVmuTool)
@@ -533,6 +540,45 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
 
                 ImGui::Dummy(ImVec2(tAvail.x, timelineH));
 
+                // Release bar drag on mouse up
+                if (gVmuBarDragMode != 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+                {
+                    gVmuBarDragMode = 0;
+                    gVmuBarDragLayer = -1;
+                }
+
+                // Process active bar drag
+                if (gVmuBarDragMode != 0 && gVmuBarDragLayer >= 0 && gVmuBarDragLayer < (int)gVmuAnimLayers.size())
+                {
+                    VmuAnimLayer& dl = gVmuAnimLayers[(size_t)gVmuBarDragLayer];
+                    float mouseDeltaX = ImGui::GetIO().MousePos.x - gVmuBarDragAnchorX;
+                    int frameDelta = (int)(mouseDeltaX / frameW);
+                    int barLen = gVmuBarDragOrigEnd - gVmuBarDragOrigStart;
+
+                    if (gVmuBarDragMode == 1) // move whole bar
+                    {
+                        int newStart = gVmuBarDragOrigStart + frameDelta;
+                        if (newStart < 0) newStart = 0;
+                        if (newStart + barLen >= gVmuAnimTotalFrames) newStart = gVmuAnimTotalFrames - 1 - barLen;
+                        dl.frameStart = newStart;
+                        dl.frameEnd = newStart + barLen;
+                    }
+                    else if (gVmuBarDragMode == 2) // resize left edge
+                    {
+                        int newStart = gVmuBarDragOrigStart + frameDelta;
+                        if (newStart < 0) newStart = 0;
+                        if (newStart > dl.frameEnd) newStart = dl.frameEnd;
+                        dl.frameStart = newStart;
+                    }
+                    else if (gVmuBarDragMode == 3) // resize right edge
+                    {
+                        int newEnd = gVmuBarDragOrigEnd + frameDelta;
+                        if (newEnd >= gVmuAnimTotalFrames) newEnd = gVmuAnimTotalFrames - 1;
+                        if (newEnd < dl.frameStart) newEnd = dl.frameStart;
+                        dl.frameEnd = newEnd;
+                    }
+                }
+
                 for (int i = 0; i < (int)gVmuAnimLayers.size(); ++i)
                 {
                     VmuAnimLayer& l = gVmuAnimLayers[(size_t)i];
@@ -554,7 +600,47 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                         ImGui::EndDragDropTarget();
                     }
                     bool rowSel = (gVmuAnimLayerSel == i);
-                    if (ImGui::IsItemClicked())
+
+                    // Compute bar rect for this layer
+                    int fs = std::max(0, std::min(gVmuAnimTotalFrames - 1, l.frameStart));
+                    int fe = std::max(fs, std::min(gVmuAnimTotalFrames - 1, l.frameEnd));
+                    float bx0 = timelineX + frameW * (float)fs;
+                    float bx1 = timelineX + frameW * (float)(fe + 1);
+                    float by0 = rowPos.y + 3.0f;
+                    float by1 = rowPos.y + rowH - 3.0f;
+
+                    // Bar drag detection (only start new drag if not already dragging)
+                    const float edgeGrab = 6.0f;
+                    ImVec2 mpos = ImGui::GetIO().MousePos;
+                    bool overBar = (mpos.x >= bx0 && mpos.x <= bx1 && mpos.y >= by0 && mpos.y <= by1);
+                    bool overLeftEdge = overBar && (mpos.x - bx0 < edgeGrab);
+                    bool overRightEdge = overBar && (bx1 - mpos.x < edgeGrab);
+
+                    if (gVmuBarDragMode == 0 && overBar)
+                    {
+                        // Set cursor hint
+                        if (overLeftEdge || overRightEdge)
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                        else
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+                        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                        {
+                            gVmuBarDragLayer = i;
+                            gVmuBarDragOrigStart = l.frameStart;
+                            gVmuBarDragOrigEnd = l.frameEnd;
+                            gVmuBarDragAnchorX = mpos.x;
+                            if (overLeftEdge)       gVmuBarDragMode = 2;
+                            else if (overRightEdge) gVmuBarDragMode = 3;
+                            else                    gVmuBarDragMode = 1;
+
+                            // Also select this layer
+                            gVmuAnimLayerSel = i;
+                        }
+                    }
+
+                    // Row click for selection (only if not dragging a bar)
+                    if (gVmuBarDragMode == 0 && ImGui::IsItemClicked() && !overBar)
                     {
                         gVmuAnimLayerSel = i;
                         if (!l.linkedAsset.empty())
@@ -581,7 +667,6 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                     {
                         if (gVmuCurrentLoadedType == 2 && !gVmuLinkedAnimPath.empty())
                         {
-                            // VMUAnim link is project-persistent (global animation source for runtime/editor playback).
                             gViewportToast = "VMU Tool: linked VMUAnim";
                         }
                         else if (!gVmuAssetPath.empty())
@@ -599,15 +684,15 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                     ImGui::PopID();
                     tdl->AddText(ImVec2(rowPos.x + 26.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.name.c_str());
 
-                    int fs = std::max(0, std::min(gVmuAnimTotalFrames - 1, l.frameStart));
-                    int fe = std::max(fs, std::min(gVmuAnimTotalFrames - 1, l.frameEnd));
-                    float x0 = timelineX + frameW * (float)fs;
-                    float x1 = timelineX + frameW * (float)(fe + 1);
-                    tdl->AddRectFilled(ImVec2(x0, rowPos.y + 3.0f), ImVec2(x1, rowPos.y + rowH - 3.0f), IM_COL32(80, 220, 80, 255));
-                    tdl->AddRect(ImVec2(x0, rowPos.y + 3.0f), ImVec2(x1, rowPos.y + rowH - 3.0f), IM_COL32(20, 120, 20, 255));
+                    // Draw the bar
+                    tdl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), IM_COL32(80, 220, 80, 255));
+                    tdl->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by1), IM_COL32(20, 120, 20, 255));
+                    // Edge grab handles (subtle darker strips)
+                    tdl->AddRectFilled(ImVec2(bx0, by0 + 1.0f), ImVec2(bx0 + 3.0f, by1 - 1.0f), IM_COL32(40, 160, 40, 255));
+                    tdl->AddRectFilled(ImVec2(bx1 - 3.0f, by0 + 1.0f), ImVec2(bx1, by1 - 1.0f), IM_COL32(40, 160, 40, 255));
                     if (!l.linkedAsset.empty())
                     {
-                        tdl->AddRectFilled(ImVec2(x0 + 2.0f, rowPos.y + 6.0f), ImVec2(x0 + 6.0f, rowPos.y + rowH - 6.0f), IM_COL32(30, 30, 30, 255));
+                        tdl->AddRectFilled(ImVec2(bx0 + 5.0f, rowPos.y + 6.0f), ImVec2(bx0 + 9.0f, rowPos.y + rowH - 6.0f), IM_COL32(30, 30, 30, 255));
                     }
                 }
 

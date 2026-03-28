@@ -64,6 +64,9 @@ NB_RT_EXPORT int   NB_RT_IsAnimationPlaying(const char* meshName);
 NB_RT_EXPORT int   NB_RT_IsAnimationFinished(const char* meshName);
 NB_RT_EXPORT void  NB_RT_SetAnimationSpeed(const char* meshName, float speed);
 
+// --- VMU animation ---
+NB_RT_EXPORT void  NB_RT_PlayVmuLayer(int layer);
+
 // --- Raycasting ---
 NB_RT_EXPORT int   NB_RT_RaycastDown(float rx, float ry, float rz, float* outHitY);
 NB_RT_EXPORT int   NB_RT_RaycastDownWithNormal(float rx, float ry, float rz, float* outHitY, float outNormal[3]);

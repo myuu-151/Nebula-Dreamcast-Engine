@@ -674,6 +674,10 @@ int  __attribute__((weak)) NB_RT_IsAnimationPlaying(const char* meshName) { (voi
 int  __attribute__((weak)) NB_RT_IsAnimationFinished(const char* meshName) { (void)meshName; return 0; }
 void __attribute__((weak)) NB_RT_SetAnimationSpeed(const char* meshName, float speed) { (void)meshName; (void)speed; }
 
+/* ---- Weak fallback stub for NB_RT_PlayVmuLayer ---- */
+
+void __attribute__((weak)) NB_RT_PlayVmuLayer(int layer) { (void)layer; }
+
 /* ---- Weak fallback stubs for NB_RT_NavMesh ---- */
 
 int __attribute__((weak)) NB_RT_NavMeshBuild(void) { return 0; }

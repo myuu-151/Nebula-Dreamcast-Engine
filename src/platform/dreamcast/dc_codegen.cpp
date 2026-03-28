@@ -2276,6 +2276,24 @@ else
                     }
                 }
                 mc << "};\n";
+                // Emit per-layer frame range table
+                mc << "static const int kVmuLayerCount = " << (int)gVmuAnimLayers.size() << ";\n";
+                mc << "static const int kVmuLayerStart[] = {";
+                for (size_t li = 0; li < gVmuAnimLayers.size(); ++li)
+                {
+                    mc << gVmuAnimLayers[li].frameStart;
+                    if (li + 1 < gVmuAnimLayers.size()) mc << ",";
+                }
+                mc << "};\n";
+                mc << "static const int kVmuLayerEnd[] = {";
+                for (size_t li = 0; li < gVmuAnimLayers.size(); ++li)
+                {
+                    mc << gVmuAnimLayers[li].frameEnd;
+                    if (li + 1 < gVmuAnimLayers.size()) mc << ",";
+                }
+                mc << "};\n";
+                mc << "static int gVmuActiveLayer = -1;\n";
+                mc << "static int gVmuLayerTriggered = 0;\n";
                 mc << "static void NB_TryLoadVmuBootImage(void){\n";
                 mc << "  static uintptr_t sLastVmu = 0;\n";
                 mc << "  if(!kVmuLoadOnBoot) return;\n";
@@ -2302,7 +2320,6 @@ else
                 mc << "  static int sAnimDiskFrames = 0;\n";
                 mc << "  static int sAnimTriedLoad = 0;\n";
                 mc << "  if(!kVmuLoadOnBoot || !kVmuAnimEnabled || kVmuAnimFrameCount <= 0) return;\n";
-                mc << "  if(!kVmuAnimLoop && sDoneOneShot) return;\n";
                 mc << "  if(!sAnimTriedLoad){\n";
                 mc << "    sAnimTriedLoad = 1;\n";
                 mc << "    FILE* fa=fopen(\"/cd/data/vmu/vmu_anim.bin\",\"rb\");\n";
@@ -2310,17 +2327,50 @@ else
                 mc << "  }\n";
                 mc << "  if(!sVmu){ for(int i=0;i<8;++i){ maple_device_t* d=maple_enum_type(i, MAPLE_FUNC_LCD); if(d){ sVmu=d; break; } } }\n";
                 mc << "  if(!sVmu) return;\n";
+                mc << "  // Handle layer trigger: reset playhead to layer start\n";
+                mc << "  if(gVmuLayerTriggered){\n";
+                mc << "    gVmuLayerTriggered = 0;\n";
+                mc << "    sAccum = 0.0f;\n";
+                mc << "    sDoneOneShot = 0;\n";
+                mc << "    if(gVmuActiveLayer >= 0 && gVmuActiveLayer < kVmuLayerCount){\n";
+                mc << "      sFrame = kVmuLayerStart[gVmuActiveLayer];\n";
+                mc << "    } else { sFrame = 0; }\n";
+                mc << "  }\n";
+                mc << "  // Determine frame range from active layer or full range\n";
+                mc << "  int rangeStart = 0;\n";
+                mc << "  int rangeEnd = kVmuAnimFrameCount - 1;\n";
+                mc << "  if(gVmuActiveLayer >= 0 && gVmuActiveLayer < kVmuLayerCount){\n";
+                mc << "    rangeStart = kVmuLayerStart[gVmuActiveLayer];\n";
+                mc << "    rangeEnd = kVmuLayerEnd[gVmuActiveLayer];\n";
+                mc << "  }\n";
+                mc << "  int frameCount = (sAnimDiskFrames > 0) ? sAnimDiskFrames : kVmuAnimFrameCount;\n";
+                mc << "  if(rangeEnd >= frameCount) rangeEnd = frameCount - 1;\n";
+                mc << "  if(rangeStart > rangeEnd) rangeStart = rangeEnd;\n";
+                mc << "  if(!kVmuAnimLoop && sDoneOneShot && gVmuActiveLayer < 0) return;\n";
                 mc << "  float fps = 8.0f; if(kVmuAnimSpeedCode==0) fps = 4.0f; else if(kVmuAnimSpeedCode==2) fps = 12.0f; else if(kVmuAnimSpeedCode==3) fps = 16.0f;\n";
                 mc << "  float step = 1.0f / fps;\n";
-                mc << "  int frameCount = (sAnimDiskFrames > 0) ? sAnimDiskFrames : kVmuAnimFrameCount;\n";
                 mc << "  sAccum += dt;\n";
                 mc << "  while(sAccum >= step){\n";
                 mc << "    sAccum -= step;\n";
                 mc << "    const uint8_t* frame = (sAnimDiskFrames > 0) ? (sAnimDisk + (size_t)sFrame * 192u) : (&kVmuAnimFrames[(size_t)sFrame * 192u]);\n";
                 mc << "    vmu_draw_lcd(sVmu, (void*)frame);\n";
                 mc << "    sFrame++;\n";
-                mc << "    if(sFrame >= frameCount){ sFrame = 0; if(!kVmuAnimLoop){ sDoneOneShot = 1; break; } }\n";
+                mc << "    if(sFrame > rangeEnd){\n";
+                mc << "      if(gVmuActiveLayer >= 0){\n";
+                mc << "        // Layer finished: return to layer 0 (idle)\n";
+                mc << "        gVmuActiveLayer = -1;\n";
+                mc << "        sFrame = 0;\n";
+                mc << "      } else {\n";
+                mc << "        sFrame = rangeStart;\n";
+                mc << "        if(!kVmuAnimLoop){ sDoneOneShot = 1; break; }\n";
+                mc << "      }\n";
+                mc << "    }\n";
                 mc << "  }\n";
+                mc << "}\n";
+                mc << "void NB_RT_PlayVmuLayer(int layer){\n";
+                mc << "  if(layer < 0 || layer >= kVmuLayerCount) return;\n";
+                mc << "  gVmuActiveLayer = layer;\n";
+                mc << "  gVmuLayerTriggered = 1;\n";
                 mc << "}\n";
                 mc << "static void NB_SetMirrorFromIndex(int idx){\n";
                 mc << "  idx &= 7;\n";

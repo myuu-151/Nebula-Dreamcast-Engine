@@ -1158,6 +1158,33 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                     if (ImGui::Combo("Vertex Shading UVs", &shadingUvCombo, shadingUvOptions2, optCount))
                         NebulaAssets::SaveMaterialShadingUv(gMaterialInspectorPath, shadingUvCombo - 1);
                 }
+                float stippleVal = NebulaAssets::LoadMaterialStipple(gMaterialInspectorPath);
+                if (ImGui::DragFloat("Stipple", &stippleVal, 0.005f, 0.0f, 1.0f, "%.3f"))
+                    NebulaAssets::SaveMaterialStipple(gMaterialInspectorPath, stippleVal);
+                if (stippleVal > 0.0f)
+                {
+                    float tintR, tintG, tintB;
+                    NebulaAssets::LoadMaterialStippleTint(gMaterialInspectorPath, tintR, tintG, tintB);
+                    float tint[3] = { tintR, tintG, tintB };
+                    if (ImGui::ColorEdit3("Stipple Tint", tint))
+                        NebulaAssets::SaveMaterialStippleTint(gMaterialInspectorPath, tint[0], tint[1], tint[2]);
+                    float intensity = NebulaAssets::LoadMaterialStippleIntensity(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Stipple Intensity", &intensity, 0.005f, 0.0f, 2.0f, "%.3f"))
+                        NebulaAssets::SaveMaterialStippleIntensity(gMaterialInspectorPath, intensity);
+                    float alpha = NebulaAssets::LoadMaterialStippleAlpha(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Stipple Alpha", &alpha, 0.005f, 0.0f, 1.0f, "%.3f"))
+                        NebulaAssets::SaveMaterialStippleAlpha(gMaterialInspectorPath, alpha);
+                    float ramp = NebulaAssets::LoadMaterialStippleRamp(gMaterialInspectorPath);
+                    if (ImGui::DragFloat("Stipple Ramp", &ramp, 0.01f, 0.1f, 4.0f, "%.2f"))
+                        NebulaAssets::SaveMaterialStippleRamp(gMaterialInspectorPath, ramp);
+                }
+                float opacity = NebulaAssets::LoadMaterialOpacity(gMaterialInspectorPath);
+                if (ImGui::DragFloat("Opacity", &opacity, 0.005f, 0.0f, 1.0f, "%.3f"))
+                    NebulaAssets::SaveMaterialOpacity(gMaterialInspectorPath, opacity);
+                int cullFace = NebulaAssets::LoadMaterialCullFace(gMaterialInspectorPath);
+                const char* cullOptions[] = { "None", "Back", "Front" };
+                if (ImGui::Combo("Cull Face", &cullFace, cullOptions, IM_ARRAYSIZE(cullOptions)))
+                    NebulaAssets::SaveMaterialCullFace(gMaterialInspectorPath, cullFace);
                 bool texOk = false;
                 if (!texPath.empty())
                 {

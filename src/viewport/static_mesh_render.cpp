@@ -18,6 +18,40 @@
 #include <unordered_map>
 #include <vector>
 
+// Cached centroid+scale for anim-to-mesh mapping (computed once per anim+mesh pair)
+struct AnimPoseCache { Vec3 aC, bC; float ds; };
+static std::unordered_map<std::string, AnimPoseCache> gAnimPoseCache;
+
+// 4x4 Bayer ordered dither matrix (normalized 0-1 thresholds for 16 levels)
+static const float kBayer4x4[4][4] = {
+    {  0.0f/16.0f,  8.0f/16.0f,  2.0f/16.0f, 10.0f/16.0f },
+    { 12.0f/16.0f,  4.0f/16.0f, 14.0f/16.0f,  6.0f/16.0f },
+    {  3.0f/16.0f, 11.0f/16.0f,  1.0f/16.0f,  9.0f/16.0f },
+    { 15.0f/16.0f,  7.0f/16.0f, 13.0f/16.0f,  5.0f/16.0f },
+};
+
+// Generate a 32x32 stipple pattern from a continuous threshold (0=opaque, 1=fully transparent)
+// Ramp applies a power curve to the threshold for non-linear falloff.
+static void GenerateStipplePattern(float threshold, float ramp, GLubyte outPattern[128])
+{
+    float t = std::max(0.0f, std::min(1.0f, threshold));
+    if (ramp != 1.0f && ramp > 0.0f) t = powf(t, 1.0f / ramp);
+    for (int row = 0; row < 32; ++row)
+    {
+        GLubyte rowBytes[4] = { 0, 0, 0, 0 };
+        for (int col = 0; col < 32; ++col)
+        {
+            float bayerVal = kBayer4x4[row % 4][col % 4];
+            // Pixel is drawn (bit=1) if bayer threshold >= transparency amount
+            if (bayerVal >= t) rowBytes[col / 8] |= (GLubyte)(0x80 >> (col % 8));
+        }
+        outPattern[row * 4 + 0] = rowBytes[0];
+        outPattern[row * 4 + 1] = rowBytes[1];
+        outPattern[row * 4 + 2] = rowBytes[2];
+        outPattern[row * 4 + 3] = rowBytes[3];
+    }
+}
+
 #include <GLFW/glfw3.h>
 
 #ifndef GL_POLYGON_OFFSET_LINE
@@ -92,8 +126,52 @@ void RenderStaticMeshNodes()
                     if (nv > 0)
                     {
                         staticAnimPosed.resize(mesh->positions.size());
-                        for (size_t vi = 0; vi < nv; ++vi)
-                            staticAnimPosed[vi] = ff[vi];
+                        if (it->second.meshAligned)
+                        {
+                            // Animation already in mesh-local space — direct replacement
+                            for (size_t vi = 0; vi < nv; ++vi)
+                                staticAnimPosed[vi] = ff[vi];
+                        }
+                        else
+                        {
+                            // Look up or compute cached centroid+scale (once per anim+mesh pair)
+                            std::string poseKey = key + "|" + meshPath.generic_string();
+                            auto pcIt = gAnimPoseCache.find(poseKey);
+                            if (pcIt == gAnimPoseCache.end())
+                            {
+                                Vec3 bMin = mesh->positions[0], bMax = mesh->positions[0], bC = {0,0,0};
+                                Vec3 aMin = f0[0], aMax = f0[0], aC = {0,0,0};
+                                for (size_t vi = 0; vi < nv; ++vi)
+                                {
+                                    const Vec3& bp = mesh->positions[vi];
+                                    const Vec3& ap = f0[vi];
+                                    bC.x += bp.x; bC.y += bp.y; bC.z += bp.z;
+                                    aC.x += ap.x; aC.y += ap.y; aC.z += ap.z;
+                                    bMin.x = std::min(bMin.x, bp.x); bMin.y = std::min(bMin.y, bp.y); bMin.z = std::min(bMin.z, bp.z);
+                                    bMax.x = std::max(bMax.x, bp.x); bMax.y = std::max(bMax.y, bp.y); bMax.z = std::max(bMax.z, bp.z);
+                                    aMin.x = std::min(aMin.x, ap.x); aMin.y = std::min(aMin.y, ap.y); aMin.z = std::min(aMin.z, ap.z);
+                                    aMax.x = std::max(aMax.x, ap.x); aMax.y = std::max(aMax.y, ap.y); aMax.z = std::max(aMax.z, ap.z);
+                                }
+                                const float invN = 1.0f / (float)nv;
+                                bC.x *= invN; bC.y *= invN; bC.z *= invN;
+                                aC.x *= invN; aC.y *= invN; aC.z *= invN;
+                                const float bDiag = sqrtf((bMax.x-bMin.x)*(bMax.x-bMin.x) + (bMax.y-bMin.y)*(bMax.y-bMin.y) + (bMax.z-bMin.z)*(bMax.z-bMin.z));
+                                const float aDiag = sqrtf((aMax.x-aMin.x)*(aMax.x-aMin.x) + (aMax.y-aMin.y)*(aMax.y-aMin.y) + (aMax.z-aMin.z)*(aMax.z-aMin.z));
+                                float ds = 1.0f;
+                                if (aDiag > 1e-6f && bDiag > 1e-6f) ds = bDiag / aDiag;
+                                pcIt = gAnimPoseCache.emplace(poseKey, AnimPoseCache{aC, bC, ds}).first;
+                            }
+                            const Vec3& aC = pcIt->second.aC;
+                            const Vec3& bC = pcIt->second.bC;
+                            const float ds = pcIt->second.ds;
+
+                            for (size_t vi = 0; vi < nv; ++vi)
+                            {
+                                staticAnimPosed[vi].x = bC.x + (ff[vi].x - aC.x) * ds;
+                                staticAnimPosed[vi].y = bC.y + (ff[vi].y - aC.y) * ds;
+                                staticAnimPosed[vi].z = bC.z + (ff[vi].z - aC.z) * ds;
+                            }
+                        }
                         for (size_t vi = nv; vi < mesh->positions.size(); ++vi)
                             staticAnimPosed[vi] = mesh->positions[vi];
                         renderPositions = &staticAnimPosed;
@@ -102,7 +180,7 @@ void RenderStaticMeshNodes()
             }
         }
 
-        struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; float uvScaleU = 1.0f; float uvScaleV = 1.0f; int shadingMode = 0; float lightRotation = 0.0f; float lightPitch = 0.0f; float lightRoll = 0.0f; float shadowIntensity = 1.0f; int shadingUv = -1; };
+        struct MatState { GLuint tex = 0; bool flipU = false; bool flipV = false; float satU = 1.0f; float satV = 1.0f; float uvScale = 0.0f; float uvScaleU = 1.0f; float uvScaleV = 1.0f; int shadingMode = 0; float lightRotation = 0.0f; float lightPitch = 0.0f; float lightRoll = 0.0f; float shadowIntensity = 1.0f; int shadingUv = -1; float stipple = 0.0f; float stippleTintR = 1.0f; float stippleTintG = 1.0f; float stippleTintB = 1.0f; float stippleIntensity = 1.0f; float stippleAlpha = 1.0f; float stippleRamp = 1.0f; int cullFace = -1; float opacity = 1.0f; };
         std::unordered_map<int, MatState> matState;
         auto getMatState = [&](int matIndex) -> MatState {
             auto it = matState.find(matIndex);
@@ -136,6 +214,13 @@ void RenderStaticMeshNodes()
                     st.lightRoll = NebulaAssets::LoadMaterialLightRoll(matPath);
                     st.shadowIntensity = NebulaAssets::LoadMaterialShadowIntensity(matPath);
                     st.shadingUv = NebulaAssets::LoadMaterialShadingUv(matPath);
+                    st.stipple = NebulaAssets::LoadMaterialStipple(matPath);
+                    NebulaAssets::LoadMaterialStippleTint(matPath, st.stippleTintR, st.stippleTintG, st.stippleTintB);
+                    st.stippleIntensity = NebulaAssets::LoadMaterialStippleIntensity(matPath);
+                    st.stippleAlpha = NebulaAssets::LoadMaterialStippleAlpha(matPath);
+                    st.stippleRamp = NebulaAssets::LoadMaterialStippleRamp(matPath);
+                    st.cullFace = NebulaAssets::LoadMaterialCullFace(matPath);
+                    st.opacity = NebulaAssets::LoadMaterialOpacity(matPath);
                     std::string texPath;
                     if (NebulaAssets::LoadMaterialTexture(matPath, texPath) && !texPath.empty())
                     {
@@ -351,6 +436,9 @@ void RenderStaticMeshNodes()
             glColor3f(r, g, b);
         };
 
+        float curStipple = 0.0f;
+        float curOpacity = 1.0f;
+        int curCullFace = -1; // -1 = uninitialized
         if (gWireframePreview && mesh->hasFaceTopology && !mesh->faceVertexCounts.empty())
         {
             // Quad/polygon wireframe path: draw polygon boundary edges from source face topology
@@ -427,9 +515,11 @@ void RenderStaticMeshNodes()
                     faceMat = (int)mesh->faceMaterial[triIndex];
                 MatState triState = getMatState(faceMat);
                 if (gWireframePreview) setWireColorForMat(faceMat);
+                else if (triState.stipple > 0.0f) { float si = triState.stippleIntensity; glColor4f(triState.stippleTintR * si, triState.stippleTintG * si, triState.stippleTintB * si, triState.stippleAlpha); }
+                else if (triState.opacity < 1.0f) glColor4f(1.0f, 1.0f, 1.0f, triState.opacity);
                 else glColor3f(1.0f, 1.0f, 1.0f);
                 int triLit = triState.shadingMode;
-                bool needRestart = (triState.tex != boundTex) || (triLit != curLit) || (triState.shadingUv != curShadingUv) || ((triLit == 1 || triState.shadingUv >= 0) && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol || triState.shadowIntensity != curShadowInt));
+                bool needRestart = (triState.tex != boundTex) || (triLit != curLit) || (triState.shadingUv != curShadingUv) || (triState.stipple != curStipple) || (triState.opacity != curOpacity) || (triState.cullFace != curCullFace) || ((triLit == 1 || triState.shadingUv >= 0) && (triState.lightRotation != curLightRot || triState.lightPitch != curLightPit || triState.lightRoll != curLightRol || triState.shadowIntensity != curShadowInt));
                 if (needRestart)
                 {
                     glEnd();
@@ -467,25 +557,81 @@ void RenderStaticMeshNodes()
                     }
                     if (triState.tex != 0 && mesh->hasUv) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, triState.tex); }
                     else glDisable(GL_TEXTURE_2D);
+                    if (triState.stipple != curStipple)
+                    {
+                        if (triState.stipple > 0.0f)
+                        {
+                            GLubyte dynPattern[128];
+                            GenerateStipplePattern(triState.stipple, triState.stippleRamp, dynPattern);
+                            glEnable(GL_POLYGON_STIPPLE);
+                            glPolygonStipple(dynPattern);
+                        }
+                        else
+                        {
+                            glDisable(GL_POLYGON_STIPPLE);
+                        }
+                        // Alpha blending for stipple alpha
+                        if (triState.stipple > 0.0f && triState.stippleAlpha < 1.0f)
+                        {
+                            glEnable(GL_BLEND);
+                            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                            glColor4f(triState.stippleTintR * triState.stippleIntensity,
+                                      triState.stippleTintG * triState.stippleIntensity,
+                                      triState.stippleTintB * triState.stippleIntensity,
+                                      triState.stippleAlpha);
+                        }
+                        else if (curStipple > 0.0f)
+                        {
+                            glDisable(GL_BLEND);
+                        }
+                        curStipple = triState.stipple;
+                    }
+                    if (triState.cullFace != curCullFace && triState.cullFace >= 0)
+                    {
+                        if (triState.cullFace == 0) glDisable(GL_CULL_FACE);
+                        else { glEnable(GL_CULL_FACE); glCullFace(triState.cullFace == 2 ? GL_FRONT : GL_BACK); }
+                        curCullFace = triState.cullFace;
+                    }
+                    if (triState.opacity != curOpacity)
+                    {
+                        if (triState.opacity < 1.0f)
+                        {
+                            glEnable(GL_BLEND);
+                            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                            glDepthMask(GL_FALSE);
+                        }
+                        else if (curOpacity < 1.0f)
+                        {
+                            glDisable(GL_BLEND);
+                            glDepthMask(GL_TRUE);
+                        }
+                        curOpacity = triState.opacity;
+                    }
                     glBegin(GL_TRIANGLES);
                     boundTex = triState.tex;
                 }
 
                 if (triState.tex != 0 && mesh->hasUv && i0 < mesh->uvs.size()) { float u = mesh->uvs[i0].x; float v = 1.0f - mesh->uvs[i0].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul * triState.uvScaleU; v *= uvMul * triState.uvScaleV; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                if ((triState.shadingUv >= 0 || triLit == 1) && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
+                if ((triState.shadingUv >= 0 || triLit == 1) && i0 < csNormals.size()) { const Vec3& sn = csNormals[i0]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor4f(c, c, c, triState.opacity); }
                 const Vec3& v0 = (*renderPositions)[i0];
                 glVertex3f(v0.x, v0.y, v0.z);
                 if (triState.tex != 0 && mesh->hasUv && i1 < mesh->uvs.size()) { float u = mesh->uvs[i1].x; float v = 1.0f - mesh->uvs[i1].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul * triState.uvScaleU; v *= uvMul * triState.uvScaleV; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                if ((triState.shadingUv >= 0 || triLit == 1) && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
+                if ((triState.shadingUv >= 0 || triLit == 1) && i1 < csNormals.size()) { const Vec3& sn = csNormals[i1]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor4f(c, c, c, triState.opacity); }
                 const Vec3& v1 = (*renderPositions)[i1];
                 glVertex3f(v1.x, v1.y, v1.z);
                 if (triState.tex != 0 && mesh->hasUv && i2 < mesh->uvs.size()) { float u = mesh->uvs[i2].x; float v = 1.0f - mesh->uvs[i2].y; float uvMul = powf(2.0f, -triState.uvScale); u *= uvMul * triState.uvScaleU; v *= uvMul * triState.uvScaleV; if (gPreviewSaturnSampling) { u *= triState.satU; v *= triState.satV; } if (triState.flipU) u = 1.0f - u; if (triState.flipV) v = 1.0f - v; glTexCoord2f(u, v); }
-                if ((triState.shadingUv >= 0 || triLit == 1) && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor3f(c, c, c); }
+                if ((triState.shadingUv >= 0 || triLit == 1) && i2 < csNormals.size()) { const Vec3& sn = csNormals[i2]; float d = sn.x * swLx + sn.y * swLy + sn.z * swLz; if (d < 0.0f) d = 0.0f; float c = swAmb + d * swDif - ((sn.y < 0.0f) ? (-sn.y * swShQ) : 0.0f) + (1.0f - fabsf(sn.z)) * 0.12f; glColor4f(c, c, c, triState.opacity); }
                 const Vec3& v2 = (*renderPositions)[i2];
                 glVertex3f(v2.x, v2.y, v2.z);
             }
             glEnd();
         }
+
+        // Restore all per-material GL state after mesh rendering
+        glDisable(GL_POLYGON_STIPPLE);
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_CULL_FACE);
 
         // Restore lighting state after mesh rendering
         if (anyLit)

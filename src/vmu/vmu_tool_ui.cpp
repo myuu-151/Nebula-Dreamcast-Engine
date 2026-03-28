@@ -27,6 +27,11 @@ static int gVmuLastDrawX = -1;
 static int gVmuLastDrawY = -1;
 static std::vector<std::array<uint8_t, 48 * 32>> gVmuUndoStack;
 
+// Asset rename state
+static bool gVmuAssetRenaming = false;
+static std::string gVmuAssetRenamePath;
+static char gVmuAssetRenameBuf[128] = {};
+
 // Layer bar drag state
 static int gVmuBarDragLayer = -1;
 static int gVmuBarDragMode = 0;       // 0=none, 1=move, 2=resize-left, 3=resize-right
@@ -396,6 +401,14 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                                 }
                                 if (ImGui::BeginPopupContextItem((std::string("##vmuAssetCtx_") + p.filename().string()).c_str()))
                                 {
+                                    if (ImGui::MenuItem("Rename"))
+                                    {
+                                        gVmuAssetRenaming = true;
+                                        gVmuAssetRenamePath = p.string();
+                                        std::string stem = p.stem().string();
+                                        strncpy(gVmuAssetRenameBuf, stem.c_str(), sizeof(gVmuAssetRenameBuf) - 1);
+                                        gVmuAssetRenameBuf[sizeof(gVmuAssetRenameBuf) - 1] = '\0';
+                                    }
                                     if (ImGui::MenuItem("Delete"))
                                     {
                                         std::error_code dec;
@@ -415,6 +428,46 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                                     ImGui::EndPopup();
                                 }
                             }
+                        }
+                        if (gVmuAssetRenaming)
+                            ImGui::OpenPopup("##VmuRenamePopup");
+                        if (ImGui::BeginPopup("##VmuRenamePopup"))
+                        {
+                            ImGui::Text("Rename:");
+                            ImGui::SetNextItemWidth(200.0f);
+                            bool commit = ImGui::InputText("##VmuRenameBuf", gVmuAssetRenameBuf, sizeof(gVmuAssetRenameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                            if (gVmuAssetRenaming)
+                            {
+                                ImGui::SetKeyboardFocusHere(-1);
+                                gVmuAssetRenaming = false;
+                            }
+                            ImGui::SameLine();
+                            if (commit || ImGui::Button("OK"))
+                            {
+                                std::filesystem::path oldPath(gVmuAssetRenamePath);
+                                std::string newName = std::string(gVmuAssetRenameBuf) + oldPath.extension().string();
+                                std::filesystem::path newPath = oldPath.parent_path() / newName;
+                                std::error_code rec;
+                                std::filesystem::rename(oldPath, newPath, rec);
+                                if (!rec)
+                                {
+                                    if (gVmuAssetPath == gVmuAssetRenamePath)
+                                        gVmuAssetPath = newPath.string();
+                                    if (gVmuLinkedPngPath == gVmuAssetRenamePath)
+                                        gVmuLinkedPngPath = newPath.string();
+                                    if (gVmuLinkedAnimPath == gVmuAssetRenamePath)
+                                        gVmuLinkedAnimPath = newPath.string();
+                                    gViewportToast = "VMU Tool: renamed to " + newName;
+                                }
+                                else
+                                {
+                                    gViewportToast = "VMU Tool: rename failed";
+                                }
+                                gViewportToastUntil = glfwGetTime() + 1.8;
+                                gVmuAssetRenamePath.clear();
+                                ImGui::CloseCurrentPopup();
+                            }
+                            ImGui::EndPopup();
                         }
                         ImGui::EndTabItem();
                     }

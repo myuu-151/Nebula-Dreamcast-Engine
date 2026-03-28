@@ -767,6 +767,11 @@ NB_RT_EXPORT void NB_RT_SetAnimationSpeed(const char* meshName, float speed)
 }
 
 // ---------------------------------------------------------------------------
+// NB_RT_PlayVmuLayer — editor-side no-op (only meaningful on DC runtime)
+// ---------------------------------------------------------------------------
+NB_RT_EXPORT void NB_RT_PlayVmuLayer(int layer) { (void)layer; }
+
+// ---------------------------------------------------------------------------
 // NB_RT_RaycastDown — cast a vertical ray downward from (rx,ry,rz) and find
 // the highest collision-flagged StaticMesh3D triangle surface below that point.
 // ---------------------------------------------------------------------------

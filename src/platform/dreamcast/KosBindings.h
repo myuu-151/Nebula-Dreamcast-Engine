@@ -139,6 +139,9 @@ int  NB_RT_NavMeshFindPath(float sx, float sy, float sz, float gx, float gy, flo
 int  NB_RT_NavMeshFindRandomPoint(float outPos[3]);
 int  NB_RT_NavMeshFindClosestPoint(float px, float py, float pz, float outPos[3]);
 
+// VMU animation layer bridge
+void NB_RT_PlayVmuLayer(int layer);
+
 // NavMesh DC asset loading
 int  NB_DC_LoadNavMesh(const char* navPath);
 void NB_DC_FreeNavMesh(void);

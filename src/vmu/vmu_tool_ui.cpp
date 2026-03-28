@@ -41,14 +41,26 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
             const float topBarHLocal = 28.0f * ImGui::GetIO().FontGlobalScale;
             ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + topBarHLocal));
             ImGui::SetNextWindowSize(ImVec2(vp->Size.x, vp->Size.y - topBarHLocal));
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.10f, 0.14f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.75f, 0.75f, 0.75f, 1));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.25f, 0.25f, 1));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.17f, 0.17f, 0.17f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.13f, 0.13f, 0.13f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
             ImGui::Begin("##VmuToolSlate", nullptr,
                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
 
             // Top border strip with left-side Save button.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.94f, 0.94f, 0.94f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
             ImGui::BeginChild("##VmuToolTopStrip", ImVec2(0.0f, 34.0f * ImGui::GetIO().FontGlobalScale), true,
                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             if (ImGui::Button("Save"))
@@ -522,17 +534,17 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                 if (timelineW < 60.0f) timelineW = 60.0f;
                 float frameW = timelineW / (float)gVmuAnimTotalFrames;
 
-                tdl->AddRectFilled(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(220, 220, 220, 255));
-                tdl->AddRect(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(140, 140, 140, 255));
+                tdl->AddRectFilled(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(30, 30, 30, 255));
+                tdl->AddRect(origin, ImVec2(origin.x + tAvail.x, origin.y + timelineH), IM_COL32(60, 60, 60, 255));
                 for (int f = 0; f <= gVmuAnimTotalFrames; ++f)
                 {
                     float x = timelineX + frameW * (float)f;
                     int major = (f % 5 == 0) ? 1 : 0;
-                    tdl->AddLine(ImVec2(x, origin.y + (major ? 12.0f : 20.0f)), ImVec2(x, origin.y + timelineH), IM_COL32(150, 150, 150, 255));
+                    tdl->AddLine(ImVec2(x, origin.y + (major ? 12.0f : 20.0f)), ImVec2(x, origin.y + timelineH), IM_COL32(70, 70, 70, 255));
                     if (major && f > 0)
                     {
                         char buf[16]; snprintf(buf, sizeof(buf), "%d", f);
-                        tdl->AddText(ImVec2(x + 2.0f, origin.y + 1.0f), IM_COL32(40, 40, 40, 255), buf);
+                        tdl->AddText(ImVec2(x + 2.0f, origin.y + 1.0f), IM_COL32(180, 180, 180, 255), buf);
                     }
                 }
                 float phx = timelineX + frameW * (float)gVmuAnimPlayhead;
@@ -659,30 +671,11 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                         }
                     }
 
-                    tdl->AddRectFilled(ImVec2(rowPos.x + 24.0f, rowPos.y), ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), rowSel ? IM_COL32(170, 205, 240, 180) : IM_COL32(235, 235, 235, 255));
-                    tdl->AddRect(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), IM_COL32(170, 170, 170, 255));
-                    ImGui::SetCursorScreenPos(ImVec2(rowPos.x + 2.0f, rowPos.y + 2.0f));
+                    tdl->AddRectFilled(ImVec2(rowPos.x + 24.0f, rowPos.y), ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), rowSel ? IM_COL32(60, 60, 60, 200) : IM_COL32(35, 35, 35, 255));
+                    tdl->AddRect(rowPos, ImVec2(rowPos.x + tAvail.x, rowPos.y + rowH), IM_COL32(55, 55, 55, 255));
                     ImGui::PushID(i);
-                    if (ImGui::SmallButton("->"))
-                    {
-                        if (gVmuCurrentLoadedType == 2 && !gVmuLinkedAnimPath.empty())
-                        {
-                            gViewportToast = "VMU Tool: linked VMUAnim";
-                        }
-                        else if (!gVmuAssetPath.empty())
-                        {
-                            l.linkedAsset = gVmuAssetPath;
-                            gVmuLinkedPngPath = gVmuAssetPath;
-                            gViewportToast = "VMU Tool: linked PNG to layer";
-                        }
-                        else
-                        {
-                            gViewportToast = "VMU Tool: load a PNG or VMUAnim first";
-                        }
-                        gViewportToastUntil = glfwGetTime() + 1.5;
-                    }
                     ImGui::PopID();
-                    tdl->AddText(ImVec2(rowPos.x + 26.0f, rowPos.y + 4.0f), IM_COL32(30, 30, 30, 255), l.name.c_str());
+                    tdl->AddText(ImVec2(rowPos.x + 26.0f, rowPos.y + 4.0f), IM_COL32(200, 200, 200, 255), l.name.c_str());
 
                     // Draw the bar
                     tdl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), IM_COL32(80, 220, 80, 255));
@@ -703,16 +696,6 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
                     char nameBuf[64] = {};
                     strncpy(nameBuf, l.name.c_str(), sizeof(nameBuf) - 1);
                     if (ImGui::InputText("Layer Name", nameBuf, sizeof(nameBuf))) l.name = nameBuf;
-                    ImGui::Checkbox("Visible", &l.visible);
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80.0f);
-                    ImGui::InputInt("Start", &l.frameStart);
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80.0f);
-                    ImGui::InputInt("End", &l.frameEnd);
-                    if (l.frameStart < 0) l.frameStart = 0;
-                    if (l.frameEnd < l.frameStart) l.frameEnd = l.frameStart;
-                    if (l.frameEnd >= gVmuAnimTotalFrames) l.frameEnd = gVmuAnimTotalFrames - 1;
                 }
 
                 ImGui::EndChild();
@@ -847,6 +830,6 @@ void DrawVmuToolUI(const ImGuiViewport* vp)
             }
 
             ImGui::End();
-            ImGui::PopStyleColor(2);
+            ImGui::PopStyleColor(14);
         }
 }

@@ -19,12 +19,12 @@
 // Recast build parameters — tweak these for your game scale.
 struct NavMeshParams
 {
-    float cellSize          = 0.15f;
+    float cellSize          = 0.10f;  // finer grid = better wall obstacle resolution
     float cellHeight        = 0.1f;
     float walkableSlopeDeg  = 89.0f;  // near-90 = capture all geometry including steep seams
     float walkableHeight    = 2.0f;   // agent height
     float walkableClimb     = 2.0f;   // high = bridge height gaps at seams between connected surfaces
-    float walkableRadius    = 0.3f;   // erode navmesh edges inward to keep AI off drop-offs
+    float walkableRadius    = 0.6f;   // erode navmesh edges inward — keeps AI clear of walls and drop-offs
     float maxEdgeLen        = 12.0f;
     float maxSimplError     = 0.5f;   // low = preserve detail at edge seams
     int   minRegionArea     = 4;      // allow small walkable patches
@@ -38,9 +38,13 @@ struct NavMeshParams
 // verts:   packed float array [x0,y0,z0, x1,y1,z1, ...] — (count / 3) vertices
 // tris:    packed int array [i0,i1,i2, ...] — (count / 3) triangles indexing into verts
 // Returns true on success.
+// triFlags: optional per-triangle flags (triCount entries).
+//   bit 0 = force non-walkable (obstacle only — shapes navmesh boundary but AI won't walk on it)
+//   Pass nullptr to use default slope-based walkability.
 bool NavMeshBuild(const float* verts, int vertCount,
                   const int* tris, int triCount,
-                  const NavMeshParams& params = NavMeshParams{});
+                  const NavMeshParams& params = NavMeshParams{},
+                  const unsigned char* triFlags = nullptr);
 
 // Free the current navmesh.
 void NavMeshClear();

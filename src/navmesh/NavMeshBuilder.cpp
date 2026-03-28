@@ -42,7 +42,8 @@ bool NavMeshIsReady()
 
 bool NavMeshBuild(const float* verts, int vertCount,
                   const int* tris, int triCount,
-                  const NavMeshParams& p)
+                  const NavMeshParams& p,
+                  const unsigned char* triFlags)
 {
     NavMeshClear();
 
@@ -103,6 +104,13 @@ bool NavMeshBuild(const float* verts, int vertCount,
                                 verts, vertCount,
                                 tris, ntris, triAreas);
 
+        // Apply per-triangle flags: force non-walkable for obstacle-only tris
+        if (triFlags)
+        {
+            for (int i = 0; i < ntris; ++i)
+                if (triFlags[i] & 1) triAreas[i] = 0;
+        }
+
         // Count walkable triangles; if zero, flip winding and retry
         int nWalkable = 0;
         for (int i = 0; i < ntris; ++i) if (triAreas[i]) ++nWalkable;
@@ -122,6 +130,11 @@ bool NavMeshBuild(const float* verts, int vertCount,
             rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle,
                                     verts, vertCount,
                                     tris, ntris, triAreas);
+            if (triFlags)
+            {
+                for (int i = 0; i < ntris; ++i)
+                    if (triFlags[i] & 1) triAreas[i] = 0;
+            }
             nWalkable = 0;
             for (int i = 0; i < ntris; ++i) if (triAreas[i]) ++nWalkable;
             printf("[NavMeshBuild] after winding flip: walkable tris: %d / %d\n", nWalkable, ntris);

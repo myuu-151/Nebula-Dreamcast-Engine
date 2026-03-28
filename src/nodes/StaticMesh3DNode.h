@@ -39,6 +39,7 @@ struct StaticMesh3DNode
     bool collisionSource = false;
     bool runtimeTest = false;
     bool navmeshReady = false;
+    bool collisionWalls = false;
     float wallThreshold = 0.7f;
     bool animPreload = true;
 };

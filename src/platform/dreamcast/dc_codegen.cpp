@@ -1367,6 +1367,7 @@ else
                     {
                     std::vector<float> navVerts;
                     std::vector<int>   navTris;
+                    std::vector<unsigned char> navTriFlags;
                     std::vector<DCNavBounds> dcNavVolumes;
                     {
                         const auto& ls = loadedScenes[navSceneIdx];
@@ -1481,6 +1482,7 @@ else
                             }
 
                             // Only include triangles where at least one vertex is inside nav bounds
+                            // If collisionWalls is set, skip near-vertical (wall) faces using wallThreshold
                             int addedTris = 0;
                             for (uint32_t t = 0; t + 2 < indexCount; t += 3)
                             {
@@ -1495,6 +1497,20 @@ else
                                               dcPointInNavBounds(v2x, v2y, v2z);
                                 if (!inside) continue;
 
+                                // Mark wall faces as non-walkable obstacles (shapes boundary but AI won't walk on them)
+                                unsigned char flag = 0;
+                                if (sm.collisionWalls)
+                                {
+                                    float e1x = v1x-v0x, e1y = v1y-v0y, e1z = v1z-v0z;
+                                    float e2x = v2x-v0x, e2y = v2y-v0y, e2z = v2z-v0z;
+                                    float nx = e1y*e2z - e1z*e2y;
+                                    float ny = e1z*e2x - e1x*e2z;
+                                    float nz = e1x*e2y - e1y*e2x;
+                                    float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
+                                    if (nlen > 1e-8f && fabsf(ny / nlen) < sm.wallThreshold)
+                                        flag = 1; // obstacle-only
+                                }
+
                                 int baseV = (int)(navVerts.size() / 3);
                                 navVerts.push_back(v0x); navVerts.push_back(v0y); navVerts.push_back(v0z);
                                 navVerts.push_back(v1x); navVerts.push_back(v1y); navVerts.push_back(v1z);
@@ -1502,6 +1518,7 @@ else
                                 navTris.push_back(baseV);
                                 navTris.push_back(baseV + 1);
                                 navTris.push_back(baseV + 2);
+                                navTriFlags.push_back(flag);
                                 ++addedTris;
                             }
                             printf("[DreamcastBuild] navmesh:   %s — %d verts, %d/%u tris\n", sm.name.c_str(), (int)vertexCount, addedTris, indexCount / 3);
@@ -1510,7 +1527,7 @@ else
                     printf("[DreamcastBuild] navmesh: collected %d verts, %d tris\n", (int)(navVerts.size()/3), (int)(navTris.size()/3));
                     if (!navVerts.empty() && !navTris.empty())
                     {
-                        bool buildOk = NavMeshBuild(navVerts.data(), (int)(navVerts.size() / 3), navTris.data(), (int)(navTris.size() / 3));
+                        bool buildOk = NavMeshBuild(navVerts.data(), (int)(navVerts.size() / 3), navTris.data(), (int)(navTris.size() / 3), NavMeshParams{}, navTriFlags.data());
                         printf("[DreamcastBuild] navmesh: NavMeshBuild returned %s\n", buildOk ? "SUCCESS" : "FAILED");
                         if (buildOk)
                         {

@@ -23,11 +23,25 @@ static bool gKeyZ = false;
 static bool gKeyEsc = false;
 static bool gKeyDel = false;
 
-// Copy/paste statics
-static bool gHasCopiedNode = false;
-static Audio3DNode gCopiedNode;
-static bool gHasCopiedStatic = false;
-static StaticMesh3DNode gCopiedStatic;
+// Copy/paste statics (multi-select aware)
+static std::vector<Audio3DNode> gCopiedAudio3D;
+static std::vector<StaticMesh3DNode> gCopiedStaticMesh;
+static std::vector<Camera3DNode> gCopiedCamera3D;
+static std::vector<Node3DNode> gCopiedNode3D;
+static std::vector<NavMesh3DNode> gCopiedNavMesh3D;
+
+static std::string IncrementName(const std::string& name)
+{
+    std::string base = name;
+    int num = 1;
+    size_t pos = base.find_last_not_of("0123456789");
+    if (pos != std::string::npos && pos + 1 < base.size())
+    {
+        num = std::stoi(base.substr(pos + 1)) + 1;
+        base = base.substr(0, pos + 1);
+    }
+    return base + std::to_string(num);
+}
 
 void TickTransformHotkeys(GLFWwindow* window, EditorViewportNav& nav)
 {
@@ -91,6 +105,7 @@ void TickTransformHotkeys(GLFWwindow* window, EditorViewportNav& nav)
             gTransformMode = Transform_None;
             gAxisLock = 0;
             gSelectedAudio3D = -1;
+            ClearMultiSelection();
             gHasRotatePreview = false;
         }
     }
@@ -190,76 +205,98 @@ void TickCtrlShortcuts()
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !io.WantTextInput)
     {
-        gHasCopiedNode = false;
-        gHasCopiedStatic = false;
-        if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
+        gCopiedAudio3D.clear();
+        gCopiedStaticMesh.clear();
+        gCopiedCamera3D.clear();
+        gCopiedNode3D.clear();
+        gCopiedNavMesh3D.clear();
+
+        // Copy from multi-selection
+        for (int idx : gMultiSelectedAudio3D)
+            if (idx >= 0 && idx < (int)gAudio3DNodes.size()) gCopiedAudio3D.push_back(gAudio3DNodes[idx]);
+        for (int idx : gMultiSelectedStaticMesh)
+            if (idx >= 0 && idx < (int)gStaticMeshNodes.size()) gCopiedStaticMesh.push_back(gStaticMeshNodes[idx]);
+        for (int idx : gMultiSelectedCamera3D)
+            if (idx >= 0 && idx < (int)gCamera3DNodes.size()) gCopiedCamera3D.push_back(gCamera3DNodes[idx]);
+        for (int idx : gMultiSelectedNode3D)
+            if (idx >= 0 && idx < (int)gNode3DNodes.size()) gCopiedNode3D.push_back(gNode3DNodes[idx]);
+        for (int idx : gMultiSelectedNavMesh3D)
+            if (idx >= 0 && idx < (int)gNavMesh3DNodes.size()) gCopiedNavMesh3D.push_back(gNavMesh3DNodes[idx]);
+
+        // Also copy from single-selection if no multi-select
+        if (gCopiedAudio3D.empty() && gCopiedStaticMesh.empty() && gCopiedCamera3D.empty() && gCopiedNode3D.empty() && gCopiedNavMesh3D.empty())
         {
-            gHasCopiedNode = true;
-            gCopiedNode = gAudio3DNodes[gSelectedAudio3D];
-        }
-        else if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
-        {
-            gHasCopiedStatic = true;
-            gCopiedStatic = gStaticMeshNodes[gSelectedStaticMesh];
+            if (gSelectedAudio3D >= 0 && gSelectedAudio3D < (int)gAudio3DNodes.size())
+                gCopiedAudio3D.push_back(gAudio3DNodes[gSelectedAudio3D]);
+            else if (gSelectedStaticMesh >= 0 && gSelectedStaticMesh < (int)gStaticMeshNodes.size())
+                gCopiedStaticMesh.push_back(gStaticMeshNodes[gSelectedStaticMesh]);
+            else if (gSelectedCamera3D >= 0 && gSelectedCamera3D < (int)gCamera3DNodes.size())
+                gCopiedCamera3D.push_back(gCamera3DNodes[gSelectedCamera3D]);
+            else if (gSelectedNode3D >= 0 && gSelectedNode3D < (int)gNode3DNodes.size())
+                gCopiedNode3D.push_back(gNode3DNodes[gSelectedNode3D]);
+            else if (gSelectedNavMesh3D >= 0 && gSelectedNavMesh3D < (int)gNavMesh3DNodes.size())
+                gCopiedNavMesh3D.push_back(gNavMesh3DNodes[gSelectedNavMesh3D]);
         }
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !io.WantTextInput)
     {
-        if (gHasCopiedNode)
+        bool hasCopied = !gCopiedAudio3D.empty() || !gCopiedStaticMesh.empty() ||
+                         !gCopiedCamera3D.empty() || !gCopiedNode3D.empty() || !gCopiedNavMesh3D.empty();
+        if (hasCopied)
         {
-            Audio3DNode node = gCopiedNode;
-            std::string base = node.name;
-            int num = 1;
-            size_t pos = base.find_last_not_of("0123456789");
-            if (pos != std::string::npos && pos + 1 < base.size())
-            {
-                num = std::stoi(base.substr(pos + 1)) + 1;
-                base = base.substr(0, pos + 1);
-            }
-            node.name = base + std::to_string(num);
-
-            int idx = (int)gAudio3DNodes.size();
-            gAudio3DNodes.push_back(node);
-            gSelectedAudio3D = idx;
-            gSelectedStaticMesh = -1;
-
-            PushUndo({"Duplicate Audio3D",
-                [idx]() { if (idx >= 0 && idx < (int)gAudio3DNodes.size()) gAudio3DNodes.erase(gAudio3DNodes.begin() + idx); },
-                [idx, node]() {
-                    int i = idx;
-                    if (i < 0) return;
-                    if (i > (int)gAudio3DNodes.size()) i = (int)gAudio3DNodes.size();
-                    gAudio3DNodes.insert(gAudio3DNodes.begin() + i, node);
-                }
-            });
-        }
-        else if (gHasCopiedStatic)
-        {
-            StaticMesh3DNode node = gCopiedStatic;
-            std::string base = node.name;
-            int num = 1;
-            size_t pos = base.find_last_not_of("0123456789");
-            if (pos != std::string::npos && pos + 1 < base.size())
-            {
-                num = std::stoi(base.substr(pos + 1)) + 1;
-                base = base.substr(0, pos + 1);
-            }
-            node.name = base + std::to_string(num);
-
-            int idx = (int)gStaticMeshNodes.size();
-            gStaticMeshNodes.push_back(node);
-            gSelectedStaticMesh = idx;
+            ClearMultiSelection();
             gSelectedAudio3D = -1;
+            gSelectedStaticMesh = -1;
+            gSelectedCamera3D = -1;
+            gSelectedNode3D = -1;
+            gSelectedNavMesh3D = -1;
 
-            PushUndo({"Duplicate StaticMesh3D",
-                [idx]() { if (idx >= 0 && idx < (int)gStaticMeshNodes.size()) gStaticMeshNodes.erase(gStaticMeshNodes.begin() + idx); },
-                [idx, node]() {
-                    int i = idx;
-                    if (i < 0) return;
-                    if (i > (int)gStaticMeshNodes.size()) i = (int)gStaticMeshNodes.size();
-                    gStaticMeshNodes.insert(gStaticMeshNodes.begin() + i, node);
-                }
-            });
+            for (const auto& src : gCopiedAudio3D)
+            {
+                Audio3DNode node = src;
+                node.name = IncrementName(node.name);
+                node.x += 1.0f;
+                int idx = (int)gAudio3DNodes.size();
+                gAudio3DNodes.push_back(node);
+                gMultiSelectedAudio3D.insert(idx);
+            }
+            for (const auto& src : gCopiedStaticMesh)
+            {
+                StaticMesh3DNode node = src;
+                node.name = IncrementName(node.name);
+                node.x += 1.0f;
+                int idx = (int)gStaticMeshNodes.size();
+                gStaticMeshNodes.push_back(node);
+                gMultiSelectedStaticMesh.insert(idx);
+            }
+            for (const auto& src : gCopiedCamera3D)
+            {
+                Camera3DNode node = src;
+                node.name = IncrementName(node.name);
+                node.x += 1.0f;
+                int idx = (int)gCamera3DNodes.size();
+                gCamera3DNodes.push_back(node);
+                gMultiSelectedCamera3D.insert(idx);
+            }
+            for (const auto& src : gCopiedNode3D)
+            {
+                Node3DNode node = src;
+                node.name = IncrementName(node.name);
+                node.x += 1.0f;
+                int idx = (int)gNode3DNodes.size();
+                gNode3DNodes.push_back(node);
+                gMultiSelectedNode3D.insert(idx);
+            }
+            for (const auto& src : gCopiedNavMesh3D)
+            {
+                NavMesh3DNode node = src;
+                node.name = IncrementName(node.name);
+                node.x += 1.0f;
+                int idx = (int)gNavMesh3DNodes.size();
+                gNavMesh3DNodes.push_back(node);
+                gMultiSelectedNavMesh3D.insert(idx);
+            }
+            PushUndo({"Paste nodes", nullptr, nullptr});
         }
     }
 }

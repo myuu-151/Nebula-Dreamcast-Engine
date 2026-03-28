@@ -36,6 +36,16 @@ extern int gInspectorPinnedCamera3D;
 extern int gInspectorPinnedNode3D;
 extern int gInspectorPinnedNavMesh3D;
 extern int gInspectorSel;
+
+// --- Multi-selection ---
+extern std::unordered_set<int> gMultiSelectedAudio3D;
+extern std::unordered_set<int> gMultiSelectedStaticMesh;
+extern std::unordered_set<int> gMultiSelectedCamera3D;
+extern std::unordered_set<int> gMultiSelectedNode3D;
+extern std::unordered_set<int> gMultiSelectedNavMesh3D;
+void ClearMultiSelection();
+bool HasMultiSelection();
+bool IsMultiSelected(int audioIdx, int staticIdx, int cameraIdx, int node3dIdx, int navmeshIdx);
 extern char gInspectorName[256];
 
 // --- Node rename ---

@@ -30,6 +30,39 @@ int gInspectorPinnedNavMesh3D = -1;
 int gInspectorSel = -1;
 char gInspectorName[256] = {};
 
+// --- Multi-selection ---
+std::unordered_set<int> gMultiSelectedAudio3D;
+std::unordered_set<int> gMultiSelectedStaticMesh;
+std::unordered_set<int> gMultiSelectedCamera3D;
+std::unordered_set<int> gMultiSelectedNode3D;
+std::unordered_set<int> gMultiSelectedNavMesh3D;
+
+void ClearMultiSelection()
+{
+    gMultiSelectedAudio3D.clear();
+    gMultiSelectedStaticMesh.clear();
+    gMultiSelectedCamera3D.clear();
+    gMultiSelectedNode3D.clear();
+    gMultiSelectedNavMesh3D.clear();
+}
+
+bool HasMultiSelection()
+{
+    return !gMultiSelectedAudio3D.empty() || !gMultiSelectedStaticMesh.empty() ||
+           !gMultiSelectedCamera3D.empty() || !gMultiSelectedNode3D.empty() ||
+           !gMultiSelectedNavMesh3D.empty();
+}
+
+bool IsMultiSelected(int audioIdx, int staticIdx, int cameraIdx, int node3dIdx, int navmeshIdx)
+{
+    if (audioIdx >= 0 && gMultiSelectedAudio3D.count(audioIdx)) return true;
+    if (staticIdx >= 0 && gMultiSelectedStaticMesh.count(staticIdx)) return true;
+    if (cameraIdx >= 0 && gMultiSelectedCamera3D.count(cameraIdx)) return true;
+    if (node3dIdx >= 0 && gMultiSelectedNode3D.count(node3dIdx)) return true;
+    if (navmeshIdx >= 0 && gMultiSelectedNavMesh3D.count(navmeshIdx)) return true;
+    return false;
+}
+
 // --- Node rename ---
 int gNodeRenameIndex = -1;
 bool gNodeRenameStatic = false;

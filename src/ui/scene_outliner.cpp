@@ -185,14 +185,30 @@ void DrawSceneOutliner(const ImGuiViewport* vp, float topBarH, float leftPanelWi
             }
         }
 
-        bool selected = (gSelectedAudio3D == i);
+        bool selected = (gSelectedAudio3D == i) || gMultiSelectedAudio3D.count(i);
         if (ImGui::Selectable(n.name.c_str(), selected))
         {
-            gSelectedAudio3D = i;
-            gSelectedStaticMesh = -1;
-            gSelectedCamera3D = -1;
-            gSelectedNode3D = -1;
-            gSelectedNavMesh3D = -1;
+            if (io.KeyCtrl)
+            {
+                if (gMultiSelectedAudio3D.count(i)) gMultiSelectedAudio3D.erase(i);
+                else gMultiSelectedAudio3D.insert(i);
+                // Add current single-select to multi if first Ctrl+Click
+                if (gSelectedAudio3D >= 0 && !gMultiSelectedAudio3D.empty())
+                { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                if (gSelectedStaticMesh >= 0) { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                if (gSelectedCamera3D >= 0) { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                if (gSelectedNode3D >= 0) { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+                if (gSelectedNavMesh3D >= 0) { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+            }
+            else
+            {
+                ClearMultiSelection();
+                gSelectedAudio3D = i;
+                gSelectedStaticMesh = -1;
+                gSelectedCamera3D = -1;
+                gSelectedNode3D = -1;
+                gSelectedNavMesh3D = -1;
+            }
             gTransforming = false;
             gTransformMode = Transform_None;
             gAxisLock = 0;
@@ -323,14 +339,29 @@ void DrawSceneOutliner(const ImGuiViewport* vp, float topBarH, float leftPanelWi
                 }
                 ImGui::SameLine();
             }
-            bool selected = (gSelectedStaticMesh == i);
+            bool selected = (gSelectedStaticMesh == i) || gMultiSelectedStaticMesh.count(i);
             if (ImGui::Selectable(n.name.c_str(), selected))
             {
-                gSelectedStaticMesh = i;
-                gSelectedAudio3D = -1;
-                gSelectedCamera3D = -1;
-                gSelectedNode3D = -1;
-                gSelectedNavMesh3D = -1;
+                if (io.KeyCtrl)
+                {
+                    if (gMultiSelectedStaticMesh.count(i)) gMultiSelectedStaticMesh.erase(i);
+                    else gMultiSelectedStaticMesh.insert(i);
+                    if (gSelectedStaticMesh >= 0 && !gMultiSelectedStaticMesh.empty())
+                    { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                    if (gSelectedAudio3D >= 0) { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                    if (gSelectedCamera3D >= 0) { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                    if (gSelectedNode3D >= 0) { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+                    if (gSelectedNavMesh3D >= 0) { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+                }
+                else
+                {
+                    ClearMultiSelection();
+                    gSelectedStaticMesh = i;
+                    gSelectedAudio3D = -1;
+                    gSelectedCamera3D = -1;
+                    gSelectedNode3D = -1;
+                    gSelectedNavMesh3D = -1;
+                }
                 gTransforming = false;
                 gTransformMode = Transform_None;
                 gAxisLock = 0;
@@ -500,14 +531,29 @@ void DrawSceneOutliner(const ImGuiViewport* vp, float topBarH, float leftPanelWi
                 }
             }
 
-            bool selected = (gSelectedCamera3D == i);
+            bool selected = (gSelectedCamera3D == i) || gMultiSelectedCamera3D.count(i);
             if (ImGui::Selectable(n.name.c_str(), selected))
             {
-                gSelectedCamera3D = i;
-                gSelectedAudio3D = -1;
-                gSelectedStaticMesh = -1;
-                gSelectedNode3D = -1;
-                gSelectedNavMesh3D = -1;
+                if (io.KeyCtrl)
+                {
+                    if (gMultiSelectedCamera3D.count(i)) gMultiSelectedCamera3D.erase(i);
+                    else gMultiSelectedCamera3D.insert(i);
+                    if (gSelectedCamera3D >= 0 && !gMultiSelectedCamera3D.empty())
+                    { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                    if (gSelectedAudio3D >= 0) { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                    if (gSelectedStaticMesh >= 0) { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                    if (gSelectedNode3D >= 0) { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+                    if (gSelectedNavMesh3D >= 0) { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+                }
+                else
+                {
+                    ClearMultiSelection();
+                    gSelectedCamera3D = i;
+                    gSelectedAudio3D = -1;
+                    gSelectedStaticMesh = -1;
+                    gSelectedNode3D = -1;
+                    gSelectedNavMesh3D = -1;
+                }
                 gTransforming = false;
                 gTransformMode = Transform_None;
                 gAxisLock = 0;
@@ -649,14 +695,29 @@ void DrawSceneOutliner(const ImGuiViewport* vp, float topBarH, float leftPanelWi
                 }
                 ImGui::SameLine();
             }
-            bool selected = (gSelectedNode3D == i);
+            bool selected = (gSelectedNode3D == i) || gMultiSelectedNode3D.count(i);
             if (ImGui::Selectable(n.name.c_str(), selected))
             {
-                gSelectedNode3D = i;
-                gSelectedAudio3D = -1;
-                gSelectedStaticMesh = -1;
-                gSelectedCamera3D = -1;
-                gSelectedNavMesh3D = -1;
+                if (io.KeyCtrl)
+                {
+                    if (gMultiSelectedNode3D.count(i)) gMultiSelectedNode3D.erase(i);
+                    else gMultiSelectedNode3D.insert(i);
+                    if (gSelectedNode3D >= 0 && !gMultiSelectedNode3D.empty())
+                    { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+                    if (gSelectedAudio3D >= 0) { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                    if (gSelectedStaticMesh >= 0) { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                    if (gSelectedCamera3D >= 0) { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                    if (gSelectedNavMesh3D >= 0) { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+                }
+                else
+                {
+                    ClearMultiSelection();
+                    gSelectedNode3D = i;
+                    gSelectedAudio3D = -1;
+                    gSelectedStaticMesh = -1;
+                    gSelectedCamera3D = -1;
+                    gSelectedNavMesh3D = -1;
+                }
                 gTransforming = false;
                 gTransformMode = Transform_None;
                 gAxisLock = 0;
@@ -827,15 +888,30 @@ void DrawSceneOutliner(const ImGuiViewport* vp, float topBarH, float leftPanelWi
     {
         auto& n = gNavMesh3DNodes[i];
         ImGui::PushID(10000 + i);
-        bool selected = (gSelectedNavMesh3D == i);
+        bool selected = (gSelectedNavMesh3D == i) || gMultiSelectedNavMesh3D.count(i);
         std::string label = n.name + (n.navNegator ? " [NEG]" : "") + (n.cullWalls ? " [CULL]" : "");
         if (ImGui::Selectable(label.c_str(), selected))
         {
-            gSelectedNavMesh3D = i;
-            gSelectedAudio3D = -1;
-            gSelectedStaticMesh = -1;
-            gSelectedCamera3D = -1;
-            gSelectedNode3D = -1;
+            if (io.KeyCtrl)
+            {
+                if (gMultiSelectedNavMesh3D.count(i)) gMultiSelectedNavMesh3D.erase(i);
+                else gMultiSelectedNavMesh3D.insert(i);
+                if (gSelectedNavMesh3D >= 0 && !gMultiSelectedNavMesh3D.empty())
+                { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+                if (gSelectedAudio3D >= 0) { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                if (gSelectedStaticMesh >= 0) { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                if (gSelectedCamera3D >= 0) { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                if (gSelectedNode3D >= 0) { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+            }
+            else
+            {
+                ClearMultiSelection();
+                gSelectedNavMesh3D = i;
+                gSelectedAudio3D = -1;
+                gSelectedStaticMesh = -1;
+                gSelectedCamera3D = -1;
+                gSelectedNode3D = -1;
+            }
             gTransforming = false;
             gTransformMode = Transform_None;
             gAxisLock = 0;

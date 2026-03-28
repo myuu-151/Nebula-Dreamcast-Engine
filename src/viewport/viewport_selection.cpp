@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "imgui.h"
 #include <GLFW/glfw3.h>
 
 void TickViewportSelection(GLFWwindow* window, float mouseX, float mouseY,
@@ -19,6 +20,7 @@ void TickViewportSelection(GLFWwindow* window, float mouseX, float mouseY,
     if (!mouseClicked) return;
 
     glfwFocusWindow(window);
+    bool ctrlHeld = ImGui::GetIO().KeyCtrl;
     float bestDist = 1e9f; // px
     int bestAudioIndex = -1;
     int bestStaticIndex = -1;
@@ -213,20 +215,43 @@ void TickViewportSelection(GLFWwindow* window, float mouseX, float mouseY,
         int prevNavMeshSel = gSelectedNavMesh3D;
         if (bestDist < 80.0f)
         {
-            gSelectedAudio3D = bestAudioIndex;
-            gSelectedStaticMesh = bestStaticIndex;
-            gSelectedCamera3D = bestCameraIndex;
-            gSelectedNode3D = bestNode3DIndex;
-            gSelectedNavMesh3D = bestNavMeshIndex;
+            if (ctrlHeld)
+            {
+                // Migrate current single-select into multi-select sets
+                if (gSelectedAudio3D >= 0) { gMultiSelectedAudio3D.insert(gSelectedAudio3D); gSelectedAudio3D = -1; }
+                if (gSelectedStaticMesh >= 0) { gMultiSelectedStaticMesh.insert(gSelectedStaticMesh); gSelectedStaticMesh = -1; }
+                if (gSelectedCamera3D >= 0) { gMultiSelectedCamera3D.insert(gSelectedCamera3D); gSelectedCamera3D = -1; }
+                if (gSelectedNode3D >= 0) { gMultiSelectedNode3D.insert(gSelectedNode3D); gSelectedNode3D = -1; }
+                if (gSelectedNavMesh3D >= 0) { gMultiSelectedNavMesh3D.insert(gSelectedNavMesh3D); gSelectedNavMesh3D = -1; }
+                // Toggle the clicked object in multi-select
+                if (bestAudioIndex >= 0) { if (gMultiSelectedAudio3D.count(bestAudioIndex)) gMultiSelectedAudio3D.erase(bestAudioIndex); else gMultiSelectedAudio3D.insert(bestAudioIndex); }
+                if (bestStaticIndex >= 0) { if (gMultiSelectedStaticMesh.count(bestStaticIndex)) gMultiSelectedStaticMesh.erase(bestStaticIndex); else gMultiSelectedStaticMesh.insert(bestStaticIndex); }
+                if (bestCameraIndex >= 0) { if (gMultiSelectedCamera3D.count(bestCameraIndex)) gMultiSelectedCamera3D.erase(bestCameraIndex); else gMultiSelectedCamera3D.insert(bestCameraIndex); }
+                if (bestNode3DIndex >= 0) { if (gMultiSelectedNode3D.count(bestNode3DIndex)) gMultiSelectedNode3D.erase(bestNode3DIndex); else gMultiSelectedNode3D.insert(bestNode3DIndex); }
+                if (bestNavMeshIndex >= 0) { if (gMultiSelectedNavMesh3D.count(bestNavMeshIndex)) gMultiSelectedNavMesh3D.erase(bestNavMeshIndex); else gMultiSelectedNavMesh3D.insert(bestNavMeshIndex); }
+            }
+            else
+            {
+                ClearMultiSelection();
+                gSelectedAudio3D = bestAudioIndex;
+                gSelectedStaticMesh = bestStaticIndex;
+                gSelectedCamera3D = bestCameraIndex;
+                gSelectedNode3D = bestNode3DIndex;
+                gSelectedNavMesh3D = bestNavMeshIndex;
+            }
         }
         else
         {
-            deselectAll();
+            if (!ctrlHeld)
+            {
+                ClearMultiSelection();
+                deselectAll();
+            }
         }
 
         if (gSelectedAudio3D != prevAudioSel || gSelectedStaticMesh != prevStaticSel ||
             gSelectedCamera3D != prevCameraSel || gSelectedNode3D != prevNode3DSel ||
-            gSelectedNavMesh3D != prevNavMeshSel)
+            gSelectedNavMesh3D != prevNavMeshSel || HasMultiSelection())
         {
             gTransforming = false;
             gTransformMode = Transform_None;

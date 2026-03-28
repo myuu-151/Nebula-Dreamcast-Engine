@@ -814,7 +814,12 @@ void DrawInspectorPanel(const ImGuiViewport* vp, float topBarH, float rightPanel
                     ResetStaticMeshTransformsKeepWorld(inspectStatic);
                 ImGui::Checkbox("Collision Source (Saturn floor)", &n.collisionSource);
                 if (n.collisionSource)
+                {
                     ImGui::SliderFloat("Wall Threshold", &n.wallThreshold, 0.0f, 1.0f, "%.2f");
+                    ImGui::Checkbox("Collision Walls", &n.collisionWalls);
+                    if (n.collisionWalls)
+                        ImGui::TextWrapped("Wall faces excluded from navmesh but still block movement");
+                }
                 ImGui::Checkbox("Navmesh Ready", &n.navmeshReady);
 
                 ImGui::DragFloat3("Position", &n.x, 0.1f);

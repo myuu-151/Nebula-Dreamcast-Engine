@@ -487,6 +487,7 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
     // Gather world-space triangles from all StaticMesh3D nodes, clipped to nav bounds
     std::vector<float> verts;
     std::vector<int>   tris;
+    std::vector<unsigned char> triFlags;
     printf("[NavMesh] Building from %d static meshes (project=%s)\n", (int)gStaticMeshNodes.size(), gProjectDir.c_str());
     for (int si = 0; si < (int)gStaticMeshNodes.size(); ++si)
     {
@@ -572,6 +573,20 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
                           pointInNavBounds(v2.x, v2.y, v2.z);
             if (!inside) continue;
 
+            // Mark wall faces as non-walkable obstacles (shapes boundary but AI won't walk on them)
+            unsigned char flag = 0;
+            if (sm.collisionWalls)
+            {
+                float e1x = v1.x-v0.x, e1y = v1.y-v0.y, e1z = v1.z-v0.z;
+                float e2x = v2.x-v0.x, e2y = v2.y-v0.y, e2z = v2.z-v0.z;
+                float nx = e1y*e2z - e1z*e2y;
+                float ny = e1z*e2x - e1x*e2z;
+                float nz = e1x*e2y - e1y*e2x;
+                float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
+                if (nlen > 1e-8f && fabsf(ny / nlen) < sm.wallThreshold)
+                    flag = 1; // obstacle-only
+            }
+
             int baseVert = (int)(verts.size() / 3);
             verts.push_back(v0.x); verts.push_back(v0.y); verts.push_back(v0.z);
             verts.push_back(v1.x); verts.push_back(v1.y); verts.push_back(v1.z);
@@ -579,18 +594,23 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
             tris.push_back(baseVert);
             tris.push_back(baseVert + 1);
             tris.push_back(baseVert + 2);
+            triFlags.push_back(flag);
             ++addedTris;
         }
-        printf("[NavMesh]   [%d] %s — %d/%u tris (in bounds)\n", si, sm.name.c_str(), addedTris, indexCount / 3);
+        { int wf = 0; for (size_t fi = triFlags.size() - addedTris; fi < triFlags.size(); ++fi) if (triFlags[fi] & 1) ++wf;
+          printf("[NavMesh]   [%d] %s — %d/%u tris (in bounds), collisionWalls=%d, wallFlags=%d\n", si, sm.name.c_str(), addedTris, indexCount / 3, sm.collisionWalls ? 1 : 0, wf); }
     }
 
-    printf("[NavMesh] Total: %d verts, %d tris\n", (int)(verts.size() / 3), (int)(tris.size() / 3));
+    int wallFlagCount = 0;
+    for (size_t i = 0; i < triFlags.size(); ++i)
+        if (triFlags[i] & 1) ++wallFlagCount;
+    printf("[NavMesh] Total: %d verts, %d tris (%d wall-flagged)\n", (int)(verts.size() / 3), (int)(tris.size() / 3), wallFlagCount);
     if (verts.empty() || tris.empty())
     {
         printf("[NavMesh] No geometry — build failed\n");
         return 0;
     }
-    int ok = NavMeshBuild(verts.data(), (int)(verts.size() / 3), tris.data(), (int)(tris.size() / 3)) ? 1 : 0;
+    int ok = NavMeshBuild(verts.data(), (int)(verts.size() / 3), tris.data(), (int)(tris.size() / 3), NavMeshParams{}, triFlags.data()) ? 1 : 0;
     printf("[NavMesh] Build result: %s\n", ok ? "success" : "failed");
     return ok;
 }

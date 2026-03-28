@@ -13,7 +13,7 @@ void DrawNodeGizmos(const Camera3DNode* activeCam)
     for (int i = 0; i < (int)gAudio3DNodes.size(); ++i)
     {
         const auto& a = gAudio3DNodes[i];
-        bool selected = (gSelectedAudio3D == i);
+        bool selected = (gSelectedAudio3D == i) || gMultiSelectedAudio3D.count(i);
         if (gHideUnselectedWireframes && !selected) continue;
 
         float rOuter = a.outerRadius;
@@ -139,7 +139,7 @@ void DrawNodeGizmos(const Camera3DNode* activeCam)
     for (int i = 0; i < (int)gCamera3DNodes.size(); ++i)
     {
         const auto& c = gCamera3DNodes[i];
-        bool selected = (gSelectedCamera3D == i);
+        bool selected = (gSelectedCamera3D == i) || gMultiSelectedCamera3D.count(i);
         if (gHideUnselectedWireframes && !selected) continue;
         // Don't draw helper for the camera currently driving the play viewport.
         if (gPlayMode && activeCam == &gCamera3DNodes[i]) continue;
@@ -175,7 +175,7 @@ void DrawNodeGizmos(const Camera3DNode* activeCam)
     for (int i = 0; i < (int)gNode3DNodes.size(); ++i)
     {
         const auto& n = gNode3DNodes[i];
-        const bool selected = (gSelectedNode3D == i);
+        const bool selected = (gSelectedNode3D == i) || gMultiSelectedNode3D.count(i);
         if (selected) glColor3f(1.0f, 1.0f, 1.0f);
         else glColor3f(0.55f, 0.9f, 1.0f);
 
@@ -215,7 +215,7 @@ void DrawNodeGizmos(const Camera3DNode* activeCam)
     {
         const auto& n = gNavMesh3DNodes[i];
         if (!n.navBounds) continue;
-        const bool selected = (gSelectedNavMesh3D == i);
+        const bool selected = (gSelectedNavMesh3D == i) || gMultiSelectedNavMesh3D.count(i);
         if (selected) glColor3f(1.0f, 1.0f, 1.0f);
         else if (n.navNegator) glColor3f(1.0f, 0.25f, 0.25f);
         else glColor3f(n.wireR, n.wireG, n.wireB);

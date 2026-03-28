@@ -65,7 +65,7 @@ void RenderStaticMeshNodes()
     for (int i = 0; i < (int)gStaticMeshNodes.size(); ++i)
     {
         const auto& s = gStaticMeshNodes[i];
-        const bool selected = (gSelectedStaticMesh == i);
+        const bool selected = (gSelectedStaticMesh == i) || gMultiSelectedStaticMesh.count(i);
         if (s.mesh.empty() || gProjectDir.empty()) continue;
         std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
         const NebMesh* mesh = GetNebMesh(meshPath);

@@ -573,19 +573,8 @@ NB_RT_EXPORT int NB_RT_NavMeshBuild(void)
                           pointInNavBounds(v2.x, v2.y, v2.z);
             if (!inside) continue;
 
-            // Mark wall faces as non-walkable obstacles (shapes boundary but AI won't walk on them)
-            unsigned char flag = 0;
-            if (sm.collisionWalls)
-            {
-                float e1x = v1.x-v0.x, e1y = v1.y-v0.y, e1z = v1.z-v0.z;
-                float e2x = v2.x-v0.x, e2y = v2.y-v0.y, e2z = v2.z-v0.z;
-                float nx = e1y*e2z - e1z*e2y;
-                float ny = e1z*e2x - e1x*e2z;
-                float nz = e1x*e2y - e1y*e2x;
-                float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
-                if (nlen > 1e-8f && fabsf(ny / nlen) < sm.wallThreshold)
-                    flag = 1; // obstacle-only
-            }
+            // Mark ALL faces on collisionWalls meshes as non-walkable obstacles
+            unsigned char flag = sm.collisionWalls ? 1 : 0;
 
             int baseVert = (int)(verts.size() / 3);
             verts.push_back(v0.x); verts.push_back(v0.y); verts.push_back(v0.z);

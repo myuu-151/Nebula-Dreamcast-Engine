@@ -1497,19 +1497,8 @@ else
                                               dcPointInNavBounds(v2x, v2y, v2z);
                                 if (!inside) continue;
 
-                                // Mark wall faces as non-walkable obstacles (shapes boundary but AI won't walk on them)
-                                unsigned char flag = 0;
-                                if (sm.collisionWalls)
-                                {
-                                    float e1x = v1x-v0x, e1y = v1y-v0y, e1z = v1z-v0z;
-                                    float e2x = v2x-v0x, e2y = v2y-v0y, e2z = v2z-v0z;
-                                    float nx = e1y*e2z - e1z*e2y;
-                                    float ny = e1z*e2x - e1x*e2z;
-                                    float nz = e1x*e2y - e1y*e2x;
-                                    float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
-                                    if (nlen > 1e-8f && fabsf(ny / nlen) < sm.wallThreshold)
-                                        flag = 1; // obstacle-only
-                                }
+                                // Mark ALL faces on collisionWalls meshes as non-walkable obstacles
+                                unsigned char flag = sm.collisionWalls ? 1 : 0;
 
                                 int baseV = (int)(navVerts.size() / 3);
                                 navVerts.push_back(v0x); navVerts.push_back(v0y); navVerts.push_back(v0z);

@@ -417,10 +417,49 @@ namespace NebulaScene
                 size_t wallThreshIdx = navmeshReadyIdx + 1;
                 if (wallThreshIdx < extra.size())
                     n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
-                size_t collisionWallsIdx = wallThreshIdx + 1;
-                if (collisionWallsIdx < extra.size())
-                    n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
-                size_t animSlotCountIdx = collisionWallsIdx + 1;
+                // Backward compat: old files lack collisionWalls token.
+                // If token after wallThreshold is > 1 it must be animSlotCount
+                // (collisionWalls is only 0 or 1), so skip collisionWalls.
+                size_t nextIdx = wallThreshIdx + 1;
+                bool hasCollisionWallsToken = false;
+                if (nextIdx < extra.size())
+                {
+                    int val = atoi(extra[nextIdx].c_str());
+                    if (val <= 1)
+                    {
+                        // Could be collisionWalls=0/1 or animSlotCount=0/1.
+                        // In new format: [collisionWalls][animSlotCount][slot0 name...]
+                        // In old format: [animSlotCount][slot0 name...]
+                        // Check nextIdx+1: in new format it's animSlotCount (a
+                        // number 0-8), in old format it's a slot name (string).
+                        size_t checkIdx = nextIdx + 1;
+                        hasCollisionWallsToken = true; // assume new format
+                        if (checkIdx < extra.size())
+                        {
+                            const std::string& ck = extra[checkIdx];
+                            char* end = nullptr;
+                            long num = strtol(ck.c_str(), &end, 10);
+                            bool isNumeric = (end && *end == '\0' && !ck.empty());
+                            // In new format, nextIdx+1 is animSlotCount (0-8).
+                            // In old format, nextIdx+1 is first slot name or "-".
+                            // "-" parses as 0 with leftover '-', so isNumeric=false.
+                            if (!isNumeric || num < 0 || num > kStaticMeshAnimSlots)
+                                hasCollisionWallsToken = false; // old format
+                        }
+                    }
+                }
+                size_t animSlotCountIdx;
+                if (hasCollisionWallsToken)
+                {
+                    size_t collisionWallsIdx = nextIdx;
+                    if (collisionWallsIdx < extra.size())
+                        n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
+                    animSlotCountIdx = collisionWallsIdx + 1;
+                }
+                else
+                {
+                    animSlotCountIdx = nextIdx;
+                }
                 if (animSlotCountIdx < extra.size())
                 {
                     n.animSlotCount = atoi(extra[animSlotCountIdx].c_str());

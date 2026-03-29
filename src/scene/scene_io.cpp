@@ -417,10 +417,24 @@ namespace NebulaScene
                 size_t wallThreshIdx = navmeshReadyIdx + 1;
                 if (wallThreshIdx < extra.size())
                     n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
-                size_t collisionWallsIdx = wallThreshIdx + 1;
-                if (collisionWallsIdx < extra.size())
-                    n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
-                size_t animSlotCountIdx = collisionWallsIdx + 1;
+                // Backward compat: old files lack collisionWalls token.
+                // After wallThreshold the remaining count is even (old) or odd (new)
+                // because 8 slots × N tokens + animSlotCount + animPreload = even,
+                // and collisionWalls adds 1 making it odd.
+                size_t remainingAfterWT = extra.size() - wallThreshIdx - 1;
+                bool hasCollisionWalls = (remainingAfterWT % 2 == 1);
+                size_t animSlotCountIdx;
+                if (hasCollisionWalls)
+                {
+                    size_t collisionWallsIdx = wallThreshIdx + 1;
+                    if (collisionWallsIdx < extra.size())
+                        n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
+                    animSlotCountIdx = collisionWallsIdx + 1;
+                }
+                else
+                {
+                    animSlotCountIdx = wallThreshIdx + 1;
+                }
                 if (animSlotCountIdx < extra.size())
                 {
                     n.animSlotCount = atoi(extra[animSlotCountIdx].c_str());

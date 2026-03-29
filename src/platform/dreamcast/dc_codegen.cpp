@@ -1581,6 +1581,7 @@ else
             std::vector<std::vector<std::array<int, kStaticMeshMaterialSlots>>> runtimeSceneShadingUvByMesh;
             std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneUvScaleUByMesh;
             std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneUvScaleVByMesh;
+            std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneOpacityByMesh;
             // Per-scene parent Node3D transform for the player mesh (drives movement, not visual).
             struct ScenePlayerParent { float pos[3] = {0,0,0}; float rot[3] = {0,0,0}; };
             std::vector<ScenePlayerParent> runtimeScenePlayerParent;
@@ -1625,6 +1626,7 @@ else
                 std::vector<std::array<int, kStaticMeshMaterialSlots>> sceneShadingUvByMesh;
                 std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneUvScaleUByMesh;
                 std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneUvScaleVByMesh;
+                std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneOpacityByMesh;
                 for (const auto& sm : stagedScene.staticMeshes)
                 {
                     std::filesystem::path meshAbs = std::filesystem::path(gProjectDir) / sm.mesh;
@@ -1711,6 +1713,7 @@ else
                         std::array<int, kStaticMeshMaterialSlots> mShadUv{}; mShadUv.fill(-1);
                         std::array<float, kStaticMeshMaterialSlots> mUvU{}; mUvU.fill(1.0f);
                         std::array<float, kStaticMeshMaterialSlots> mUvV{}; mUvV.fill(1.0f);
+                        std::array<float, kStaticMeshMaterialSlots> mOpacity{}; mOpacity.fill(1.0f);
                         if (!gProjectDir.empty())
                         {
                             for (int msi = 0; msi < kStaticMeshMaterialSlots; ++msi)
@@ -1725,6 +1728,7 @@ else
                                 mShadow[msi] = NebulaAssets::LoadMaterialShadowIntensity(matPath);
                                 mShadUv[msi] = NebulaAssets::LoadMaterialShadingUv(matPath);
                                 { float su=1,sv=1,ou=0,ov=0,rd=0; NebulaAssets::LoadMaterialUvTransform(matPath,su,sv,ou,ov,rd); mUvU[msi]=su; mUvV[msi]=sv; }
+                                mOpacity[msi] = NebulaAssets::LoadMaterialOpacity(matPath);
                             }
                         }
                         sceneShadeModeByMesh.push_back(mShade);
@@ -1734,6 +1738,7 @@ else
                         sceneShadingUvByMesh.push_back(mShadUv);
                         sceneUvScaleUByMesh.push_back(mUvU);
                         sceneUvScaleVByMesh.push_back(mUvV);
+                        sceneOpacityByMesh.push_back(mOpacity);
                     }
                     ++sceneWrittenMeshes;
                 }
@@ -1755,6 +1760,7 @@ else
                 runtimeSceneShadingUvByMesh.push_back(std::move(sceneShadingUvByMesh));
                 runtimeSceneUvScaleUByMesh.push_back(std::move(sceneUvScaleUByMesh));
                 runtimeSceneUvScaleVByMesh.push_back(std::move(sceneUvScaleVByMesh));
+                runtimeSceneOpacityByMesh.push_back(std::move(sceneOpacityByMesh));
                 // Find the player mesh's parent Node3D transform for this scene.
                 {
                     ScenePlayerParent pp{};
@@ -3155,7 +3161,7 @@ else
                 mc << "static int runtime_anim_load(const char* path, RuntimeAnimClip* out){ if(!path||!path[0]||!out) return 0; FILE* f=fopen(path,\"rb\"); if(!f) return 0; char m[4]; if(fread(m,1,4,f)!=4 || m[0]!='N'||m[1]!='E'||m[2]!='B'||m[3]!='0'){ fclose(f); return 0; } uint32_t ver=0,flags=0,vc=0,fc=0,fpsFx=0,frac=8; if(!rd_u32be(f,&ver)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&flags)){ fclose(f); return 0; } } if(!rd_u32be(f,&vc)||!rd_u32be(f,&fc)||!rd_u32be(f,&fpsFx)){ fclose(f); return 0; } if(ver>=3){ if(!rd_u32be(f,&frac)){ fclose(f); return 0; } } if(vc==0||fc==0||vc>65535||fc>4096){ fclose(f); return 0; } V3* frames=(V3*)malloc((size_t)vc*(size_t)fc*sizeof(V3)); V3* posed=(V3*)malloc((size_t)vc*sizeof(V3)); if(!frames||!posed){ if(frames) free(frames); if(posed) free(posed); fclose(f); return 0; } const float inv16=1.0f/65536.0f; const float dinv=1.0f/(float)(1u<<(frac>24?24:frac)); int denc=(flags&1u)?1:0; for(uint32_t fr=0; fr<fc; ++fr){ for(uint32_t i=0;i<vc;++i){ V3 v={0,0,0}; if(!denc||fr==0){ int32_t x=0,y=0,z=0; if(!rd_s32be(f,&x)||!rd_s32be(f,&y)||!rd_s32be(f,&z)){ free(frames); free(posed); fclose(f); return 0; } v.x=(float)x*inv16; v.y=(float)y*inv16; v.z=(float)z*inv16; } else { int16_t dx=0,dy=0,dz=0; if(!rd_s16be(f,&dx)||!rd_s16be(f,&dy)||!rd_s16be(f,&dz)){ free(frames); free(posed); fclose(f); return 0; } V3 p=frames[(size_t)(fr-1u)*(size_t)vc+(size_t)i]; v.x=p.x+(float)dx*dinv; v.y=p.y+(float)dy*dinv; v.z=p.z+(float)dz*dinv; } frames[(size_t)fr*(size_t)vc+(size_t)i]=v; } } fclose(f); out->loaded=1; out->vertCount=(int)vc; out->frameCount=(int)fc; out->fps=(fpsFx>0)?((float)(int32_t)fpsFx*inv16):12.0f; if(out->fps<=0.001f) out->fps=12.0f; out->frames=frames; out->posed=posed; memcpy(out->posed, out->frames, (size_t)vc*sizeof(V3)); out->meshAligned=(flags&4u)?1:0; return 1; }\n";
                 mc << "\n";
                 // RuntimeSceneMesh typedef and meshRt at file scope (needed by animation bridge)
-                mc << "typedef struct { RuntimeMesh diskMesh; RuntimeMesh activeMesh; int kVertCount; int kTriCount; V3* base; uint16_t* trisNormal; V3* triUvNormal; uint16_t* triMatNormal; uint16_t* trisFlipped; V3* triUvFlipped; pvr_poly_hdr_t hdrSlot[MAX_SLOT]; pvr_ptr_t slotTx[MAX_SLOT]; RuntimeTex diskTex[MAX_SLOT]; uint16_t slotW[MAX_SLOT]; uint16_t slotH[MAX_SLOT]; float slotUS[MAX_SLOT]; float slotVS[MAX_SLOT]; float slotUvScaleU[MAX_SLOT]; float slotUvScaleV[MAX_SLOT]; float slotHalfU[MAX_SLOT]; float slotHalfV[MAX_SLOT]; uint8_t slotFilter[MAX_SLOT]; uint8_t slotReady[MAX_SLOT]; uint8_t slotWrap[MAX_SLOT]; uint8_t slotFlipU[MAX_SLOT]; uint8_t slotFlipV[MAX_SLOT]; uint8_t hasExtUv; int slotCount; int loaded; int* weldGroups; int nWeldGroups; V3* weldNrmBuf; RuntimeAnimClip anim; } RuntimeSceneMesh;\n";
+                mc << "typedef struct { RuntimeMesh diskMesh; RuntimeMesh activeMesh; int kVertCount; int kTriCount; V3* base; uint16_t* trisNormal; V3* triUvNormal; uint16_t* triMatNormal; uint16_t* trisFlipped; V3* triUvFlipped; pvr_poly_hdr_t hdrSlot[MAX_SLOT]; pvr_poly_hdr_t hdrSlotTr[MAX_SLOT]; float slotOpacity[MAX_SLOT]; pvr_ptr_t slotTx[MAX_SLOT]; RuntimeTex diskTex[MAX_SLOT]; uint16_t slotW[MAX_SLOT]; uint16_t slotH[MAX_SLOT]; float slotUS[MAX_SLOT]; float slotVS[MAX_SLOT]; float slotUvScaleU[MAX_SLOT]; float slotUvScaleV[MAX_SLOT]; float slotHalfU[MAX_SLOT]; float slotHalfV[MAX_SLOT]; uint8_t slotFilter[MAX_SLOT]; uint8_t slotReady[MAX_SLOT]; uint8_t slotWrap[MAX_SLOT]; uint8_t slotFlipU[MAX_SLOT]; uint8_t slotFlipV[MAX_SLOT]; uint8_t hasExtUv; int slotCount; int loaded; int* weldGroups; int nWeldGroups; V3* weldNrmBuf; RuntimeAnimClip anim; } RuntimeSceneMesh;\n";
                 mc << "static RuntimeSceneMesh meshRt[MAX_MESHES];\n";
                 mc << "\n";
                 // Animation slot bridge functions (after all types/globals are defined)
@@ -3315,10 +3321,11 @@ else
                     emitPerSceneSlotArrayU8("kSceneShadingUv", "int8_t", runtimeSceneShadingUvByMesh, -1);
                     emitPerSceneSlotArrayFloat("kSceneUvScaleU", runtimeSceneUvScaleUByMesh, 1.0f);
                     emitPerSceneSlotArrayFloat("kSceneUvScaleV", runtimeSceneUvScaleVByMesh, 1.0f);
+                    emitPerSceneSlotArrayFloat("kSceneOpacity", runtimeSceneOpacityByMesh, 1.0f);
                 }
                 mc << "  memset(meshRt, 0, sizeof(meshRt));\n";
                 mc << "  static const uint16_t kFallbackWhite2x2[4] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };\n";
-                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kSceneUvScaleU[gSceneMetaIndex][mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kSceneUvScaleV[gSceneMetaIndex][mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
+                mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!sm->meshDisk[0]) continue; char mp[256]; snprintf(mp,sizeof(mp),\"/cd/data/meshes/%s\",sm->meshDisk); if(!dc_try_load_nebmesh(mp,&rm->diskMesh)) continue; rm->activeMesh=rm->diskMesh; rm->kVertCount=rm->activeMesh.vert_count; rm->kTriCount=rm->activeMesh.tri_count; rm->base=rm->activeMesh.pos; rm->trisNormal=rm->activeMesh.indices; rm->triUvNormal=rm->activeMesh.tri_uv; rm->triMatNormal=rm->activeMesh.tri_mat; rm->trisFlipped=(uint16_t*)malloc((size_t)rm->kTriCount*3u*sizeof(uint16_t)); rm->triUvFlipped=(V3*)malloc((size_t)rm->kTriCount*3u*sizeof(V3)); if(rm->trisFlipped&&rm->triUvFlipped){ for(int t=0;t<rm->kTriCount;++t){ rm->trisFlipped[t*3+0]=rm->trisNormal[t*3+0]; rm->trisFlipped[t*3+1]=rm->trisNormal[t*3+2]; rm->trisFlipped[t*3+2]=rm->trisNormal[t*3+1]; rm->triUvFlipped[t*3+0]=rm->triUvNormal[t*3+0]; rm->triUvFlipped[t*3+1]=rm->triUvNormal[t*3+2]; rm->triUvFlipped[t*3+2]=rm->triUvNormal[t*3+1]; } } else { free(rm->trisFlipped); free(rm->triUvFlipped); rm->trisFlipped=0; rm->triUvFlipped=0; } rm->hasExtUv=0; if(rm->triUvNormal){ for(int ti=0;ti<rm->kTriCount*3;++ti){ float ux=rm->triUvNormal[ti].x, uy=rm->triUvNormal[ti].y; if(ux<-0.001f||ux>1.001f||uy<-0.001f||uy>1.001f){rm->hasExtUv=1; break;} } } rm->slotCount=MAX_SLOT; for(int s=0;s<MAX_SLOT;++s){ const uint16_t* buf=kFallbackWhite2x2; int tw=2,th=2; float us=1.0f,vs=1.0f,hu=0.25f,hv=0.25f; int filt=0; if(sm->texDisk[s][0]){ char tp[256]; snprintf(tp,sizeof(tp),\"/cd/data/textures/%s\",sm->texDisk[s]); if(dc_try_load_nebtex(tp,&rm->diskTex[s])){ buf=rm->diskTex[s].pixels; tw=rm->diskTex[s].w; th=rm->diskTex[s].h; us=rm->diskTex[s].us; vs=rm->diskTex[s].vs; hu=0.5f/(float)(tw>0?tw:1); hv=0.5f/(float)(th>0?th:1); filt=rm->diskTex[s].filter; rm->slotWrap[s]=(uint8_t)rm->diskTex[s].wrapMode; rm->slotFlipU[s]=(uint8_t)rm->diskTex[s].flipU; rm->slotFlipV[s]=(uint8_t)rm->diskTex[s].flipV; } } rm->slotW[s]=(uint16_t)tw; rm->slotH[s]=(uint16_t)th; rm->slotUS[s]=us; rm->slotVS[s]=vs; rm->slotHalfU[s]=hu; rm->slotHalfV[s]=hv; rm->slotFilter[s]=(uint8_t)filt; rm->slotUvScaleU[s]=(mi<MAX_MESHES)?kSceneUvScaleU[gSceneMetaIndex][mi][s]:1.0f; rm->slotUvScaleV[s]=(mi<MAX_MESHES)?kSceneUvScaleV[gSceneMetaIndex][mi][s]:1.0f; rm->slotTx[s]=pvr_mem_malloc(tw*th*2); if(!rm->slotTx[s]) continue; pvr_txr_load_ex((void*)buf,rm->slotTx[s],tw,th,PVR_TXRLOAD_16BPP); pvr_poly_cxt_t cxt; int isPow2W=(tw>0)&&((tw&(tw-1))==0); int isPow2H=(th>0)&&((th&(th-1))==0); uint32 layoutFmt=(isPow2W&&isPow2H)?PVR_TXRFMT_TWIDDLED:PVR_TXRFMT_NONTWIDDLED; uint32 strideFmt=(layoutFmt==PVR_TXRFMT_TWIDDLED)?PVR_TXRFMT_POW2_STRIDE:PVR_TXRFMT_X32_STRIDE; uint32 fmt=PVR_TXRFMT_RGB565|PVR_TXRFMT_VQ_DISABLE|strideFmt|layoutFmt; pvr_filter_mode_t f=rm->slotFilter[s]?PVR_FILTER_BILINEAR:PVR_FILTER_NONE; pvr_poly_cxt_txr(&cxt,PVR_LIST_OP_POLY,fmt,tw,th,rm->slotTx[s],f); cxt.gen.culling=PVR_CULLING_NONE; cxt.depth.comparison=PVR_DEPTHCMP_GREATER; cxt.depth.write=PVR_DEPTHWRITE_ENABLE; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxt.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxt.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlot[s],&cxt); rm->slotOpacity[s]=(mi<MAX_MESHES)?kSceneOpacity[gSceneMetaIndex][mi][s]:1.0f; if(rm->slotOpacity[s]<1.0f){ pvr_poly_cxt_t cxtTr; pvr_poly_cxt_txr(&cxtTr,PVR_LIST_TR_POLY,fmt,tw,th,rm->slotTx[s],f); cxtTr.gen.culling=PVR_CULLING_NONE; cxtTr.depth.comparison=PVR_DEPTHCMP_GREATER; cxtTr.depth.write=PVR_DEPTHWRITE_DISABLE; cxtTr.blend.src=PVR_BLEND_SRCALPHA; cxtTr.blend.dst=PVR_BLEND_INVSRCALPHA; if(rm->slotWrap[s]==1||rm->slotWrap[s]==2){cxtTr.txr.uv_clamp=PVR_UVCLAMP_UV;} else {cxtTr.txr.uv_clamp=PVR_UVCLAMP_NONE;} pvr_poly_compile(&rm->hdrSlotTr[s],&cxtTr); } rm->slotReady[s]=1; } rm->loaded=(rm->kVertCount>0&&rm->kTriCount>0&&rm->base&&rm->trisNormal&&rm->triUvNormal&&rm->triMatNormal)?1:0; }\n";
                 mc << "  for(int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi){ RuntimeSceneMesh* rm=&meshRt[mi]; SceneMeshMeta* sm=&gSceneMeshes[mi]; if(!rm->loaded){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: mesh not loaded\\n\",mi,sm->meshLogical); continue; } if(!sm->runtimeTest){ if(sm->animDisk[0]) dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s skipped: runtimeTest=0\\n\",mi,sm->meshLogical,sm->animDisk); continue; } if(!sm->animDisk[0]){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s skipped: no anim assigned\\n\",mi,sm->meshLogical); continue; } char ap[256]; snprintf(ap,sizeof(ap),\"/cd/data/animations/%s\",sm->animDisk); { char resolved[512]; FILE* fp=dc_fopen_iso_compat(ap,resolved,(int)sizeof(resolved)); if(fp){ fclose(fp); strncpy(ap,resolved,sizeof(ap)-1); ap[sizeof(ap)-1]=0; } } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s try load %s\\n\",mi,sm->meshLogical,ap); if(!runtime_anim_load(ap,&rm->anim)){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s load failed (missing/unreadable/invalid)\\n\",mi,sm->meshLogical,sm->animDisk); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount>rm->kVertCount){ dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s vert mismatch clip=%d mesh=%d -> fallback static\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.vertCount,rm->kVertCount); runtime_anim_free(&rm->anim); continue; } if(rm->anim.vertCount<rm->kVertCount){ V3* np=(V3*)realloc(rm->anim.posed,(size_t)rm->kVertCount*sizeof(V3)); if(!np){ runtime_anim_free(&rm->anim); continue; } for(int vi=rm->anim.vertCount;vi<rm->kVertCount;++vi) np[vi]=rm->base[vi]; rm->anim.posed=np; dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] padded posed %d->%d\\n\",mi,rm->anim.vertCount,rm->kVertCount); } dbgio_printf(\"[NEBULA][DC][ANIM] mesh[%d] name=%s anim=%s loaded frames=%d fps=%.2f verts=%d\\n\",mi,sm->meshLogical,sm->animDisk,rm->anim.frameCount,rm->anim.fps,rm->anim.vertCount); }\n";
                 mc << "  int maxVertCount=0; for(int mi=0;mi<gSceneMeshCount&&mi<MAX_MESHES;++mi){ if(meshRt[mi].loaded&&meshRt[mi].kVertCount>maxVertCount) maxVertCount=meshRt[mi].kVertCount; }\n";
                 mc << "  SV* gSv=NULL; uint8_t* gOk=NULL; V3* gCs=NULL; V3* gNrm=NULL;\n";
@@ -3509,7 +3516,8 @@ else
                 mc << "    cam_update_basis();\n";
                 mc << "    pvr_wait_ready();\n";
                 mc << "    pvr_scene_begin();\n";
-                mc << "    pvr_list_begin(PVR_LIST_OP_POLY);\n";
+                mc << "    for(int _trPass=0;_trPass<2;++_trPass){\n";
+                mc << "    if(_trPass==0) pvr_list_begin(PVR_LIST_OP_POLY); else pvr_list_begin(PVR_LIST_TR_POLY);\n";
                 mc << "    for (int mi=0; mi<gSceneMeshCount && mi<MAX_MESHES; ++mi) {\n";
                 mc << "      RuntimeSceneMesh* rm = &meshRt[mi]; SceneMeshMeta* sm = &gSceneMeshes[mi];\n";
                 mc << "      if (!rm->loaded || rm->kVertCount <= 0 || rm->kTriCount <= 0 || !rm->base || !rm->trisNormal || !rm->triUvNormal || !rm->triMatNormal) continue;\n";
@@ -3614,6 +3622,7 @@ else
                 mc << "      for (int t=0;t<rm->kTriCount;++t){\n";
                 mc << "        int ia=tris[t*3+0], ib=tris[t*3+1], ic=tris[t*3+2];\n";
                 mc << "        int sid = (int)rm->triMatNormal[t]; if (sid < 0 || sid >= rm->slotCount) sid = 0; if (!rm->slotReady[sid]) continue;\n";
+                mc << "        { int _isTr=(rm->slotOpacity[sid]<1.0f)?1:0; if(_isTr!=_trPass) continue; }\n";
                 mc << "        float us = rm->slotUS[sid], vs_ = rm->slotVS[sid]; float hu = rm->slotHalfU[sid], hv = rm->slotHalfV[sid];\n";
                 mc << "        uint32 col = 0xFFFFFFFF, colA = 0xFFFFFFFF, colB = 0xFFFFFFFF, colC = 0xFFFFFFFF;\n";
                 mc << "        float fLitA=1.0f, fLitB=1.0f, fLitC=1.0f;\n";
@@ -3629,6 +3638,7 @@ else
                 mc << "          colB = 0xFF000000u | ((uint32)iB<<16) | ((uint32)iB<<8) | (uint32)iB;\n";
                 mc << "          colC = 0xFF000000u | ((uint32)iC<<16) | ((uint32)iC<<8) | (uint32)iC;\n";
                 mc << "        }\n";
+                mc << "        if(_trPass==1){ uint32 _a=(uint32)(rm->slotOpacity[sid]*255.0f); if(_a>255u)_a=255u; colA=(colA&0x00FFFFFFu)|(_a<<24); colB=(colB&0x00FFFFFFu)|(_a<<24); colC=(colC&0x00FFFFFFu)|(_a<<24); }\n";
                 mc << "        /* Compute UV for each original vertex */\n";
                 mc << "        float uv[3][2];\n";
                 mc << "        for(int k=0;k<3;++k){ float rawU=triUv[t*3+k].x, rawV=triUv[t*3+k].y; if(rm->slotFlipU[sid]) rawU=1.0f-rawU; if(rm->slotFlipV[sid]) rawV=1.0f-rawV; float u=rawU*rm->slotUvScaleU[sid], v=(1.0f-rawV)*rm->slotUvScaleV[sid]; int hasUvSc=(rm->hasExtUv||rm->slotWrap[sid]==0||rm->slotWrap[sid]==3||rm->slotUvScaleU[sid]>1.001f||rm->slotUvScaleU[sid]<0.999f||rm->slotUvScaleV[sid]>1.001f||rm->slotUvScaleV[sid]<0.999f); if(hasUvSc){ uv[k][0]=u*us; uv[k][1]=v*vs_; } else { if(u<0.0f)u=0.0f; else if(u>1.0f)u=1.0f; if(v<0.0f)v=0.0f; else if(v>1.0f)v=1.0f; uv[k][0]=(u*(1.0f-2.0f*hu)+hu)*us; uv[k][1]=(v*(1.0f-2.0f*hv)+hv)*vs_; } }\n";
@@ -3640,7 +3650,7 @@ else
                 mc << "          if(sc.x<mnx)mnx=sc.x; if(sc.x>mxx)mxx=sc.x; if(sc.y<mny)mny=sc.y; if(sc.y>mxy)mxy=sc.y;\n";
                 mc << "          if(mnx>=-32.0f && mxx<=kProjViewW+32.0f && mny>=-32.0f && mxy<=kProjViewH+32.0f){\n";
                 mc << "            sa.u=uv[0][0]; sa.v=uv[0][1]; sb.u=uv[1][0]; sb.v=uv[1][1]; sc.u=uv[2][0]; sc.v=uv[2][1];\n";
-                mc << "            draw_tri_vc(&rm->hdrSlot[sid],sa,sb,sc,colA,colB,colC); continue;\n";
+                mc << "            draw_tri_vc(_trPass?&rm->hdrSlotTr[sid]:&rm->hdrSlot[sid],sa,sb,sc,colA,colB,colC); continue;\n";
                 mc << "          }\n";
                 mc << "        }\n";
                 mc << "        /* Full frustum clip (Sutherland-Hodgman against 5 planes in camera space) */\n";
@@ -3669,12 +3679,14 @@ else
                 mc << "          uint32 ca=0xFF000000u|((uint32)va<<16)|((uint32)va<<8)|(uint32)va;\n";
                 mc << "          uint32 cb=0xFF000000u|((uint32)vb<<16)|((uint32)vb<<8)|(uint32)vb;\n";
                 mc << "          uint32 cc=0xFF000000u|((uint32)vc<<16)|((uint32)vc<<8)|(uint32)vc;\n";
-                mc << "          draw_tri_vc(&rm->hdrSlot[sid],svp[0],svp[i],svp[i+1],ca,cb,cc);\n";
+                mc << "          if(_trPass==1){ uint32 _a=(uint32)(rm->slotOpacity[sid]*255.0f); if(_a>255u)_a=255u; ca=(ca&0x00FFFFFFu)|(_a<<24); cb=(cb&0x00FFFFFFu)|(_a<<24); cc=(cc&0x00FFFFFFu)|(_a<<24); }\n";
+                mc << "          draw_tri_vc(_trPass?&rm->hdrSlotTr[sid]:&rm->hdrSlot[sid],svp[0],svp[i],svp[i+1],ca,cb,cc);\n";
                 mc << "        }\n";
                 mc << "      }\n";
                 mc << "    }\n";
                 mc << "\n";
                 mc << "    pvr_list_finish();\n";
+                mc << "    } /* end _trPass loop */\n";
                 mc << "    pvr_scene_finish();\n";
                 mc << "  }\n";
                 mc << "\n";

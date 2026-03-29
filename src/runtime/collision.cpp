@@ -185,6 +185,16 @@ void WallCollideAABB(float cx, float cy, float cz,
                 float dir = (cz >= cpZ) ? 1.0f : -1.0f;
                 pz = dir * (overZ + kSkin);
             }
+            // Soft-clamp for collisionWalls — navmesh handles pathfinding,
+            // this just prevents clipping without overpowering tangent slide.
+            if (s.collisionWalls)
+            {
+                const float kMaxWallPush = 0.03f;
+                if (px >  kMaxWallPush) px =  kMaxWallPush;
+                if (px < -kMaxWallPush) px = -kMaxWallPush;
+                if (pz >  kMaxWallPush) pz =  kMaxWallPush;
+                if (pz < -kMaxWallPush) pz = -kMaxWallPush;
+            }
             if (px > 0.0f && px > maxPushPosX) maxPushPosX = px;
             if (px < 0.0f && px < maxPushNegX) maxPushNegX = px;
             if (pz > 0.0f && pz > maxPushPosZ) maxPushPosZ = pz;

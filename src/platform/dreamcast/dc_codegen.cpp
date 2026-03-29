@@ -3008,6 +3008,7 @@ else
                 mc << "      float px,pz;\n";
                 mc << "      if(overX<overZ){ float dir=(cx>=cpX)?1.0f:-1.0f; px=dir*(overX+kSkin); pz=0; }\n";
                 mc << "      else{ px=0; float dir=(cz>=cpZ)?1.0f:-1.0f; pz=dir*(overZ+kSkin); }\n";
+                mc << "      if(c->collisionWalls){ const float kMWP=0.03f; if(px>kMWP) px=kMWP; if(px<-kMWP) px=-kMWP; if(pz>kMWP) pz=kMWP; if(pz<-kMWP) pz=-kMWP; }\n";
                 mc << "      if(px>0&&px>mpPX) mpPX=px; if(px<0&&px<mpNX) mpNX=px;\n";
                 mc << "      if(pz>0&&pz>mpPZ) mpPZ=pz; if(pz<0&&pz<mpNZ) mpNZ=pz;\n";
                 mc << "    }\n";

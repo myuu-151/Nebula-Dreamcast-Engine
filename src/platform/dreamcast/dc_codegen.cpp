@@ -3006,12 +3006,7 @@ else
                 mc << "      if(overX<=0.0f||overZ<=0.0f) continue;\n";
                 mc << "      const float kSkin=0.01f;\n";
                 mc << "      float px,pz;\n";
-                mc << "      if(c->collisionWalls){\n";
-                mc << "        float hnx=nx,hnz=nz; float hL=sqrtf(hnx*hnx+hnz*hnz); if(hL<1e-6f) continue;\n";
-                mc << "        hnx/=hL; hnz/=hL; float pen=(overX<overZ)?overX:overZ;\n";
-                mc << "        float sg=(nx*(cx-cpX)+nz*(cz-cpZ)>=0.0f)?1.0f:-1.0f;\n";
-                mc << "        px=sg*hnx*(pen+kSkin); pz=sg*hnz*(pen+kSkin);\n";
-                mc << "      } else if(overX<overZ){ float dir=(cx>=cpX)?1.0f:-1.0f; px=dir*(overX+kSkin); pz=0; }\n";
+                mc << "      if(overX<overZ){ float dir=(cx>=cpX)?1.0f:-1.0f; px=dir*(overX+kSkin); pz=0; }\n";
                 mc << "      else{ px=0; float dir=(cz>=cpZ)?1.0f:-1.0f; pz=dir*(overZ+kSkin); }\n";
                 mc << "      if(px>0&&px>mpPX) mpPX=px; if(px<0&&px<mpNX) mpNX=px;\n";
                 mc << "      if(pz>0&&pz>mpPZ) mpPZ=pz; if(pz<0&&pz<mpNZ) mpNZ=pz;\n";

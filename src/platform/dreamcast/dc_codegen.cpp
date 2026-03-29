@@ -1572,6 +1572,7 @@ else
             std::vector<std::vector<uint8_t>> runtimeSceneRuntimeTestByMesh;
             std::vector<std::vector<uint8_t>> runtimeSceneCollisionSourceByMesh;
             std::vector<std::vector<float>> runtimeSceneWallThresholdByMesh;
+            std::vector<std::vector<uint8_t>> runtimeSceneCollisionWallsByMesh;
             // Per-scene per-mesh material property arrays (shade/light/UV per slot)
             std::vector<std::vector<std::array<int, kStaticMeshMaterialSlots>>> runtimeSceneShadeModeByMesh;
             std::vector<std::vector<std::array<float, kStaticMeshMaterialSlots>>> runtimeSceneLightYawByMesh;
@@ -1616,6 +1617,7 @@ else
                 std::vector<uint8_t> sceneRuntimeTestByMesh;
                 std::vector<uint8_t> sceneCollisionSourceByMesh;
                 std::vector<float> sceneWallThresholdByMesh;
+                std::vector<uint8_t> sceneCollisionWallsByMesh;
                 std::vector<std::array<int, kStaticMeshMaterialSlots>> sceneShadeModeByMesh;
                 std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneLightYawByMesh;
                 std::vector<std::array<float, kStaticMeshMaterialSlots>> sceneLightPitchByMesh;
@@ -1699,6 +1701,7 @@ else
                     sceneRuntimeTestByMesh.push_back(sm.runtimeTest ? 1u : 0u);
                     sceneCollisionSourceByMesh.push_back(sm.collisionSource ? 1u : 0u);
                     sceneWallThresholdByMesh.push_back(sm.wallThreshold);
+                    sceneCollisionWallsByMesh.push_back(sm.collisionWalls ? 1u : 0u);
                     // Collect per-slot material properties for this mesh
                     {
                         std::array<int, kStaticMeshMaterialSlots> mShade{}; mShade.fill(0);
@@ -1744,6 +1747,7 @@ else
                 runtimeSceneRuntimeTestByMesh.push_back(std::move(sceneRuntimeTestByMesh));
                 runtimeSceneCollisionSourceByMesh.push_back(std::move(sceneCollisionSourceByMesh));
                 runtimeSceneWallThresholdByMesh.push_back(std::move(sceneWallThresholdByMesh));
+                runtimeSceneCollisionWallsByMesh.push_back(std::move(sceneCollisionWallsByMesh));
                 runtimeSceneShadeModeByMesh.push_back(std::move(sceneShadeModeByMesh));
                 runtimeSceneLightYawByMesh.push_back(std::move(sceneLightYawByMesh));
                 runtimeSceneLightPitchByMesh.push_back(std::move(sceneLightPitchByMesh));
@@ -1827,6 +1831,7 @@ else
                 runtimeSceneRuntimeTestByMesh.push_back({});
                 runtimeSceneCollisionSourceByMesh.push_back({});
                 runtimeSceneWallThresholdByMesh.push_back({});
+                runtimeSceneCollisionWallsByMesh.push_back({});
                 runtimeScenePlayerParent.push_back(ScenePlayerParent{});
                 runtimeSceneNode3Ds.push_back({});
                 runtimeSceneMeshParentN3D.push_back({});
@@ -2620,6 +2625,21 @@ else
                     mc << "\n";
                 }
                 mc << "};\n";
+                mc << "static const uint8_t kSceneCollisionWalls[" << (int)runtimeSceneFiles.size() << "][MAX_MESHES] = {\n";
+                for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
+                {
+                    mc << "{";
+                    for (int mi = 0; mi < 64; ++mi)
+                    {
+                        int cw = (mi < (int)runtimeSceneCollisionWallsByMesh[si].size()) ? (runtimeSceneCollisionWallsByMesh[si][mi] ? 1 : 0) : 0;
+                        mc << cw;
+                        if (mi + 1 < 64) mc << ",";
+                    }
+                    mc << "}";
+                    if (si + 1 < runtimeSceneFiles.size()) mc << ",";
+                    mc << "\n";
+                }
+                mc << "};\n";
                 // Per-scene parent Node3D transform for the player mesh (drives movement).
                 mc << "static const float kScenePlayerParentPos[" << (int)runtimeSceneFiles.size() << "][3] = {\n";
                 for (size_t si = 0; si < runtimeSceneFiles.size(); ++si)
@@ -2829,7 +2849,7 @@ else
                 mc << "static int NB_NextScene(void){ return NB_LoadSceneIndex(gSceneIndex+1); }\n";
                 mc << "static int NB_PrevScene(void){ return NB_LoadSceneIndex(gSceneIndex-1); }\n";
                 // Collision mesh cache — loaded once on first raycast, used every frame
-                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float wallThresh; } CollMeshCache;\n";
+                mc << "typedef struct { NB_Vec3* pos; uint16_t* idx; int vc; int tc; float wallThresh; uint8_t collisionWalls; } CollMeshCache;\n";
                 mc << "static CollMeshCache gCollCache[MAX_MESHES];\n";
                 mc << "static int gCollCacheCount = 0;\n";
                 mc << "static int gCollCacheReady = 0;\n";
@@ -2843,7 +2863,7 @@ else
                 mc << "    NB_Mesh m; if(!NB_DC_LoadMesh(mp,&m)){ dbgio_printf(\"[NEBULA][DC] CollCache: failed to load %s\\n\",mp); continue; }\n";
                 mc << "    CollMeshCache* c=&gCollCache[gCollCacheCount];\n";
                 mc << "    c->pos=m.pos; c->idx=m.indices; c->vc=m.vert_count; c->tc=m.tri_count;\n";
-                mc << "    { int si=gSceneMetaIndex; if(si<0) si=0; c->wallThresh=kSceneWallThreshold[si][mi]; }\n";
+                mc << "    { int si=gSceneMetaIndex; if(si<0) si=0; c->wallThresh=kSceneWallThreshold[si][mi]; c->collisionWalls=kSceneCollisionWalls[si][mi]; }\n";
                 mc << "    /* Pre-transform vertices to world space: Scale -> Rotate -> Translate */\n";
                 mc << "    { SceneMeshMeta* sm=&gSceneMeshes[mi];\n";
                 mc << "      int _rsi=gSceneMetaIndex; if(_rsi<0) _rsi=0;\n";
@@ -2982,6 +3002,7 @@ else
                 mc << "      float px,pz;\n";
                 mc << "      if(overX<overZ){ float dir=(cx>=cpX)?1.0f:-1.0f; px=dir*(overX+kSkin); pz=0; }\n";
                 mc << "      else{ px=0; float dir=(cz>=cpZ)?1.0f:-1.0f; pz=dir*(overZ+kSkin); }\n";
+                mc << "      if(c->collisionWalls){ const float kMWP=0.03f; if(px>kMWP) px=kMWP; if(px<-kMWP) px=-kMWP; if(pz>kMWP) pz=kMWP; if(pz<-kMWP) pz=-kMWP; }\n";
                 mc << "      if(px>0&&px>mpPX) mpPX=px; if(px<0&&px<mpNX) mpNX=px;\n";
                 mc << "      if(pz>0&&pz>mpPZ) mpPZ=pz; if(pz<0&&pz<mpNZ) mpNZ=pz;\n";
                 mc << "    }\n";

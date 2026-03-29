@@ -268,11 +268,11 @@ namespace NebulaScene
             out << " " << (n.runtimeTest ? 1 : 0);
             out << " " << (n.navmeshReady ? 1 : 0);
             out << " " << n.wallThreshold;
-            out << " " << (n.collisionWalls ? 1 : 0);
             out << " " << n.animSlotCount;
             for (int si = 0; si < kStaticMeshAnimSlots; ++si)
                 out << " " << EncodeSceneToken(n.animSlots[si].name) << " " << EncodeSceneToken(n.animSlots[si].path) << " " << n.animSlots[si].speed << " " << (n.animSlots[si].loop ? 1 : 0);
             out << " " << (n.animPreload ? 1 : 0);
+            out << " " << (n.collisionWalls ? 1 : 0);
             out << "\n";
         }
         for (const auto& c : cameras)
@@ -417,10 +417,7 @@ namespace NebulaScene
                 size_t wallThreshIdx = navmeshReadyIdx + 1;
                 if (wallThreshIdx < extra.size())
                     n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
-                size_t collisionWallsIdx = wallThreshIdx + 1;
-                if (collisionWallsIdx < extra.size())
-                    n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
-                size_t animSlotCountIdx = collisionWallsIdx + 1;
+                size_t animSlotCountIdx = wallThreshIdx + 1;
                 if (animSlotCountIdx < extra.size())
                 {
                     n.animSlotCount = atoi(extra[animSlotCountIdx].c_str());
@@ -462,6 +459,9 @@ namespace NebulaScene
                     size_t animPreloadIdx = animSlotCountIdx + 1 + (size_t)kStaticMeshAnimSlots * tokensPerSlot;
                     if (animPreloadIdx < extra.size())
                         n.animPreload = (atoi(extra[animPreloadIdx].c_str()) != 0);
+                    size_t collisionWallsIdx = animPreloadIdx + 1;
+                    if (collisionWallsIdx < extra.size())
+                        n.collisionWalls = (atoi(extra[collisionWallsIdx].c_str()) != 0);
                 }
                 if (n.materialSlot < 0 || n.materialSlot >= kStaticMeshMaterialSlots) n.materialSlot = 0;
                 if (n.materialSlots[0].empty()) n.materialSlots[0] = n.material;

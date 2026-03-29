@@ -417,7 +417,26 @@ namespace NebulaScene
                 size_t wallThreshIdx = navmeshReadyIdx + 1;
                 if (wallThreshIdx < extra.size())
                     n.wallThreshold = (float)atof(extra[wallThreshIdx].c_str());
+                // Detect old format: collisionWalls was between wallThreshold
+                // and animSlotCount in one build. If the token after wallThreshold
+                // is "0" or "1" and the NEXT token also parses as a small int
+                // (animSlotCount), treat as old format with collisionWalls here.
                 size_t animSlotCountIdx = wallThreshIdx + 1;
+                {
+                    size_t cand = wallThreshIdx + 1;
+                    size_t next = wallThreshIdx + 2;
+                    if (cand < extra.size() && next < extra.size())
+                    {
+                        const std::string& cv = extra[cand];
+                        int nv = atoi(extra[next].c_str());
+                        if ((cv == "0" || cv == "1") && nv >= 0 && nv <= kStaticMeshAnimSlots)
+                        {
+                            // Old format: collisionWalls is here, animSlotCount is next
+                            n.collisionWalls = (cv == "1");
+                            animSlotCountIdx = next;
+                        }
+                    }
+                }
                 if (animSlotCountIdx < extra.size())
                 {
                     n.animSlotCount = atoi(extra[animSlotCountIdx].c_str());

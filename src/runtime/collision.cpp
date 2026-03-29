@@ -98,10 +98,6 @@ void WallCollideAABB(float cx, float cy, float cz,
         const auto& s = gStaticMeshNodes[si];
         if (s.mesh.empty() || gProjectDir.empty()) continue;
         if (!s.collisionSource) continue;
-        // collisionWalls meshes are navmesh-only obstacles — skip them in
-        // WallCollideAABB so the axis-aligned push doesn't fight the
-        // navmesh tangent slide from the AI script.
-        if (s.collisionWalls) continue;
         float wt = s.wallThreshold;
 
         std::filesystem::path meshPath = std::filesystem::path(gProjectDir) / s.mesh;
@@ -177,7 +173,20 @@ void WallCollideAABB(float cx, float cy, float cz,
             if (overX <= 0.0f || overZ <= 0.0f) continue;
 
             float px, pz;
-            if (overX < overZ)
+            if (s.collisionWalls)
+            {
+                // Push along the horizontal face normal — aligns with the
+                // wall surface so it doesn't fight navmesh tangent slide.
+                float hnx = fnx, hnz = fnz;
+                float hLen = sqrtf(hnx * hnx + hnz * hnz);
+                if (hLen < 1e-6f) continue;
+                hnx /= hLen; hnz /= hLen;
+                float pen = (overX < overZ) ? overX : overZ;
+                float sign = (fnx * (cx - cpX) + fnz * (cz - cpZ) >= 0.0f) ? 1.0f : -1.0f;
+                px = sign * hnx * (pen + kSkin);
+                pz = sign * hnz * (pen + kSkin);
+            }
+            else if (overX < overZ)
             {
                 float dir = (cx >= cpX) ? 1.0f : -1.0f;
                 px = dir * (overX + kSkin);
